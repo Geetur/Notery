@@ -12,7 +12,7 @@ func main() {
 
 	// setting up the database connection
 	log.Println("initializing database...")
-	database, err := database.Init()
+	db, err := database.Init()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -31,7 +31,7 @@ func main() {
 		})
 	})
 
-	_ = database // to avoid unused variable error for now
+	_ = db // to avoid unused variable error for now
 
 	// starting the API server
 	log.Println("Server starting on port 8080...")

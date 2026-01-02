@@ -1,5 +1,4 @@
 package database
-
 import (
 	"fmt"
 	"log"
@@ -18,7 +17,7 @@ func Init() (*gorm.DB, error) {
 	// logging what is occuring, but not forcing faliure
 	// to maintain a resistant service
 	log.Println("Attempting to connect to database...")
-	database, err := connect()
+	db, err := connect()
 	if err != nil {
 		log.Printf("Failed to connect to database: %v", err)
 		return nil, err
@@ -26,12 +25,12 @@ func Init() (*gorm.DB, error) {
 	log.Println("Database connection established.")
 
 	log.Println("Attempting to migrate database schema...")
-	if err := migrate(database); err != nil {
+	if err := migrate(db); err != nil {
 		log.Printf("Database migration failed: %v", err)
 		return nil, err
 	}
 	log.Println("Database migration completed.")
-	return database, nil
+	return db, nil
 }
 
 // create returns the database connection pool
@@ -59,13 +58,13 @@ func connect() (*gorm.DB, error) {
 						getenv("DB_TIMEZONE", "UTC"),
 					)		
 	
-	database, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
-	return database, err
+	db, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
+	return db, err
 }
 
-func migrate(database *gorm.DB) error {
+func migrate(db *gorm.DB) error {
 	// auto-migrate our models
-	err := database.AutoMigrate(&models.Note{})
+	err := db.AutoMigrate(&models.Note{})
 	return err
 }
 
