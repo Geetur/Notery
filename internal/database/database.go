@@ -12,20 +12,43 @@ import (
 
 )
 // database is a global variable that stores our connection pool
-var database *gorm.DB
 
-func Init() {
-	connect()
-	migrate()
+func Init() (*gorm.DB, error) {
+	log.Println("Initializing database...")
+	// logging what is occuring, but not forcing faliure
+	// to maintain a resistant service
+	log.Println("Attempting to connect to database...")
+	database, err := connect()
+	if err != nil {
+		log.Printf("Failed to connect to database: %v", err)
+		return nil, err
+	}
+	log.Println("Database connection established.")
+
+	log.Println("Attempting to migrate database schema...")
+	if err := migrate(database); err != nil {
+		log.Printf("Database migration failed: %v", err)
+		return nil, err
+	}
+	log.Println("Database migration completed.")
+	return database, nil
 }
 
-func connect() {
+// create returns the database connection pool
+
+func connect() (*gorm.DB, error) {
 
 	// get our data source name (DSN), with credentials matching that within
 	// the docker compose file. Load environment variables from .env file if it exists
-	_ = godotenv.Load()
+
+	// disallowing silent failure here. ok in prod; helpful in dev
+
+	if err := godotenv.Load(); err != nil {
+    	log.Println("No .env file found (ok):", err)
+	}
 
 	// format the DSN string, fetch local environment variables or use defaults
+	// make sure to replace ssl mode to required in production
 	DSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
 						getenv("DB_HOST", "localhost"),
 						getenv("DB_USER", "admin"),
@@ -35,22 +58,15 @@ func connect() {
 						getenv("DB_SSLMODE", "disable"),
 						getenv("DB_TIMEZONE", "UTC"),
 					)		
-	var err error
-	database, err = gorm.Open(postgres.Open(DSN), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
-	log.Println("Connected to Postgres.")
-
+	
+	database, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
+	return database, err
 }
 
-func migrate() {
+func migrate(database *gorm.DB) error {
 	// auto-migrate our models
 	err := database.AutoMigrate(&models.Note{})
-	if err != nil {
-		log.Fatalf("Failed to auto-migrate database: %v", err)
-	}
-	log.Println("Database migrated successfully.")
+	return err
 }
 
 func getenv(key string, def string) string {
