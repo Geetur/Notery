@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Geetur/Notery/internal/database"
+	"github.com/Geetur/Notery/internal/handlers"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,12 +19,15 @@ func main() {
 	}
 	log.Println("database initialized. Connection pool established.")
 
+
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
-	// remove the proxy warning (safe dev default)
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
-	// simple health check endpoint
+	// initializing the note handler with the database connection
+	noteHandler := handlers.CreateNoteHandler(db)
+
+	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status": "OK",
@@ -31,7 +35,8 @@ func main() {
 		})
 	})
 
-	_ = db // to avoid unused variable error for now
+	router.GET("/notes/:id", noteHandler.GetNoteByID)
+	router.POST("/notes", noteHandler.CreateNote)
 
 	// starting the API server
 	log.Println("Server starting on port 8080...")

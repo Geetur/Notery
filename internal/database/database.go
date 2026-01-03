@@ -13,7 +13,6 @@ import (
 // database is a global variable that stores our connection pool
 
 func Init() (*gorm.DB, error) {
-	log.Println("Initializing database...")
 	// logging what is occuring, but not forcing faliure
 	// to maintain a resistant service
 	log.Println("Attempting to connect to database...")
