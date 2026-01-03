@@ -13,12 +13,19 @@ func main() {
 
 	// setting up the database connection
 	log.Println("initializing database...")
-	db, err := database.Init()
+	db, err := database.InitDatabase()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	log.Println("database initialized. Connection pool established.")
 
+	// initializing Redis connection
+	log.Println("initializing Redis...")
+	database.InitRedis()
+	if err := database.TestRedisConnection(); err != nil {
+		log.Fatalf("Failed to initialize Redis: %v", err)
+	}
+	log.Println("Redis initialized.")
 
 	// setting up the Gin router with middleware attached
 	router := gin.Default()

@@ -21,7 +21,7 @@ func CreateNoteHandler(db *gorm.DB) *NoteHandler {
 
 // now we want to define different functions to handle CRUD operations for notes
 // so, if we want to create a new note, and also get all notes, we call
-// two seperate functions
+// two seperate functions, for example
 
 // CreateNote is a method of NoteHandler that handles the creation of a new note.
 // this allows us to do handler.DB.CreateNote(...)
@@ -29,6 +29,7 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 
 	var note models.Note
 
+	note.Status = "Pending" // default status
 	// if the structure of request body does not match the Note struct
 	// we return a bad request error
 	if err := c.ShouldBindJSON(&note); err != nil {
