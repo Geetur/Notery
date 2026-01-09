@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/joho/godotenv"
@@ -63,16 +64,27 @@ func connect() (*gorm.DB, error) {
 	return db, err
 }
 
+// migrate applies database schema migrations
 func migrate(db *gorm.DB) error {
 	// auto-migrate our models
 	err := db.AutoMigrate(&models.Note{})
 	return err
 }
 
+// getenv fetches an environment variable or returns a default value
 func getenv(key string, def string) string {
 	// get environment variables, or use default
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+// getenvInt fetches an environment variable as an integer or returns a default value
+func getenvInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
 	}
 	return def
 }

@@ -1,6 +1,6 @@
 
 services:
-  #database
+  # database
   postgres:
     image:  postgres:16-alpine
     container_name: notery_db
@@ -12,15 +12,27 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-  #cache
+  # cache
   redis:
     image: redis:7-alpine
     container_name: notery_cache
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+  # search engine
+  meilisearch:
+    image: getmeili/meilisearch:v1.0.0
+    container_name: notery_search
+    environment:
+      - MEILI_MASTER_KEY=${MEILISEARCH_MASTER_KEY}
+    ports:
+      - "7700:7700"
+    volumes:
+      - meilisearch_data:/data.ms
 volumes:
   postgres_data:
   redis_data:
+  meilisearch_data:
 
