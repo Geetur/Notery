@@ -33,6 +33,8 @@ func main() {
 
 	// initializing the note handler with the database connection
 	noteHandler := handlers.CreateNoteHandler(db)
+	// this needs to be changed so it dosent rely on database package directly
+	cartHandler := handlers.CreateCartHandler(database.RedisClient)
 
 	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -42,8 +44,14 @@ func main() {
 		})
 	})
 
+	// note endpoints
 	router.GET("/notes/:id", noteHandler.GetNoteByID)
 	router.POST("/notes", noteHandler.CreateNote)
+
+	// cart endpoints
+	router.GET("/cart/:user_id", cartHandler.GetCart)
+	router.POST("/cart", cartHandler.AddToCart)
+	router.DELETE("/cart/:user_id/:item_id", cartHandler.RemoveFromCart)
 
 	// starting the API server
 	log.Println("Server starting on port 8080...")

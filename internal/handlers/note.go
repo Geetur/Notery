@@ -1,3 +1,4 @@
+// Package handlers/note.go contains the HTTP handlers for note operations
 package handlers
 
 import (
