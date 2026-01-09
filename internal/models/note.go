@@ -1,3 +1,4 @@
+// Package models/note.go contains the Note model definition
 package models
 
 import "time"

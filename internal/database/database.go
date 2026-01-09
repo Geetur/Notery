@@ -1,3 +1,5 @@
+// Package database/database.go contains the postgres database 
+// initialization and migration logic
 package database
 import (
 	"fmt"
