@@ -21,8 +21,8 @@ func main() {
 
 	// initializing Redis connection
 	log.Println("initializing Redis...")
-	database.InitRedis()
-	if err := database.TestRedisConnection(); err != nil {
+	redisClient, err := database.InitRedis()
+	if err != nil {
 		log.Fatalf("Failed to initialize Redis: %v", err)
 	}
 	log.Println("Redis initialized.")
@@ -34,7 +34,7 @@ func main() {
 	// initializing the note handler with the database connection
 	noteHandler := handlers.CreateNoteHandler(db)
 	// this needs to be changed so it dosent rely on database package directly
-	cartHandler := handlers.CreateCartHandler(database.RedisClient)
+	cartHandler := handlers.CreateCartHandler(redisClient)
 
 	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
