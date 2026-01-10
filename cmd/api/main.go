@@ -11,34 +11,37 @@ import (
 
 func main() {
 
-	// setting up the database connection
+	// ----- setting up the database connection ----------------------------------------------
 	log.Println("initializing database...")
 	db, err := database.InitDatabase()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	log.Println("database initialized. Connection pool established.")
+	// ----- setting up the database connection ----------------------------------------------
 
-	// initializing Redis connection
+	// ------ initializing Redis connection ------------------------------------------------
 	log.Println("initializing Redis...")
 	redisClient, err := database.InitRedis()
 	if err != nil {
 		log.Fatalf("Failed to initialize Redis: %v", err)
 	}
 	log.Println("Redis initialized.")
+	// ------ initializing Redis connection ------------------------------------------------
 
-	// initializing Meilisearch connection
+	// ------ initializing Meilisearch connection ----------------------------------------------
 	log.Println("initializing Meilisearch...")
 	meiliClient, meiliIndex, err := database.InitMeilisearch()
 	if err != nil {
 		log.Fatalf("Failed to initialize Meilisearch: %v", err)
 	}
 	log.Println("Meilisearch initialized.")
+	// ------ initializing Meilisearch connection ----------------------------------------------
 
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
-
+	
 	// initializing the note handler with the database connection
 	noteHandler := handlers.CreateNoteHandler(db, meiliClient, meiliIndex)
 	// this needs to be changed so it dosent rely on database package directly
