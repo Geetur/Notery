@@ -9,7 +9,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
-
+// InitRedis initializes the Redis client with configuration from environment variables
 func InitRedis() (*redis.Client, error) {
 	
 	if err := godotenv.Load(); err != nil {
