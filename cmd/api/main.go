@@ -27,12 +27,20 @@ func main() {
 	}
 	log.Println("Redis initialized.")
 
+	// initializing Meilisearch connection
+	log.Println("initializing Meilisearch...")
+	meiliClient, meiliIndex, err := database.InitMeilisearch()
+	if err != nil {
+		log.Fatalf("Failed to initialize Meilisearch: %v", err)
+	}
+	log.Println("Meilisearch initialized.")
+
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
 	// initializing the note handler with the database connection
-	noteHandler := handlers.CreateNoteHandler(db)
+	noteHandler := handlers.CreateNoteHandler(db, meiliClient, meiliIndex)
 	// this needs to be changed so it dosent rely on database package directly
 	cartHandler := handlers.CreateCartHandler(redisClient)
 
@@ -47,6 +55,11 @@ func main() {
 	// note endpoints
 	router.GET("/notes/:id", noteHandler.GetNoteByID)
 	router.POST("/notes", noteHandler.CreateNote)
+	router.GET("/notes/pending", noteHandler.GetPendingNotes)
+	router.GET("/notes/approved", noteHandler.GetApprovedNotes)
+	router.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
+	router.PATCH("/notes/:id/reject", noteHandler.RejectNote)
+	router.DELETE("/notes/:id", noteHandler.DeleteNote)
 
 	// cart endpoints
 	router.GET("/cart/:user_id", cartHandler.GetCart)
