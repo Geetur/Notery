@@ -3,6 +3,7 @@ package models
 
 import "time"
 
+// Note represents a note entity in the system
 type Note struct {
 	// the primary key for all intensive purposes
 	ID uint `json:"id" gorm:"primaryKey"`
