@@ -67,7 +67,7 @@ func connect() (*gorm.DB, error) {
 // migrate applies database schema migrations
 func migrate(db *gorm.DB) error {
 	// auto-migrate our models
-	err := db.AutoMigrate(&models.Note{})
+	err := db.AutoMigrate(&models.Note{}, &models.User{})
 	return err
 }
 

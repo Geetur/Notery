@@ -35,7 +35,7 @@ func CreateNoteHandler(db *gorm.DB, search meilisearch.ServiceManager, indexName
 
 // CreateNote is a method of NoteHandler that handles the creation of a new note.
 // CreateNote interacts purely with the database to create a new note record
-// CreateNote interacts with no other api endpoints 
+// CreateNote interacts with no other handler methods
 func (handler *NoteHandler) CreateNote(c *gin.Context) {
 
 	// declare a note variable to hold the incoming note data
@@ -64,7 +64,7 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 
 // DeleteNote is a method of NoteHandler that handles the deletion of a note by ID.
 // DeleteNote removes the note from both the database and Meilisearch if approved.
-// DeleteNote interacts with the removeNoteFromIndex and indexNote helper methods.
+// DeleteNote interacts with the removeNoteFromIndex and indexNote handler methods.
 func (handler *NoteHandler) DeleteNote(c *gin.Context) {
 	noteID := c.Param("id")
 	// declare a note variable to hold the fetched note
@@ -113,7 +113,7 @@ func (handler *NoteHandler) DeleteNote(c *gin.Context) {
 
 // RejectNote is a method of NoteHandler that handles rejecting a note by ID.
 // RejectNote interacts with the database to update the note's status to "Rejected".
-// RejectNote does not interact with any handler helper methods.
+// RejectNote does not interact with any handler methods.
 func (handler *NoteHandler) RejectNote(c *gin.Context) {
 	noteID := c.Param("id")
 	// update the note's status to "Rejected"
@@ -130,7 +130,7 @@ func (handler *NoteHandler) RejectNote(c *gin.Context) {
 
 // ApproveNote is a method of NoteHandler that handles approving a note by ID.
 // ApproveNote updates the note's status to "Approved" and indexes it in Meilisearch.
-// ApproveNote interacts with the indexNote helper method.
+// ApproveNote interacts with the indexNote handler method.
 func (handler *NoteHandler) ApproveNote(c *gin.Context) {
 	noteID := c.Param("id")
 	var note models.Note
@@ -182,7 +182,7 @@ func (handler *NoteHandler) ApproveNote(c *gin.Context) {
 
 // GetNoteByID is a method of NoteHandler that retrieves a note by its ID.
 // GetNoteByID interacts with the database to fetch the note record.
-// GetNoteByID does not interact with any handler helper methods.
+// GetNoteByID does not interact with any handler methods.
 func (handler *NoteHandler) GetNoteByID(c *gin.Context) {
 	noteID := c.Param("id")
 	var note models.Note
@@ -199,7 +199,7 @@ func (handler *NoteHandler) GetNoteByID(c *gin.Context) {
 
 // GetPendingNotes retrieves all notes with status "Pending"
 // GetPendingNotes interacts with the database to fetch pending notes.
-// getPendingNotes does not interact with any handler helper methods.
+// getPendingNotes does not interact with any handler methods.
 func (handler *NoteHandler) GetPendingNotes(c *gin.Context) {
 	var notes []models.Note
 	log.Println("Trying to fetch pending notes")
@@ -214,7 +214,7 @@ func (handler *NoteHandler) GetPendingNotes(c *gin.Context) {
 
 // GetApprovedNotes retrieves all notes with status "Approved"
 // GetApprovedNotes interacts with the database to fetch approved notes.
-// getApprovedNotes does not interact with any handler helper methods.
+// getApprovedNotes does not interact with any handler methods.
 func (handler *NoteHandler) GetApprovedNotes(c *gin.Context) {
 	var notes []models.Note
 	log.Println("Trying to fetch approved notes")
