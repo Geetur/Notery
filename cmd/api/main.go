@@ -47,6 +47,8 @@ func main() {
 	// this needs to be changed so it dosent rely on database package directly
 	cartHandler := handlers.CreateCartHandler(redisClient)
 
+	authHandler := handlers.CreateAuthHandler(db)
+
 	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -68,6 +70,11 @@ func main() {
 	router.GET("/cart/:user_id", cartHandler.GetCart)
 	router.POST("/cart", cartHandler.AddToCart)
 	router.DELETE("/cart/:user_id/:item_id", cartHandler.RemoveFromCart)
+
+	// auth endpoints
+	
+	router.POST("/signup", authHandler.Signup)
+	router.POST("/login", authHandler.Login)
 
 	// starting the API server
 	log.Println("Server starting on port 8080...")
