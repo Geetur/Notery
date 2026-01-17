@@ -96,7 +96,7 @@ func (handler *AuthHandler) Login(c *gin.Context) {
 	// Generate JWT token
 	log.Println("generating JWT token for user:", authReq.Email)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
+		"user_id": user.ID, // include user ID in token claims
 		"exp":     time.Now().Add(time.Hour * 24).Unix(), // token expires in 24 hours
 	})
 	log.Println("JWT token generated.")
