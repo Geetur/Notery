@@ -6,6 +6,7 @@ import (
 
 	"github.com/Geetur/Notery/internal/database"
 	"github.com/Geetur/Notery/internal/handlers"
+	"github.com/Geetur/Notery/internal/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -57,24 +58,29 @@ func main() {
 		})
 	})
 
-	// note endpoints
-	router.GET("/notes/:id", noteHandler.GetNoteByID)
-	router.POST("/notes", noteHandler.CreateNote)
-	router.GET("/notes/pending", noteHandler.GetPendingNotes)
-	router.GET("/notes/approved", noteHandler.GetApprovedNotes)
-	router.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
-	router.PATCH("/notes/:id/reject", noteHandler.RejectNote)
-	router.DELETE("/notes/:id", noteHandler.DeleteNote)
+	api := router.Group("/api/v1")
+	// auth endpoints (public)
+	api.POST("/signup", authHandler.Signup)
+	api.POST("/login", authHandler.Login)
 
-	// cart endpoints
-	router.GET("/cart/:user_id", cartHandler.GetCart)
-	router.POST("/cart", cartHandler.AddToCart)
-	router.DELETE("/cart/:user_id/:item_id", cartHandler.RemoveFromCart)
+	// applying the RequireAuth middleware to all protected routes in this group
+	protected := api.Group("")
+	protected.Use(middleware.RequireAuth)
+	{
+		// note endpoints
+		protected.GET("/notes/:id", noteHandler.GetNoteByID)
+		protected.POST("/notes", noteHandler.CreateNote)
+		protected.GET("/notes/pending", noteHandler.GetPendingNotes)
+		protected.GET("/notes/approved", noteHandler.GetApprovedNotes)
+		protected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
+		protected.PATCH("/notes/:id/reject", noteHandler.RejectNote)
+		protected.DELETE("/notes/:id", noteHandler.DeleteNote)
 
-	// auth endpoints
-	
-	router.POST("/signup", authHandler.Signup)
-	router.POST("/login", authHandler.Login)
+		// cart endpoints
+		protected.GET("/cart", cartHandler.GetCart)
+		protected.POST("/cart", cartHandler.AddToCart)
+		protected.DELETE("/cart/:item_id", cartHandler.RemoveFromCart)
+	}
 
 	// starting the API server
 	log.Println("Server starting on port 8080...")

@@ -12,9 +12,8 @@ type User struct {
 	ID 	 uint   `json:"id" gorm:"primaryKey"`
 	Email string `json:"email" gorm:"unique; not null"`
 	// the dash is to prevent the field from being exposed in JSON responses
-	Password string `json:"-"`
-	// the hash field stores the bcrypt hashed password
-	hash string `json:"-" gorm:"not null"`
+	Password     string `json:"password" gorm:"-"`     // input only
+    Hash string `json:"-" gorm:"not null"`     // persisted
 }
 
 // SetPassword is a GORM hook that hashes the password before creating a new user record
@@ -23,12 +22,12 @@ func (u *User) SetPassword(password string) error {
 	if err != nil {
 		return err
 	}
-	u.hash = string(hash)
+	u.Hash = string(hash)
 	return nil
 }
 
 // CheckPassword compares the provided password with the stored hash
 func (u *User) CheckPassword(password string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(u.hash), []byte(password))
+	err := bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password))
 	return err == nil
 }

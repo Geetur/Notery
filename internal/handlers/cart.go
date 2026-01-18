@@ -18,7 +18,8 @@ type CartHandler struct {
 // and userID will be used to lookup whatever info we need in postgres
 type CartRequest struct {
 	ItemID    string `json:"item_id" binding:"required"`
-	UserID  string `json:"user_id" binding:"required"`
+	// dont need a user ID here 
+	// since it will be extracted from the JWT token in middleware
 }
 
 // CreateCartHandler initializes a new CartHandler with the given Redis client
@@ -30,7 +31,7 @@ func CreateCartHandler(rdb *redis.Client) *CartHandler {
 // AddToCart interacts with Redis to add the item.
 // AddToCart interacts with no other handler methods.
 func (handler *CartHandler) AddToCart(c *gin.Context) {
-	log.Println("trying to add item to cart in Redis")
+	log.Println("trying to add item to cart in Redis...")
 	var cartReq CartRequest
 	if err := c.ShouldBindJSON(&cartReq); err != nil {
 		log.Println("Failed to bind JSON:", err)
@@ -38,10 +39,24 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 		return
 	}
 
-	// Use Redis set to add item to the user's cart
-	ctx := c.Request.Context()
-	key := "cart:" + cartReq.UserID
+	log.Println("Extracting user ID from context...")
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		log.Println("User ID not found in context")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	userID, ok := userIDVal.(string)
+	if !ok {
+		log.Println("User ID in context is not a string")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+	log.Println("User ID extracted from context:", userID)
+
+	key := "cart:" + userID
 	field := cartReq.ItemID
+	ctx := c.Request.Context()
 	err := handler.RDB.SAdd(ctx, key, field).Err()
 	if err != nil {
 		log.Println("Failed to add item to cart in Redis:", err)
@@ -49,6 +64,7 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 		return
 	}
 	log.Println("successfully added item to cart in Redis")
+
 	c.JSON(http.StatusOK, gin.H{"message": "Item added to cart successfully"})
 }
 
@@ -57,10 +73,24 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 // GetCart interacts with no other handler methods.
 func (handler *CartHandler) GetCart(c *gin.Context) {
 	// Use Redis SMembers to retrieve all items in the user's cart
-	log.Println("trying to retrieve cart from Redis")
-	userID := c.Param("user_id")
-	ctx := c.Request.Context()
+	log.Println("extracting user ID from context for cart retrieval...")
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		log.Println("User ID not found in context")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	userID, ok := userIDVal.(string)
+	if !ok {
+		log.Println("User ID in context is not a string")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+	log.Println("user ID extracted from context:", userID)
+
+	log.Println("trying to retrieve cart from Redis...")
 	key := "cart:" + userID
+	ctx := c.Request.Context()
 	cartItems, err := handler.RDB.SMembers(ctx, key).Result()
 	if err != nil {
 		log.Println("Failed to retrieve cart from Redis:", err)
@@ -68,6 +98,7 @@ func (handler *CartHandler) GetCart(c *gin.Context) {
 		return
 	}
 	log.Println("successfully retrieved cart from Redis")
+
 	c.JSON(http.StatusOK, gin.H{"cart": cartItems})
 } 
 
@@ -76,10 +107,22 @@ func (handler *CartHandler) GetCart(c *gin.Context) {
 // RemoveFromCart interacts with no other handler methods.
 func (handler *CartHandler) RemoveFromCart(c *gin.Context) {
 	// Use Redis SRem to remove an item from the user's cart
-	log.Println("trying to remove item from cart")
-	userID := c.Param("user_id")
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		log.Println("User ID not found in context")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	userID, ok := userIDVal.(string)
+	if !ok {
+		log.Println("User ID in context is not a string")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+
+	log.Println("trying to remove item from cart...")
+	ctx := c.Request.Context()  
 	itemID := c.Param("item_id")
-	ctx := c.Request.Context()
 	key := "cart:" + userID
 	err := handler.RDB.SRem(ctx, key, itemID).Err()
 	if err != nil {
