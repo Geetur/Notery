@@ -2,10 +2,11 @@
 package handlers
 
 import (
-	"net/http"
-	"time"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
@@ -36,7 +37,7 @@ func CreateAuthHandler(db *gorm.DB) *AuthHandler {
 // Signup interacts with the User model and database to verify credentials.
 // Signup interacts with no other handler methods.
 func (handler *AuthHandler) Signup(c *gin.Context) {
-	log.Println("trying to sign up user")
+	log.Println("trying to sign up user...")
 	var authReq AuthRequest
 	if err := c.ShouldBindJSON(&authReq); err != nil {
 		log.Println("Failed to bind JSON:", err)
@@ -65,7 +66,7 @@ func (handler *AuthHandler) Signup(c *gin.Context) {
 // Login interacts with the User model and database to verify credentials.
 // Login interacts with no other handler methods.
 func (handler *AuthHandler) Login(c *gin.Context) {
-	log.Println("trying to log in user")
+	log.Println("trying to log in user...")
 	var authReq AuthRequest
 
 	if err := c.ShouldBindJSON(&authReq); err != nil {
@@ -96,13 +97,13 @@ func (handler *AuthHandler) Login(c *gin.Context) {
 	// Generate JWT token
 	log.Println("generating JWT token for user:", authReq.Email)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID, // include user ID in token claims
+		"user_id": fmt.Sprint(user.ID), // include user ID in token claims
 		"exp":     time.Now().Add(time.Hour * 24).Unix(), // token expires in 24 hours
 	})
 	log.Println("JWT token generated.")
 	
 	// Load secret key from environment variable
-	log.Println("loading JWT secret from environment")
+	log.Println("loading JWT secret from environment...")
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found (ok):", err)
 	}
@@ -115,7 +116,7 @@ func (handler *AuthHandler) Login(c *gin.Context) {
 	log.Println("JWT secret loaded from environment")
 
 	// Sign the token with the secret key
-	log.Println("trying to sign JWT token")
+	log.Println("trying to sign JWT token...")
 	tokenString, err := token.SignedString(secretKey)
 	if err != nil {
 		log.Println("Failed to sign JWT token:", err)

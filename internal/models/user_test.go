@@ -14,7 +14,7 @@ func TestUserPasswordSecurity(t *testing.T) {
 	if user.Password != "" {
 		t.Errorf("Password field should not be exposed, got: %s", user.Password)
 	}
-	if user.hash == "" {
+	if user.Hash == "" {
 		t.Errorf("Hash field should be set after hashing the password (shoyld not be empty)")
 	}
 	if !user.CheckPassword(password) {
