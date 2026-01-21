@@ -37,7 +37,6 @@ func CreateNoteHandler(db *gorm.DB, search meilisearch.ServiceManager, indexName
 // CreateNote interacts purely with the database to create a new note record
 // CreateNote interacts with no other handler methods
 func (handler *NoteHandler) CreateNote(c *gin.Context) {
-
 	// declare a note variable to hold the incoming note data
 	var note models.Note
 	// if the structure of request body does not match the Note struct
