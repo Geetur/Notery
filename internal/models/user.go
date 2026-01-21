@@ -1,4 +1,6 @@
+// Package models contains the definition of the User model
 package models
+
 
 import (
 	"golang.org/x/crypto/bcrypt"
@@ -14,6 +16,8 @@ type User struct {
 	// the dash is to prevent the field from being exposed in JSON responses
 	Password     string `json:"password" gorm:"-"`     // input only
     Hash string `json:"-" gorm:"not null"`     // persisted
+	// all subnoteries a user is admin of
+	AdminOf []Subnotery `json:"admin_of" gorm:"one2many:user_admins;"`
 }
 
 // SetPassword is a GORM hook that hashes the password before creating a new user record
