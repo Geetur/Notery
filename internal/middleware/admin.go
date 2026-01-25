@@ -3,7 +3,6 @@ package middleware
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -21,21 +20,11 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 		log.Println("Checking admin privileges...")
 
 		// get user from context
-		userIDValue, exists := c.Get("user_id")
-		log.Println("Getting user from context:", userIDValue)
-		if !exists {
-			log.Println("No user in context")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			return
-		}
-		userIDStr := fmt.Sprint(userIDValue)
-		userID, err := strconv.ParseUint(userIDStr, 10, 64)
-		if err != nil {
-			log.Println("Invalid user ID in context:", userIDStr)
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			return
-		}
-		log.Println("User found in context:", userID)
+		log.Println("Extracting user ID from context...")
+		userID := c.MustGet("user_id").(uint64)
+		log.Println("User ID extracted from context:", userID)
+
+		
 
 		// check if user is a global admin
 		log.Println("Checking if user is a global admin...")
@@ -50,6 +39,9 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify admin status"})
 			return
 		}
+
+		c.Set("admin_type", user.IsGlobalAdmin)
+
 		if user.IsGlobalAdmin {
 			log.Println("Global admin privileges verified for user:", user.ID)
 			c.Next()
@@ -64,7 +56,7 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 		var subnoteryID uint64
 		if subnoteryIDStr != "" {
 			log.Println("Subnotery ID found in route params:", subnoteryIDStr)
-			subnoteryID, err = strconv.ParseUint(subnoteryIDStr, 10, 64)
+			_, err := strconv.ParseUint(subnoteryIDStr, 10, 64)
 			if err != nil {
 				log.Println("Invalid subnotery ID in route params:", subnoteryIDStr)
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid subnotery ID"})
@@ -125,7 +117,7 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 
 		// check if user is an admin of the resolved subnotery
 		var count int64
-		err = db.Table("user_admins").
+		err := db.Table("user_admins").
 			Where("user_id = ? AND subnotery_id = ?", user.ID, subnoteryID).
 			Count(&count).Error
 		if err != nil {

@@ -80,8 +80,9 @@ func main() {
 
 	// applying the RequireAdmin middleware to admin-only routes
 	adminProtected := protected.Group("")
-	adminProtected.Use(middleware.RequireAuth, middleware.RequireAdmin(db))
+	adminProtected.Use(middleware.RequireAdmin(db))
 	{
+		// note admin endpoints
 		adminProtected.GET("/notes/pending", noteHandler.GetPendingNotes)
 		adminProtected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
 		adminProtected.PATCH("/notes/:id/reject", noteHandler.RejectNote)

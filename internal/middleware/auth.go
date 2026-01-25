@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"log"
 	"fmt"
+	"strconv"
 	"strings"
 	"os"
 
@@ -69,7 +70,13 @@ func RequireAuth(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
-		c.Set("user_id", userIDStr)
+		userIDUint, err := strconv.ParseUint(userIDStr, 10, 64)
+		if err != nil {
+			log.Println("Invalid user_id claim in JWT token:", userIDStr)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			return
+		}
+		c.Set("user_id", userIDUint)
 		log.Println("JWT token is valid, user authenticated:", userIDStr)
 		c.Next()
 	} else {
