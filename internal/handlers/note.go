@@ -3,8 +3,8 @@ package handlers
 
 import (
 	"errors"
-	"net/http"
 	"log"
+	"net/http"
 	"strconv"
 
 	"github.com/Geetur/Notery/internal/models"
@@ -15,7 +15,7 @@ import (
 
 // NoteHandler structure
 type NoteHandler struct {
-	DB *gorm.DB
+	DB          *gorm.DB
 	Search      meilisearch.ServiceManager
 	SearchIndex string
 }
@@ -34,30 +34,93 @@ func CreateNoteHandler(db *gorm.DB, search meilisearch.ServiceManager, indexName
 // two seperate functions, for example
 
 // CreateNote is a method of NoteHandler that handles the creation of a new note.
-// CreateNote interacts purely with the database to create a new note record
-// CreateNote interacts with no other handler methods
+// CreateNote interacts with the database to create a new note record and ensure its subnotery exists.
+// CreateNote auto-creates the subnotery when missing and assigns the creator as its first admin.
 func (handler *NoteHandler) CreateNote(c *gin.Context) {
-	// declare a note variable to hold the incoming note data
-	var note models.Note
-	// if the structure of request body does not match the Note struct
-	// we return a bad request error
-	note.Status = "Pending" // default status
-	if err := c.ShouldBindJSON(&note); err != nil {
-		// 400 Bad Request status code
+	log.Println("Binding JSON request for note creation...")
+	var req struct {
+		SubnoteryName string  `json:"subnotery_name" binding:"required"`
+		Title         string  `json:"title"`
+		Author        string  `json:"author"`
+		Price         float64 `json:"price"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Println("Failed to bind JSON:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	log.Println("Trying to create note with title:", note.Title)
-	// if the structure is valid, we create the note in the database
-	if err := handler.DB.Create(&note).Error; err != nil {
-		// 500 Internal Server Error status code
+	log.Println("JSON request bound successfully for note creation:", req.SubnoteryName)
+
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		log.Println("No user in context for note creation")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userIDStr, ok := userIDValue.(string)
+	if !ok || userIDStr == "" {
+		log.Println("Invalid user ID in context for note creation:", userIDValue)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		log.Println("Failed to parse user ID for note creation:", userIDStr)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	log.Println("Ensuring subnotery exists for note creation:", req.SubnoteryName)
+	var note models.Note
+	if err := handler.DB.Transaction(func(tx *gorm.DB) error {
+		var subnotery models.Subnotery
+		subnoteryCreated := false
+
+		if err := tx.Where("name = ?", req.SubnoteryName).First(&subnotery).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Println("Subnotery not found. Creating new subnotery:", req.SubnoteryName)
+				subnotery = models.Subnotery{Name: req.SubnoteryName}
+				if err := tx.Create(&subnotery).Error; err != nil {
+					return err
+				}
+				subnoteryCreated = true
+			} else {
+				return err
+			}
+		}
+
+		if subnoteryCreated {
+			log.Println("Assigning creator as first admin for subnotery:", subnotery.ID)
+			var user models.User
+			if err := tx.First(&user, userID).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&subnotery).Association("Admins").Append(&user); err != nil {
+				return err
+			}
+		}
+
+		note = models.Note{
+			Title:       req.Title,
+			Author:      req.Author,
+			Price:       req.Price,
+			Status:      "Pending",
+			SubnoteryID: subnotery.ID,
+		}
+
+		log.Println("Trying to create note with title:", note.Title)
+		if err := tx.Create(&note).Error; err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
 		log.Println("Failed to create note:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to internally create note"})
 		return
 	}
+
 	log.Println("Successfully created note with ID:", note.ID)
-	// 201 Created status code
 	c.JSON(http.StatusCreated, note)
 }
 
@@ -115,13 +178,39 @@ func (handler *NoteHandler) DeleteNote(c *gin.Context) {
 // RejectNote does not interact with any handler methods.
 func (handler *NoteHandler) RejectNote(c *gin.Context) {
 	noteID := c.Param("id")
-	// update the note's status to "Rejected"
+	var note models.Note
+	log.Printf("Fetching note with ID: %s for rejection", noteID)
+	if err := handler.DB.First(&note, noteID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("Note with ID: %s not found for rejection", noteID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+			return
+		}
+		log.Printf("Failed to fetch note with ID for rejection: %s", noteID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+		return
+	}
+
+	previousStatus := note.Status
 	log.Printf("Trying to reject note with ID: %s", noteID)
-	if err := handler.DB.Model(&models.Note{}).Where("id = ?", noteID).Update("status", "Rejected").Error; err != nil {
+	if err := handler.DB.Model(&note).Update("status", "Rejected").Error; err != nil {
 		log.Printf("Failed to reject note with ID: %s", noteID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject note"})
 		return
 	}
+
+	if previousStatus == "Approved" {
+		log.Printf("Trying to remove approved note from meilisearch: %s", noteID)
+		if err := handler.removeNoteFromIndex(note.ID); err != nil {
+			log.Printf("Failed to remove approved note from Meilisearch: %v", err)
+			if rollbackErr := handler.DB.Model(&note).Update("status", previousStatus).Error; rollbackErr != nil {
+				log.Printf("Failed to rollback note rejection after index removal error: %v", rollbackErr)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
+			return
+		}
+	}
+
 	log.Printf("Successfully rejected note with ID: %s", noteID)
 	// successful rejection
 	c.JSON(http.StatusOK, gin.H{"message": "Note rejected successfully"})
@@ -194,18 +283,63 @@ func (handler *NoteHandler) GetNoteByID(c *gin.Context) {
 	}
 	log.Printf("Successfully fetched note with ID: %s", noteID)
 	c.JSON(http.StatusOK, note)
-} 
+}
 
-// GetPendingNotes retrieves all notes with status "Pending"
-// GetPendingNotes interacts with the database to fetch pending notes.
-// getPendingNotes does not interact with any handler methods.
+// GetPendingNotes retrieves pending notes scoped to the requesting admin.
+// GetPendingNotes interacts with the database to fetch pending notes and user scope.
+// GetPendingNotes does not interact with any handler methods.
 func (handler *NoteHandler) GetPendingNotes(c *gin.Context) {
-	var notes []models.Note
-	log.Println("Trying to fetch pending notes")
-	if err := handler.DB.Where("status = ?", "Pending").Find(&notes).Error; err != nil {
-		log.Println("Failed to fetch pending notes:", err)
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		log.Println("No user in context for pending notes")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userIDStr, ok := userIDValue.(string)
+	if !ok || userIDStr == "" {
+		log.Println("Invalid user ID in context for pending notes:", userIDValue)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		log.Println("Failed to parse user ID for pending notes:", userIDStr)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	log.Println("Looking up user for pending notes scope:", userID)
+	var user models.User
+	if err := handler.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Println("User not found for pending notes scope:", userID)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+		log.Println("Failed to fetch user for pending notes scope:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
 		return
+	}
+
+	var notes []models.Note
+	log.Println("Trying to fetch pending notes")
+	if user.IsGlobalAdmin {
+		log.Println("Global admin detected. Fetching all pending notes.")
+		if err := handler.DB.Where("status = ?", "Pending").Find(&notes).Error; err != nil {
+			log.Println("Failed to fetch pending notes:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
+			return
+		}
+	} else {
+		log.Println("Fetching pending notes for admin subnoteries only:", user.ID)
+		if err := handler.DB.
+			Joins("JOIN user_admins ON user_admins.subnotery_id = notes.subnotery_id").
+			Where("user_admins.user_id = ? AND notes.status = ?", user.ID, "Pending").
+			Find(&notes).Error; err != nil {
+			log.Println("Failed to fetch pending notes:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
+			return
+		}
 	}
 	log.Println("Successfully fetched pending notes")
 	c.JSON(http.StatusOK, notes)
@@ -242,6 +376,7 @@ func (handler *NoteHandler) indexNote(note models.Note) error {
 	log.Printf("successfully indexed note with ID: %d in Meilisearch", note.ID)
 	return err
 }
+
 // removeNoteFromIndex removes a note from the Meilisearch index
 // removeNoteFromIndex interacts with Meilisearch to remove the note.
 // removeNoteFromIndex interacts with no other handler methods.
