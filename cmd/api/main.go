@@ -42,7 +42,7 @@ func main() {
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
-	
+
 	// initializing the note handler with the database connection
 	noteHandler := handlers.CreateNoteHandler(db, meiliClient, meiliIndex)
 	// this needs to be changed so it dosent rely on database package directly
@@ -53,7 +53,7 @@ func main() {
 	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"status": "OK",
+			"status":  "OK",
 			"message": "Notery API is alive",
 		})
 	})
@@ -70,16 +70,22 @@ func main() {
 		// note endpoints
 		protected.GET("/notes/:id", noteHandler.GetNoteByID)
 		protected.POST("/notes", noteHandler.CreateNote)
-		protected.GET("/notes/pending", noteHandler.GetPendingNotes)
 		protected.GET("/notes/approved", noteHandler.GetApprovedNotes)
-		protected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
-		protected.PATCH("/notes/:id/reject", noteHandler.RejectNote)
-		protected.DELETE("/notes/:id", noteHandler.DeleteNote)
 
 		// cart endpoints
 		protected.GET("/cart", cartHandler.GetCart)
 		protected.POST("/cart", cartHandler.AddToCart)
 		protected.DELETE("/cart/:item_id", cartHandler.RemoveFromCart)
+	}
+
+	// applying the RequireAdmin middleware to admin-only routes
+	adminProtected := protected.Group("")
+	adminProtected.Use(middleware.RequireAuth, middleware.RequireAdmin(db))
+	{
+		adminProtected.GET("/notes/pending", noteHandler.GetPendingNotes)
+		adminProtected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
+		adminProtected.PATCH("/notes/:id/reject", noteHandler.RejectNote)
+		adminProtected.DELETE("/notes/:id", noteHandler.DeleteNote)
 	}
 
 	// starting the API server

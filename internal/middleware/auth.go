@@ -1,4 +1,4 @@
-// Package middleware/auth.go contains middleware for authentication
+// Package middleware/auth.go contains middleware for user authentication
 package middleware
 
 import (

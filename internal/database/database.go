@@ -1,6 +1,7 @@
-// Package database/database.go contains the postgres database 
+// Package database/database.go contains the postgres database
 // initialization and migration logic
 package database
+
 import (
 	"fmt"
 	"log"
@@ -11,8 +12,8 @@ import (
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-
 )
+
 // database is a global variable that stores our connection pool
 
 func InitDatabase() (*gorm.DB, error) {
@@ -45,21 +46,21 @@ func connect() (*gorm.DB, error) {
 	// disallowing silent failure here. ok in prod; helpful in dev
 
 	if err := godotenv.Load(); err != nil {
-    	log.Println("No .env file found (ok):", err)
+		log.Println("No .env file found (ok):", err)
 	}
 
 	// format the DSN string, fetch local environment variables or use defaults
 	// make sure to replace ssl mode to required in production
 	DSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
-						getenv("DB_HOST", "localhost"),
-						getenv("DB_USER", "admin"),
-						getenv("DB_PASSWORD", ""),
-						getenv("DB_NAME", "notery_db"),
-						getenv("DB_PORT", "5432"),
-						getenv("DB_SSLMODE", "disable"),
-						getenv("DB_TIMEZONE", "UTC"),
-					)		
-	
+		getenv("DB_HOST", "localhost"),
+		getenv("DB_USER", "admin"),
+		getenv("DB_PASSWORD", ""),
+		getenv("DB_NAME", "notery_db"),
+		getenv("DB_PORT", "5432"),
+		getenv("DB_SSLMODE", "disable"),
+		getenv("DB_TIMEZONE", "UTC"),
+	)
+
 	db, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
 	return db, err
 }
@@ -67,7 +68,7 @@ func connect() (*gorm.DB, error) {
 // migrate applies database schema migrations
 func migrate(db *gorm.DB) error {
 	// auto-migrate our models
-	err := db.AutoMigrate(&models.Note{}, &models.User{})
+	err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{})
 	return err
 }
 
@@ -79,6 +80,7 @@ func getenv(key string, def string) string {
 	}
 	return def
 }
+
 // getenvInt fetches an environment variable as an integer or returns a default value
 func getenvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {

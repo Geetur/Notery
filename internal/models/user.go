@@ -17,9 +17,10 @@ type User struct {
 	Password     string `json:"password" gorm:"-"`     // input only
     Hash string `json:"-" gorm:"not null"`     // persisted
 	// all subnoteries a user is admin of
-	AdminOf []Subnotery `json:"admin_of" gorm:"one2many:user_admins;"`
-}
+	AdminOf []Subnotery `json:"admin_of" gorm:"many2many:user_admins;"`
 
+	IsGlobalAdmin bool   `json:"is_global_admin" gorm:"default:false"`
+}
 // SetPassword is a GORM hook that hashes the password before creating a new user record
 func (u *User) SetPassword(password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
