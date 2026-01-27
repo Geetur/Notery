@@ -32,7 +32,6 @@ func CreateAuthHandler(db *gorm.DB) *AuthHandler {
 }
 
 
-
 // Signup handles user authentication and JWT token generation
 // Signup interacts with the User model and database to verify credentials.
 // Signup interacts with no other handler methods.

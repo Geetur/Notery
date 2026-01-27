@@ -210,6 +210,15 @@ func (handler *NoteHandler) RejectNote(c *gin.Context) {
 			return
 		}
 	}
+	log.Printf("Successfully removed approved note from meilisearch for note ID: %s", noteID)
+
+	log.Printf("Deleting note from database")
+	if err := handler.DB.Delete(&note).Error; err != nil {
+		log.Printf("Failed to delete note with ID: %s after rejection", noteID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete note after rejection"})
+		return
+	}
+	log.Printf("Successfully deleted note with ID: %s after rejection", noteID)
 
 	log.Printf("Successfully rejected note with ID: %s", noteID)
 	// successful rejection
