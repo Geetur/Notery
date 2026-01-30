@@ -1,27 +1,21 @@
-// Package models contains the definition of the User model
+// Package models defines the domain entities and their database mappings.
 package models
-
 
 import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// because this is safety critical code, it's good practice
-// to encapsulate password handling within the model itself
-
-// User represents a user in the system
+// User represents an authenticated user with optional admin privileges.
 type User struct {
-	ID 	 uint   `json:"id" gorm:"primaryKey"`
-	Email string `json:"email" gorm:"unique; not null"`
-	// the dash is to prevent the field from being exposed in JSON responses
-	Password     string `json:"password" gorm:"-"`     // input only
-    Hash string `json:"-" gorm:"not null"`     // persisted
-	// all subnoteries a user is admin of
-	AdminOf []Subnotery `json:"admin_of" gorm:"many2many:user_admins;"`
-
-	IsGlobalAdmin bool   `json:"is_global_admin" gorm:"default:false"`
+	ID            uint        `json:"id" gorm:"primaryKey"`
+	Email         string      `json:"email" gorm:"unique; not null"`
+	Password      string      `json:"password" gorm:"-"`      // input only, not persisted
+	Hash          string      `json:"-" gorm:"not null"`      // bcrypt hash, not exposed in JSON
+	AdminOf       []Subnotery `json:"admin_of" gorm:"many2many:user_admins;"`
+	IsGlobalAdmin bool        `json:"is_global_admin" gorm:"default:false"`
 }
-// SetPassword is a GORM hook that hashes the password before creating a new user record
+
+// SetPassword hashes the given password and stores it in the Hash field.
 func (u *User) SetPassword(password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -31,7 +25,7 @@ func (u *User) SetPassword(password string) error {
 	return nil
 }
 
-// CheckPassword compares the provided password with the stored hash
+// CheckPassword returns true if the given password matches the stored hash.
 func (u *User) CheckPassword(password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password))
 	return err == nil

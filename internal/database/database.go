@@ -14,8 +14,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// database is a global variable that stores our connection pool
-
+// InitDatabase initializes the PostgreSQL connection and runs migrations.
+// It returns the database connection pool or an error if initialization fails.
 func InitDatabase() (*gorm.DB, error) {
 	// logging what is occuring, but not forcing faliure
 	// to maintain a resistant service
@@ -65,23 +65,20 @@ func connect() (*gorm.DB, error) {
 	return db, err
 }
 
-// migrate applies database schema migrations
+// migrate applies database schema migrations using GORM AutoMigrate.
 func migrate(db *gorm.DB) error {
-	// auto-migrate our models
-	err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{})
-	return err
+	return db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{})
 }
 
-// getenv fetches an environment variable or returns a default value
-func getenv(key string, def string) string {
-	// get environment variables, or use default
+// getenv returns the value of an environment variable or a default if not set.
+func getenv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return def
 }
 
-// getenvInt fetches an environment variable as an integer or returns a default value
+// getenvInt returns the value of an environment variable as an integer or a default if not set.
 func getenvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {

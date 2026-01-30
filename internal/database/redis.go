@@ -9,21 +9,18 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
-// InitRedis initializes the Redis client with configuration from environment variables
+
+// InitRedis initializes a Redis client with configuration from environment variables.
+// It returns the client or an error if the connection test fails.
 func InitRedis() (*redis.Client, error) {
-	
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found (ok):", err)
 	}
 
 	client := redis.NewClient(&redis.Options{
-
-		// same as docker compose file
-		Addr:    getenv("REDIS_ADDR", "localhost:6379"),
+		Addr:     getenv("REDIS_ADDR", "localhost:6379"),
 		Password: getenv("REDIS_PASSWORD", ""),
-		// no password set
-		// use default DB
-		DB: getenvInt("REDIS_DB", 0),
+		DB:       getenvInt("REDIS_DB", 0),
 	})
 	if err := TestRedisConnection(client); err != nil {
 		return nil, err
@@ -35,12 +32,12 @@ func InitRedis() (*redis.Client, error) {
 // using background context because this is happening at startup
 func TestRedisConnection(client *redis.Client) error {
 	log.Println("Testing redis connection...")
-	ctx := context.Background()
-	pong, err := client.Ping(ctx).Result()
+	pong, err := client.Ping(context.Background()).Result()
 	if err != nil {
 		log.Printf("Failed to connect to Redis: %v", err)
+		return err
 	}
 	log.Printf("Redis connection successful: %s", pong)
-	return err
+	return nil
 }
 

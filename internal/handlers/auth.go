@@ -11,22 +11,23 @@ import (
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"gorm.io/gorm"
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 )
 
+// AuthHandler handles authentication-related HTTP requests.
 type AuthHandler struct {
 	DB *gorm.DB
 }
 
-// AuthRequest represents the expected structure of the authentication request
+// AuthRequest represents the JSON body for signup and login requests.
 type AuthRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 	// some other field for admin signup can be added later
 }
 
-// CreateAuthHandler initializes a new AuthHandler with the given database connection
+// CreateAuthHandler returns a new AuthHandler with the given database connection.
 func CreateAuthHandler(db *gorm.DB) *AuthHandler {
 	return &AuthHandler{DB: db}
 }

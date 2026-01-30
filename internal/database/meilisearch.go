@@ -9,7 +9,8 @@ import (
 	"github.com/meilisearch/meilisearch-go"
 )
 
-// InitMeilisearch initializes the Meilisearch client and ensures the specified index exists
+// InitMeilisearch initializes the Meilisearch client and ensures the index exists.
+// It returns the client, index name, or an error if initialization fails.
 func InitMeilisearch() (meilisearch.ServiceManager, string, error) {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found (ok):", err)
@@ -38,7 +39,8 @@ func InitMeilisearch() (meilisearch.ServiceManager, string, error) {
 
 	return client, indexName, nil
 }
-// TestMeilisearchConnection checks the connectivity to the Meilisearch server
+
+// TestMeilisearchConnection verifies connectivity to the Meilisearch server.
 func TestMeilisearchConnection(client meilisearch.ServiceManager) error {
 	log.Println("Testing Meilisearch connection...")
 	health, err := client.Health()
@@ -52,7 +54,8 @@ func TestMeilisearchConnection(client meilisearch.ServiceManager) error {
 	log.Printf("Meilisearch connection successful: %s", health.Status)
 	return nil
 }
-// EnsureMeilisearchIndex checks if the specified index exists, and creates it if not
+
+// EnsureMeilisearchIndex creates the index if it does not already exist.
 func EnsureMeilisearchIndex(client meilisearch.ServiceManager, indexName string) error {
 	if indexName == "" {
 		return errors.New("meilisearch index name is empty")

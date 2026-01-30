@@ -13,14 +13,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// NoteHandler structure
+// NoteHandler handles HTTP requests for note operations.
 type NoteHandler struct {
 	DB          *gorm.DB
 	Search      meilisearch.ServiceManager
 	SearchIndex string
 }
 
-// CreateNoteHandler initializes a new NoteHandler with the given database connection
+// CreateNoteHandler returns a new NoteHandler with the given dependencies.
 func CreateNoteHandler(db *gorm.DB, search meilisearch.ServiceManager, indexName string) *NoteHandler {
 	return &NoteHandler{
 		DB:          db,
@@ -357,8 +357,11 @@ func (handler *NoteHandler) indexNote(note models.Note) error {
 	_, err := index.AddDocuments([]models.Note{note}, &meilisearch.DocumentOptions{
 		PrimaryKey: meilisearch.StringPtr("id"),
 	})
-	log.Printf("successfully indexed note with ID: %d in Meilisearch", note.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	log.Printf("Successfully indexed note ID %d", note.ID)
+	return nil
 }
 
 // removeNoteFromIndex removes a note from the Meilisearch index

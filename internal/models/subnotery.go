@@ -1,11 +1,11 @@
-// Package models/subnotery.go contains the Subnotery model definition
+// Package models defines the domain entities and their database mappings.
 package models
 
 import (
 	"time"
 )
 
-// Subnotery represents a subnotery in the system
+// Subnotery represents a note community with designated admins.
 type Subnotery struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	Name      string    `json:"name" gorm:"unique; not null"`

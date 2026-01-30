@@ -2,14 +2,15 @@
 package handlers
 
 import (
-	"net/http"
 	"log"
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
 
+// CartHandler handles shopping cart HTTP requests backed by Redis.
 type CartHandler struct {
 	RDB *redis.Client
 }
