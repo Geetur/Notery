@@ -35,4 +35,3 @@ volumes:
   postgres_data:
   redis_data:
   meilisearch_data:
-

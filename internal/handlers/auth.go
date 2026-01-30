@@ -8,11 +8,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
+
+	"github.com/Geetur/Notery/internal/models"
 )
 
 // AuthHandler handles authentication-related HTTP requests.
@@ -31,7 +32,6 @@ type AuthRequest struct {
 func CreateAuthHandler(db *gorm.DB) *AuthHandler {
 	return &AuthHandler{DB: db}
 }
-
 
 // Signup handles user authentication and JWT token generation
 // Signup interacts with the User model and database to verify credentials.
@@ -97,11 +97,11 @@ func (handler *AuthHandler) Login(c *gin.Context) {
 	// Generate JWT token
 	log.Println("generating JWT token for user:", authReq.Email)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": fmt.Sprint(user.ID), // include user ID in token claims
+		"user_id": fmt.Sprint(user.ID),                   // include user ID in token claims
 		"exp":     time.Now().Add(time.Hour * 24).Unix(), // token expires in 24 hours
 	})
 	log.Println("JWT token generated.")
-	
+
 	// Load secret key from environment variable
 	log.Println("loading JWT secret from environment...")
 	if err := godotenv.Load(); err != nil {
@@ -124,7 +124,7 @@ func (handler *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	log.Println("successfully generated JWT token for user:", authReq.Email)
-	
+
 	// Return the token in the response
 	log.Println("successfully logged user in:", authReq.Email)
 	c.JSON(http.StatusOK, gin.H{"token": tokenString})

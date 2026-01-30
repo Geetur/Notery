@@ -7,10 +7,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/meilisearch/meilisearch-go"
 	"gorm.io/gorm"
+
+	"github.com/Geetur/Notery/internal/models"
 )
 
 // NoteHandler handles HTTP requests for note operations.
@@ -31,13 +32,12 @@ func CreateNoteHandler(db *gorm.DB, search meilisearch.ServiceManager, indexName
 
 // now we want to define different functions to handle CRUD operations for notes
 // so, if we want to create a new note, and also get all notes, we call
-// two seperate functions, for example
+// two separate functions, for example
 
 // CreateNote is a method of NoteHandler that handles the creation of a new note.
 // CreateNote interacts with the database to create a new note record and ensure its subnotery exists.
 // CreateNote auto-creates the subnotery when missing and assigns the creator as its first admin.
 func (handler *NoteHandler) CreateNote(c *gin.Context) {
-	
 	log.Println("Binding JSON request for note creation...")
 	var req struct {
 		SubnoteryName string  `json:"subnotery_name" binding:"required"`
@@ -173,7 +173,6 @@ func (handler *NoteHandler) DeleteNote(c *gin.Context) {
 // RejectNote interacts with the database to update the note's status to "Rejected".
 // RejectNote does not interact with any handler methods.
 func (handler *NoteHandler) RejectNote(c *gin.Context) {
-
 	noteID := c.Param("id")
 	var note models.Note
 	log.Printf("Fetching note with ID: %s for rejection", noteID)
@@ -348,7 +347,6 @@ func (handler *NoteHandler) GetApprovedNotes(c *gin.Context) {
 // indexNote interacts with Meilisearch to index the approved note.
 // indexNote interacts with no other handler methods.
 func (handler *NoteHandler) indexNote(note models.Note) error {
-
 	log.Printf("trying to index note with ID: %d in Meilisearch", note.ID)
 	if handler.Search == nil || handler.SearchIndex == "" {
 		return errors.New("meilisearch is not configured")

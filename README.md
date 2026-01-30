@@ -108,7 +108,7 @@ JWT_SECRET=your-super-secret-key
    curl http://localhost:8080/health
    ```
 
-## API Endpoints
+## API Endpoints (RBAC)
 
 ### Public
 
@@ -150,5 +150,3 @@ go test ./...
 Copyright (c) 2026 Jeter Pontes. All rights reserved.
 
 This repository is proprietary. No permission is granted to use, copy, modify, or distribute this code without explicit written permission.
-
-

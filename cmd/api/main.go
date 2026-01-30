@@ -4,14 +4,14 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/Geetur/Notery/internal/database"
 	"github.com/Geetur/Notery/internal/handlers"
 	"github.com/Geetur/Notery/internal/middleware"
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
-
 	// ----- setting up the database connection ----------------------------------------------
 	log.Println("initializing database...")
 	db, err := database.InitDatabase()
@@ -46,7 +46,7 @@ func main() {
 	// initializing the note handler with the database connection
 	noteHandler := handlers.CreateNoteHandler(db, meiliClient, meiliIndex)
 	// this needs to be changed so it dosent rely on database package directly
-	cartHandler := handlers.CreateCartHandler(redisClient)
+	cartHandler := handlers.CreateCartHandler(redisClient, db)
 
 	authHandler := handlers.CreateAuthHandler(db)
 
