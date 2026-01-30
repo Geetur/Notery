@@ -2,12 +2,12 @@
 package middleware
 
 import (
-	"net/http"
-	"log"
 	"fmt"
+	"log"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
-	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

@@ -1,22 +1,26 @@
+// Package handlers provides HTTP request handlers for the Notery API.
 package handlers
 
 import (
+	"log"
+	"net/http"
+
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"log"
-	"net/http"
 )
 
+// SubnoteryHandler handles subnotery management HTTP requests.
 type SubnoteryHandler struct {
 	DB *gorm.DB
 }
 
-// CreateSubnoteryHandler initializes a new SubnoteryHandler with the given database connection
+// CreateSubnoteryHandler returns a new SubnoteryHandler with the given database connection.
 func CreateSubnoteryHandler(db *gorm.DB) *SubnoteryHandler {
 	return &SubnoteryHandler{DB: db}
 }
 
+// AddAdminToSubnotery grants admin privileges to a user for a specific subnotery.
 func (h *SubnoteryHandler) AddAdminToSubnotery(c *gin.Context) {
 	log.Println("Adding admin to subnotery...")
 
