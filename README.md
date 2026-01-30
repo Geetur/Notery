@@ -147,5 +147,8 @@ go test ./...
 ```
 
 ## License
+Copyright (c) 2026 Jeter Pontes. All rights reserved.
+
+This repository is proprietary. No permission is granted to use, copy, modify, or distribute this code without explicit written permission.
 
 
