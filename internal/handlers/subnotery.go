@@ -5,9 +5,10 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+
+	"github.com/Geetur/Notery/internal/models"
 )
 
 // SubnoteryHandler handles subnotery management HTTP requests.
@@ -66,5 +67,4 @@ func (h *SubnoteryHandler) AddAdminToSubnotery(c *gin.Context) {
 	log.Println("Admin added to subnotery successfully:", user.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Admin added to subnotery successfully"})
-
 }

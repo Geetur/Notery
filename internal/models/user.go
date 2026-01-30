@@ -9,8 +9,8 @@ import (
 type User struct {
 	ID            uint        `json:"id" gorm:"primaryKey"`
 	Email         string      `json:"email" gorm:"unique; not null"`
-	Password      string      `json:"password" gorm:"-"`      // input only, not persisted
-	Hash          string      `json:"-" gorm:"not null"`      // bcrypt hash, not exposed in JSON
+	Password      string      `json:"password" gorm:"-"` // input only, not persisted
+	Hash          string      `json:"-" gorm:"not null"` // bcrypt hash, not exposed in JSON
 	AdminOf       []Subnotery `json:"admin_of" gorm:"many2many:user_admins;"`
 	IsGlobalAdmin bool        `json:"is_global_admin" gorm:"default:false"`
 }

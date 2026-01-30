@@ -8,16 +8,17 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/Geetur/Notery/internal/models"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	"github.com/Geetur/Notery/internal/models"
 )
 
 // InitDatabase initializes the PostgreSQL connection and runs migrations.
 // It returns the database connection pool or an error if initialization fails.
 func InitDatabase() (*gorm.DB, error) {
-	// logging what is occuring, but not forcing faliure
+	// logging what is occurring, but not forcing faliure
 	// to maintain a resistant service
 	log.Println("Attempting to connect to database...")
 	db, err := connect()
@@ -39,7 +40,6 @@ func InitDatabase() (*gorm.DB, error) {
 // create returns the database connection pool
 
 func connect() (*gorm.DB, error) {
-
 	// get our data source name (DSN), with credentials matching that within
 	// the docker compose file. Load environment variables from .env file if it exists
 

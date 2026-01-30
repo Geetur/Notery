@@ -1,4 +1,4 @@
-// Package database/redis.go contains the Redis 
+// Package database/redis.go contains the Redis
 // client initialization and connection testing logic
 package database
 
@@ -40,4 +40,3 @@ func TestRedisConnection(client *redis.Client) error {
 	log.Printf("Redis connection successful: %s", pong)
 	return nil
 }
-

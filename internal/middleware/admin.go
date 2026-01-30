@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+
+	"github.com/Geetur/Notery/internal/models"
 )
 
 // RequireAdmin is a middleware function that checks if the authenticated user has admin privileges
@@ -23,8 +24,6 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 		log.Println("Extracting user ID from context...")
 		userID := c.MustGet("user_id").(uint64)
 		log.Println("User ID extracted from context:", userID)
-
-		
 
 		// check if user is a global admin
 		log.Println("Checking if user is a global admin...")
