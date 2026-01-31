@@ -13,6 +13,9 @@ type Note struct {
 	Status      string    `json:"status" gorm:"index"`
 	SubnoteryID uint      `json:"subnotery_id" gorm:"index;not null"`
 	Price       float64   `json:"price"`
+	Upvotes     uint64    `json:"upvotes" gorm:"default:0"`
+	Downvotes   uint64    `json:"downvotes" gorm:"default:0"`
+	Hotness     float64   `json:"hotness" gorm:"index"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -19,6 +20,7 @@ type NoteHandler struct {
 	DB          *gorm.DB
 	Search      meilisearch.ServiceManager
 	SearchIndex string
+	Feed        *FeedHandler // optional, for hot feed integration
 }
 
 // CreateNoteHandler returns a new NoteHandler with the given dependencies.
@@ -27,6 +29,29 @@ func CreateNoteHandler(db *gorm.DB, search meilisearch.ServiceManager, indexName
 		DB:          db,
 		Search:      search,
 		SearchIndex: indexName,
+	}
+}
+
+// SetFeedHandler sets the FeedHandler for hot feed integration.
+func (handler *NoteHandler) SetFeedHandler(feed *FeedHandler) {
+	handler.Feed = feed
+}
+
+// addToFeed adds a note to the hot feed if FeedHandler is configured.
+func (handler *NoteHandler) addToFeed(ctx context.Context, note *models.Note) {
+	if handler.Feed != nil {
+		if err := handler.Feed.AddNoteToFeed(ctx, note); err != nil {
+			log.Printf("Failed to add note to feed: %v", err)
+		}
+	}
+}
+
+// removeFromFeed removes a note from the hot feed if FeedHandler is configured.
+func (handler *NoteHandler) removeFromFeed(ctx context.Context, note *models.Note) {
+	if handler.Feed != nil {
+		if err := handler.Feed.RemoveNoteFromFeed(ctx, note); err != nil {
+			log.Printf("Failed to remove note from feed: %v", err)
+		}
 	}
 }
 
@@ -91,6 +116,15 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 				log.Println("Failed to assign creator as first admin for subnotery:", err)
 				return err
 			}
+			log.Println("Creator assigned as first admin for subnotery:", subnotery.ID)
+
+			// adding creator as a member of the subnotery as well
+			log.Println("Adding creator as member of the subnotery:", subnotery.ID)
+			if err := tx.Model(&subnotery).Association("Members").Append(&user); err != nil {
+				log.Println("Failed to add creator as member of the subnotery:", err)
+				return err
+			}
+			log.Println("Creator added as member of the subnotery:", subnotery.ID)
 		}
 
 		// create the note
@@ -142,7 +176,7 @@ func (handler *NoteHandler) DeleteNote(c *gin.Context) {
 		return
 	}
 	log.Printf("Note with ID: %s fetched successfully for deletion", noteID)
-	// if the note is approved, we need to remove it from Meilisearch first
+	// if the note is approved, we need to remove it from Meilisearch and feed first
 	log.Printf("Trying to delete note with ID from meilisearch: %s", noteID)
 	if note.Status == "Approved" {
 		if err := handler.removeNoteFromIndex(note.ID); err != nil {
@@ -150,6 +184,8 @@ func (handler *NoteHandler) DeleteNote(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
 			return
 		}
+		// Remove from hot feed
+		handler.removeFromFeed(c.Request.Context(), &note)
 	}
 	log.Printf("Successfully deleted note with ID from meilisearch: %s", noteID)
 	// now we can delete the note from the database
@@ -208,6 +244,8 @@ func (handler *NoteHandler) RejectNote(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
 			return
 		}
+		// Remove from hot feed
+		handler.removeFromFeed(c.Request.Context(), &note)
 	}
 	log.Printf("Successfully removed approved note from meilisearch for note ID: %s", noteID)
 
@@ -269,6 +307,10 @@ func (handler *NoteHandler) ApproveNote(c *gin.Context) {
 		return
 	}
 	log.Printf("Successfully updated search index with approved note with ID: %s", noteID)
+
+	// Add to hot feed
+	handler.addToFeed(c.Request.Context(), &note)
+
 	// successful approval
 	c.JSON(http.StatusOK, gin.H{"message": "Note approved successfully"})
 }
