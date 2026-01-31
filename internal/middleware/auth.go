@@ -85,3 +85,61 @@ func RequireAuth(c *gin.Context) {
 		return
 	}
 }
+
+// OptionalAuth is a middleware that extracts user info from JWT if present,
+// but allows the request to proceed even without authentication.
+// Use this for endpoints that work for both logged-in and anonymous users.
+func OptionalAuth(c *gin.Context) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		// No auth header, proceed as anonymous
+		c.Next()
+		return
+	}
+
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenString == authHeader {
+		// Invalid format, proceed as anonymous
+		c.Next()
+		return
+	}
+
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found (ok):", err)
+	}
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(os.Getenv("JWT_SECRET")), nil
+	})
+
+	if err != nil || !token.Valid {
+		// Invalid token, proceed as anonymous
+		c.Next()
+		return
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.Next()
+		return
+	}
+
+	userID, exists := claims["user_id"]
+	if !exists {
+		c.Next()
+		return
+	}
+
+	userIDStr := fmt.Sprint(userID)
+	userIDUint, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		c.Next()
+		return
+	}
+
+	c.Set("user_id", userIDUint)
+	c.Next()
+}

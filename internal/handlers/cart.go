@@ -50,6 +50,7 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 	log.Println("User ID extracted from context:", userID)
 
 	// Verify note exists and is approved
+	log.Println("Verifying note exists and is approved...")
 	var note models.Note
 	if err := handler.DB.First(&note, cartReq.ItemID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
@@ -59,6 +60,7 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only approved notes can be added to cart"})
 		return
 	}
+	log.Println("Note verified as approved:", note.ID)
 
 	key := "cart:" + strconv.FormatUint(userID, 10)
 	field := cartReq.ItemID

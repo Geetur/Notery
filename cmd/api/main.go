@@ -50,6 +50,13 @@ func main() {
 
 	authHandler := handlers.CreateAuthHandler(db)
 
+	subnoteryHandler := handlers.CreateSubnoteryHandler(db)
+
+	feedHandler := handlers.CreateFeedHandler(redisClient, db)
+
+	// Wire up feed handler to note handler for hot feed updates
+	noteHandler.SetFeedHandler(feedHandler)
+
 	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -63,6 +70,9 @@ func main() {
 	api.POST("/signup", authHandler.Signup)
 	api.POST("/login", authHandler.Login)
 
+	// feed endpoint (public with optional auth for personalization)
+	api.GET("/feed/hot", middleware.OptionalAuth, feedHandler.GetHotFeed)
+
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
 	protected.Use(middleware.RequireAuth)
@@ -72,10 +82,17 @@ func main() {
 		protected.POST("/notes", noteHandler.CreateNote)
 		protected.GET("/notes/approved", noteHandler.GetApprovedNotes)
 
+		// voting endpoints
+		protected.POST("/notes/:id/upvote", feedHandler.Upvote)
+		protected.POST("/notes/:id/downvote", feedHandler.Downvote)
+
 		// cart endpoints
 		protected.GET("/cart", cartHandler.GetCart)
 		protected.POST("/cart", cartHandler.AddToCart)
 		protected.DELETE("/cart/:item_id", cartHandler.RemoveFromCart)
+
+		//subnotery endpoints
+		protected.POST("/subnoteries/:subnotery_id/join", subnoteryHandler.JoinSubnotery)
 	}
 
 	// applying the RequireAdmin middleware to admin-only routes
@@ -87,6 +104,9 @@ func main() {
 		adminProtected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
 		adminProtected.PATCH("/notes/:id/reject", noteHandler.RejectNote)
 		adminProtected.DELETE("/notes/:id", noteHandler.DeleteNote)
+
+		// subnotery admin endpoints
+		adminProtected.POST("/subnoteries/:subnotery_id/admins", subnoteryHandler.AddAdminToSubnotery)
 	}
 
 	// starting the API server

@@ -68,3 +68,41 @@ func (h *SubnoteryHandler) AddAdminToSubnotery(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Admin added to subnotery successfully"})
 }
+
+func (h *SubnoteryHandler) JoinSubnotery(c *gin.Context) {
+	log.Println("User joining subnotery...")
+
+	subnoteryID := c.Param("subnotery_id")
+	// looking up subnotery in database
+
+	log.Println("Looking up subnotery in database...")
+	var subnotery models.Subnotery
+	if err := h.DB.Where("id = ?", subnoteryID).First(&subnotery).Error; err != nil {
+		log.Println("Subnotery not found:", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
+		return
+	}
+	log.Println("Subnotery found:", subnotery.ID)
+
+	// get user ID from context
+	log.Println("Extracting user ID from context...")
+	userID := c.MustGet("user_id").(uint64)
+	log.Println("User ID extracted from context:", userID)
+
+	
+	// add user as member to subnotery
+	log.Println("adding user as member to subnotery...")
+	var user models.User
+	if err := h.DB.First(&user, userID).Error; err != nil {
+		log.Println("User not found:", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	if err := h.DB.Model(&subnotery).Association("Members").Append(&user); err != nil {
+		log.Println("Failed to add member to subnotery:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to join subnotery"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Joined subnotery successfully"})
+}
