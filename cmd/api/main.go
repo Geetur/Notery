@@ -54,20 +54,15 @@ func main() {
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
-	// ----- Handler Initialization -----
 	// initializing the note handler with the database connection
 	noteHandler := handlers.CreateNoteHandler(db, meiliClient, meiliIndex)
-
-	// cart handler for shopping cart operations (backed by Redis)
+	// this needs to be changed so it dosent rely on database package directly
 	cartHandler := handlers.CreateCartHandler(redisClient, db)
 
-	// auth handler for login/signup
 	authHandler := handlers.CreateAuthHandler(db)
 
-	// subnotery handler for community management
 	subnoteryHandler := handlers.CreateSubnoteryHandler(db)
 
-	// feed handler for hot/trending notes (backed by Redis sorted sets)
 	feedHandler := handlers.CreateFeedHandler(redisClient, db)
 
 	// content handler for PDF operations (backed by R2)
@@ -102,7 +97,7 @@ func main() {
 	protected := api.Group("")
 	protected.Use(middleware.RequireAuth)
 	{
-		// ----- Note Endpoints -----
+		// note endpoints
 		protected.GET("/notes/:id", noteHandler.GetNoteByID)
 		protected.POST("/notes", noteHandler.CreateNote)
 		protected.GET("/notes/approved", noteHandler.GetApprovedNotes)
@@ -113,11 +108,11 @@ func main() {
 		// View/stream PDF content (requires purchase or admin access)
 		protected.GET("/notes/:id/content", contentHandler.GetNotePDFContent)
 
-		// ----- Voting Endpoints -----
+		// voting endpoints
 		protected.POST("/notes/:id/upvote", feedHandler.Upvote)
 		protected.POST("/notes/:id/downvote", feedHandler.Downvote)
 
-		// ----- Cart Endpoints -----
+		// cart endpoints
 		protected.GET("/cart", cartHandler.GetCart)
 		protected.POST("/cart", cartHandler.AddToCart)
 		protected.DELETE("/cart/:item_id", cartHandler.RemoveFromCart)
@@ -136,7 +131,7 @@ func main() {
 		// Get detailed purchase history with pagination
 		protected.GET("/me/purchases/history", purchaseHandler.GetPurchaseHistory)
 
-		// ----- Subnotery Endpoints -----
+		//subnotery endpoints
 		protected.POST("/subnoteries/:subnotery_id/join", subnoteryHandler.JoinSubnotery)
 	}
 
@@ -144,14 +139,10 @@ func main() {
 	adminProtected := protected.Group("")
 	adminProtected.Use(middleware.RequireAdmin(db))
 	{
-		// ----- Note Admin Endpoints -----
-		// Get pending notes for review (scoped to admin's subnoteries)
+		// note admin endpoints
 		adminProtected.GET("/notes/pending", noteHandler.GetPendingNotes)
-		// Approve a note (requires PDF to be uploaded)
 		adminProtected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
-		// Reject a note (deletes note and PDF)
 		adminProtected.PATCH("/notes/:id/reject", noteHandler.RejectNote)
-		// Delete a note (removes from search, feed, and R2)
 		adminProtected.DELETE("/notes/:id", noteHandler.DeleteNote)
 
 		// ----- PDF Admin Endpoints -----
@@ -160,7 +151,7 @@ func main() {
 		// Delete PDF content only (without deleting note)
 		adminProtected.DELETE("/admin/notes/:id/content", contentHandler.DeleteNotePDF)
 
-		// ----- Subnotery Admin Endpoints -----
+		// subnotery admin endpoints
 		adminProtected.POST("/subnoteries/:subnotery_id/admins", subnoteryHandler.AddAdminToSubnotery)
 	}
 

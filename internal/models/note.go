@@ -21,6 +21,10 @@ type Note struct {
 	// ID is the primary key for all intents and purposes
 	ID uint `json:"id" gorm:"primaryKey"`
 
+	// CreatorID links this note to the user who created it
+	// This allows creators to always view their own notes
+	CreatorID uint64 `json:"creator_id" gorm:"index;not null"`
+
 	// Title and Author are the main queryable fields for search
 	Title  string `json:"title" gorm:"index"`
 	Author string `json:"author" gorm:"index"`
@@ -57,4 +61,3 @@ type Note struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
-

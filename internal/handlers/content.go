@@ -74,11 +74,11 @@ func CreateContentHandler(db *gorm.DB, r2 *database.R2Client) *ContentHandler {
 type AccessLevel int
 
 const (
-	AccessNone         AccessLevel = iota // No access
-	AccessPurchased                       // User purchased this note
-	AccessCreator                         // User created this note
-	AccessSubAdmin                        // User is admin of the note's subnotery
-	AccessGlobalAdmin                     // User is a global admin
+	AccessNone        AccessLevel = iota // No access
+	AccessPurchased                      // User purchased this note
+	AccessCreator                        // User created this note
+	AccessSubAdmin                       // User is admin of the note's subnotery
+	AccessGlobalAdmin                    // User is a global admin
 )
 
 // CheckNoteAccess determines what access level a user has for a specific note.
@@ -92,6 +92,12 @@ const (
 // Returns the highest access level the user has.
 func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
 	log.Printf("Checking access for user %d on note %d", userID, note.ID)
+
+	// Check if user is the creator of this note (always has access)
+	if note.CreatorID == userID {
+		log.Printf("User %d is the creator of note %d", userID, note.ID)
+		return AccessCreator
+	}
 
 	// Check if user is global admin
 	var user models.User
@@ -134,12 +140,12 @@ func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note)
 }
 
 // CanViewPendingNote checks if a user can view a pending note's PDF.
-// Only admins (subnotery or global) can view pending notes.
+// Only creators and admins (subnotery or global) can view pending notes.
 // CanViewPendingNote interacts with CheckNoteAccess.
 // CanViewPendingNote does not interact with any other handler methods.
 func (handler *ContentHandler) CanViewPendingNote(userID uint64, note *models.Note) bool {
 	access := handler.CheckNoteAccess(userID, note)
-	return access == AccessSubAdmin || access == AccessGlobalAdmin
+	return access == AccessCreator || access == AccessSubAdmin || access == AccessGlobalAdmin
 }
 
 // CanViewApprovedNote checks if a user can view an approved note's PDF.
@@ -241,7 +247,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 	}
 
 	// Update note metadata
-	
+
 	if err := handler.DB.Model(&note).Updates(map[string]interface{}{
 		"has_pdf":         true,
 		"pdf_size":        header.Size,
