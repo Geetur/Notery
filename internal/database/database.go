@@ -66,8 +66,26 @@ func connect() (*gorm.DB, error) {
 }
 
 // migrate applies database schema migrations using GORM AutoMigrate.
+// AutoMigrate creates tables, missing columns, and indexes.
+// It does NOT delete unused columns to protect data.
 func migrate(db *gorm.DB) error {
-	return db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{})
+	// First, migrate all models
+	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}); err != nil {
+		return err
+	}
+
+	// Create a unique composite index on purchases to prevent duplicate purchases.
+	// A user can only purchase a note once.
+	// We use raw SQL here because GORM's AutoMigrate doesn't handle composite unique indexes well.
+	if err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_user_note 
+		ON purchases(user_id, note_id)
+	`).Error; err != nil {
+		log.Printf("Warning: Could not create unique index on purchases (may already exist): %v", err)
+		// Don't return error - index might already exist
+	}
+
+	return nil
 }
 
 // getenv returns the value of an environment variable or a default if not set.
