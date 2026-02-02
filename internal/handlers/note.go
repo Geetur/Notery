@@ -21,8 +21,8 @@ type NoteHandler struct {
 	DB          *gorm.DB
 	Search      meilisearch.ServiceManager
 	SearchIndex string
-	Feed        *FeedHandler           // optional, for hot feed integration
-	R2          *database.R2Client     // optional, for PDF storage cleanup
+	Feed        *FeedHandler       // optional, for hot feed integration
+	R2          *database.R2Client // optional, for PDF storage cleanup
 }
 
 // CreateNoteHandler returns a new NoteHandler with the given dependencies.
@@ -44,6 +44,17 @@ func (handler *NoteHandler) SetR2Client(r2 *database.R2Client) {
 	handler.R2 = r2
 }
 
+// deletePDFFromR2 removes a note's PDF from R2 storage if R2 is configured.
+func (handler *NoteHandler) deletePDFFromR2(ctx context.Context, noteID uint) {
+	if handler.R2 != nil {
+		if err := handler.R2.DeletePDF(ctx, noteID); err != nil {
+			log.Printf("Failed to delete PDF for note %d from R2: %v", noteID, err)
+		} else {
+			log.Printf("Deleted PDF for note %d from R2", noteID)
+		}
+	}
+}
+
 // addToFeed adds a note to the hot feed if FeedHandler is configured.
 func (handler *NoteHandler) addToFeed(ctx context.Context, note *models.Note) {
 	if handler.Feed != nil {
@@ -58,19 +69,6 @@ func (handler *NoteHandler) removeFromFeed(ctx context.Context, note *models.Not
 	if handler.Feed != nil {
 		if err := handler.Feed.RemoveNoteFromFeed(ctx, note); err != nil {
 			log.Printf("Failed to remove note from feed: %v", err)
-		}
-	}
-}
-
-// deletePDFFromR2 removes a note's PDF from R2 storage if R2Client is configured.
-// deletePDFFromR2 interacts with R2 to delete PDF content.
-// deletePDFFromR2 does not interact with any other handler methods.
-func (handler *NoteHandler) deletePDFFromR2(ctx context.Context, noteID uint) {
-	if handler.R2 != nil {
-		if err := handler.R2.DeletePDF(ctx, noteID); err != nil {
-			log.Printf("Failed to delete PDF from R2 for note %d: %v", noteID, err)
-		} else {
-			log.Printf("Successfully deleted PDF from R2 for note %d", noteID)
 		}
 	}
 }
@@ -155,6 +153,7 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 			Price:       req.Price,
 			Status:      "Pending",
 			SubnoteryID: subnotery.ID,
+			CreatorID:   userID,
 		}
 		// create the note record in the database
 		log.Println("Trying to create note with title:", note.Title)
@@ -178,7 +177,6 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 // DeleteNote removes the note from both the database and Meilisearch if approved.
 // DeleteNote interacts with the removeNoteFromIndex and indexNote handler methods.
 func (handler *NoteHandler) DeleteNote(c *gin.Context) {
-	
 	noteID := c.Param("id")
 	// declare a note variable to hold the fetched note
 	var note models.Note
@@ -297,7 +295,6 @@ func (handler *NoteHandler) RejectNote(c *gin.Context) {
 // ApproveNote is a method of NoteHandler that handles approving a note by ID.
 // ApproveNote updates the note's status to "Approved" and indexes it in Meilisearch.
 // ApproveNote interacts with the indexNote handler method.
-// ApproveNote requires the note to have a PDF uploaded before approval.
 func (handler *NoteHandler) ApproveNote(c *gin.Context) {
 	noteID := c.Param("id")
 	var note models.Note
