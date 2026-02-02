@@ -39,23 +39,48 @@ func main() {
 	log.Println("Meilisearch initialized.")
 	// ------ initializing Meilisearch connection ----------------------------------------------
 
+	// ------ initializing Cloudflare R2 connection ------------------------------------------
+	// R2 stores PDF content for notes. PDFs are served through proxy endpoints,
+	// never directly exposed to users. This prevents unauthorized downloads.
+	log.Println("initializing Cloudflare R2...")
+	r2Client, err := database.InitR2()
+	if err != nil {
+		log.Fatalf("Failed to initialize Cloudflare R2: %v", err)
+	}
+	log.Println("Cloudflare R2 initialized.")
+	// ------ initializing Cloudflare R2 connection ------------------------------------------
+
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
+	// ----- Handler Initialization -----
 	// initializing the note handler with the database connection
 	noteHandler := handlers.CreateNoteHandler(db, meiliClient, meiliIndex)
-	// this needs to be changed so it dosent rely on database package directly
+
+	// cart handler for shopping cart operations (backed by Redis)
 	cartHandler := handlers.CreateCartHandler(redisClient, db)
 
+	// auth handler for login/signup
 	authHandler := handlers.CreateAuthHandler(db)
 
+	// subnotery handler for community management
 	subnoteryHandler := handlers.CreateSubnoteryHandler(db)
 
+	// feed handler for hot/trending notes (backed by Redis sorted sets)
 	feedHandler := handlers.CreateFeedHandler(redisClient, db)
+
+	// content handler for PDF operations (backed by R2)
+	// This handles PDF uploads, viewing, and access control
+	contentHandler := handlers.CreateContentHandler(db, r2Client)
+
+	// purchase handler for checkout and purchase history
+	purchaseHandler := handlers.CreatePurchaseHandler(db, redisClient)
 
 	// Wire up feed handler to note handler for hot feed updates
 	noteHandler.SetFeedHandler(feedHandler)
+	// Wire up R2 client to note handler for PDF cleanup on delete/reject
+	noteHandler.SetR2Client(r2Client)
 
 	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -77,21 +102,41 @@ func main() {
 	protected := api.Group("")
 	protected.Use(middleware.RequireAuth)
 	{
-		// note endpoints
+		// ----- Note Endpoints -----
 		protected.GET("/notes/:id", noteHandler.GetNoteByID)
 		protected.POST("/notes", noteHandler.CreateNote)
 		protected.GET("/notes/approved", noteHandler.GetApprovedNotes)
 
-		// voting endpoints
+		// ----- PDF Content Endpoints -----
+		// Upload PDF for a note (note creator uploads after creating note metadata)
+		protected.POST("/notes/:id/content", contentHandler.UploadNotePDF)
+		// View/stream PDF content (requires purchase or admin access)
+		protected.GET("/notes/:id/content", contentHandler.GetNotePDFContent)
+
+		// ----- Voting Endpoints -----
 		protected.POST("/notes/:id/upvote", feedHandler.Upvote)
 		protected.POST("/notes/:id/downvote", feedHandler.Downvote)
 
-		// cart endpoints
+		// ----- Cart Endpoints -----
 		protected.GET("/cart", cartHandler.GetCart)
 		protected.POST("/cart", cartHandler.AddToCart)
 		protected.DELETE("/cart/:item_id", cartHandler.RemoveFromCart)
 
-		//subnotery endpoints
+		// ----- Purchase Endpoints -----
+		// Checkout entire cart
+		protected.POST("/checkout", purchaseHandler.CheckoutCart)
+		// Direct purchase of single note (bypass cart)
+		protected.POST("/notes/:id/purchase", purchaseHandler.PurchaseSingleNote)
+		// Check if user purchased a specific note
+		protected.GET("/notes/:id/purchased", purchaseHandler.CheckPurchaseStatus)
+
+		// ----- User Account Endpoints -----
+		// Get all purchased notes (for "My Purchases" page)
+		protected.GET("/me/purchases", contentHandler.GetMyPurchases)
+		// Get detailed purchase history with pagination
+		protected.GET("/me/purchases/history", purchaseHandler.GetPurchaseHistory)
+
+		// ----- Subnotery Endpoints -----
 		protected.POST("/subnoteries/:subnotery_id/join", subnoteryHandler.JoinSubnotery)
 	}
 
@@ -99,13 +144,23 @@ func main() {
 	adminProtected := protected.Group("")
 	adminProtected.Use(middleware.RequireAdmin(db))
 	{
-		// note admin endpoints
+		// ----- Note Admin Endpoints -----
+		// Get pending notes for review (scoped to admin's subnoteries)
 		adminProtected.GET("/notes/pending", noteHandler.GetPendingNotes)
+		// Approve a note (requires PDF to be uploaded)
 		adminProtected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
+		// Reject a note (deletes note and PDF)
 		adminProtected.PATCH("/notes/:id/reject", noteHandler.RejectNote)
+		// Delete a note (removes from search, feed, and R2)
 		adminProtected.DELETE("/notes/:id", noteHandler.DeleteNote)
 
-		// subnotery admin endpoints
+		// ----- PDF Admin Endpoints -----
+		// Preview PDF during approval (same as user view but uses admin access)
+		adminProtected.GET("/admin/notes/:id/preview", contentHandler.AdminPreviewPDF)
+		// Delete PDF content only (without deleting note)
+		adminProtected.DELETE("/admin/notes/:id/content", contentHandler.DeleteNotePDF)
+
+		// ----- Subnotery Admin Endpoints -----
 		adminProtected.POST("/subnoteries/:subnotery_id/admins", subnoteryHandler.AddAdminToSubnotery)
 	}
 
