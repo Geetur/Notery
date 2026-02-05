@@ -22,7 +22,7 @@
 package handlers
 
 import (
-	"log"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,8 +31,12 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
+	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 )
+
+// purchaseLog is the shared logger for purchase operations
+var purchaseLog = helpers.PurchaseLog
 
 // PurchaseHandler handles purchase-related HTTP requests.
 // It manages checkout flow and purchase history.
@@ -67,11 +71,11 @@ func CreatePurchaseHandler(db *gorm.DB, rdb *redis.Client) *PurchaseHandler {
 //
 // Route: POST /api/v1/checkout
 func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
-	log.Println("Processing checkout request...")
+	start := time.Now()
 
-	// Get authenticated user
-	userID := c.MustGet("user_id").(uint64)
-	log.Printf("User %d initiating checkout", userID)
+	// Get authenticated user using helpers
+	userID := helpers.GetUserID(c)
+	purchaseLog.Log("CHECKOUT", "initiated", "user_id", userID)
 
 	// Fetch cart items from Redis
 	ctx := c.Request.Context()
@@ -79,18 +83,18 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 
 	cartItems, err := handler.RDB.SMembers(ctx, cartKey).Result()
 	if err != nil {
-		log.Printf("Failed to fetch cart from Redis: %v", err)
+		purchaseLog.Log("CHECKOUT", "redis error", "user_id", userID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch cart"})
 		return
 	}
 
 	if len(cartItems) == 0 {
-		log.Println("Cart is empty")
+		purchaseLog.Log("CHECKOUT", "empty cart", "user_id", userID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cart is empty"})
 		return
 	}
 
-	log.Printf("Processing %d cart items", len(cartItems))
+	purchaseLog.Log("CHECKOUT", "processing cart", "user_id", userID, "item_count", len(cartItems))
 
 	// Process each cart item
 	var purchasedIDs []uint
@@ -139,14 +143,14 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 		}
 
 		if err := handler.DB.Create(&purchase).Error; err != nil {
-			log.Printf("Failed to create purchase for note %d: %v", noteID, err)
+			purchaseLog.Log("CHECKOUT", "db error creating purchase", "user_id", userID, "note_id", noteID, "error", err)
 			errors = append(errors, "Failed to purchase: "+note.Title)
 			continue
 		}
 
 		purchasedIDs = append(purchasedIDs, note.ID)
 		totalAmount += note.Price
-		log.Printf("Successfully purchased note %d for user %d", noteID, userID)
+		purchaseLog.Log("CHECKOUT", "item purchased", "user_id", userID, "note_id", noteID, "price", note.Price)
 	}
 
 	// Clear the cart (only remove successfully purchased items)
@@ -166,7 +170,7 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 	}
 
 	if len(purchasedIDs) == 0 {
-		log.Println("No items were purchased")
+		purchaseLog.Log("CHECKOUT", "failed - no items purchased", "user_id", userID, "warnings", len(errors))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":    "No items could be purchased",
 			"warnings": errors,
@@ -174,7 +178,8 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Checkout complete: %d items purchased, total: %.2f", len(purchasedIDs), totalAmount)
+	duration := time.Since(start)
+	purchaseLog.Log("CHECKOUT", "completed", "user_id", userID, "items", len(purchasedIDs), "total", fmt.Sprintf("%.2f", totalAmount), "duration_ms", duration.Milliseconds())
 	c.JSON(http.StatusOK, response)
 }
 
@@ -186,35 +191,32 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 //
 // Route: POST /api/v1/notes/:id/purchase
 func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
-	log.Println("Processing single note purchase...")
-
-	// Get authenticated user
-	userID := c.MustGet("user_id").(uint64)
-
-	// Parse note ID
-	noteIDStr := c.Param("id")
-	noteID, err := strconv.ParseUint(noteIDStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid note ID"})
+	// Get authenticated user and note ID using helpers
+	userID := helpers.GetUserID(c)
+	noteID, ok := helpers.MustParseNoteID(c)
+	if !ok {
 		return
 	}
 
-	log.Printf("User %d attempting to purchase note %d", userID, noteID)
+	purchaseLog.Log("SINGLE", "processing", "user_id", userID, "note_id", noteID)
 
 	// Fetch the note
 	var note models.Note
 	if err := handler.DB.First(&note, noteID).Error; err != nil {
+		purchaseLog.Log("SINGLE", "note not found", "note_id", noteID, "error", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
 	}
 
 	// Validate note is purchasable
 	if note.Status != "Approved" {
+		purchaseLog.Log("SINGLE", "not approved", "note_id", noteID, "status", note.Status)
 		c.JSON(http.StatusForbidden, gin.H{"error": "This note is not available for purchase"})
 		return
 	}
 
 	if !note.HasPDF {
+		purchaseLog.Log("SINGLE", "no PDF", "note_id", noteID)
 		c.JSON(http.StatusForbidden, gin.H{"error": "This note has no content"})
 		return
 	}
@@ -222,6 +224,7 @@ func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
 	// Check if already purchased
 	var existingPurchase models.Purchase
 	if err := handler.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&existingPurchase).Error; err == nil {
+		purchaseLog.Log("SINGLE", "already purchased", "user_id", userID, "note_id", noteID)
 		c.JSON(http.StatusConflict, gin.H{
 			"error":        "You have already purchased this note",
 			"purchased_at": existingPurchase.PurchasedAt,
@@ -238,12 +241,12 @@ func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
 	}
 
 	if err := handler.DB.Create(&purchase).Error; err != nil {
-		log.Printf("Failed to create purchase: %v", err)
+		purchaseLog.Log("SINGLE", "db error", "user_id", userID, "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete purchase"})
 		return
 	}
 
-	log.Printf("User %d successfully purchased note %d", userID, noteID)
+	purchaseLog.Log("SINGLE", "success", "user_id", userID, "note_id", noteID, "price", note.Price)
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "Purchase successful",
 		"note_id":      note.ID,
@@ -261,12 +264,9 @@ func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
 //
 // Route: GET /api/v1/notes/:id/purchased
 func (handler *PurchaseHandler) CheckPurchaseStatus(c *gin.Context) {
-	userID := c.MustGet("user_id").(uint64)
-
-	noteIDStr := c.Param("id")
-	noteID, err := strconv.ParseUint(noteIDStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid note ID"})
+	userID := helpers.GetUserID(c)
+	noteID, ok := helpers.MustParseNoteID(c)
+	if !ok {
 		return
 	}
 
@@ -291,18 +291,10 @@ func (handler *PurchaseHandler) CheckPurchaseStatus(c *gin.Context) {
 //
 // Route: GET /api/v1/me/purchases/history
 func (handler *PurchaseHandler) GetPurchaseHistory(c *gin.Context) {
-	userID := c.MustGet("user_id").(uint64)
+	userID := helpers.GetUserID(c)
 
-	// Parse pagination params
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
-	offset := (page - 1) * limit
+	// Parse pagination using helpers
+	pag := helpers.ParsePaginationWithDefaults(c, 20)
 
 	// Count total purchases
 	var total int64
@@ -326,20 +318,21 @@ func (handler *PurchaseHandler) GetPurchaseHistory(c *gin.Context) {
 		Joins("JOIN notes ON notes.id = purchases.note_id").
 		Where("purchases.user_id = ?", userID).
 		Order("purchases.purchased_at DESC").
-		Offset(offset).
-		Limit(limit).
+		Offset(pag.Offset).
+		Limit(pag.Limit).
 		Scan(&purchases).Error
 
 	if err != nil {
-		log.Printf("Failed to fetch purchase history: %v", err)
+		purchaseLog.Log("HISTORY", "db error", "user_id", userID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch purchase history"})
 		return
 	}
 
+	purchaseLog.Log("HISTORY", "fetched", "user_id", userID, "count", len(purchases), "total", total)
 	c.JSON(http.StatusOK, gin.H{
 		"purchases": purchases,
-		"page":      page,
-		"limit":     limit,
+		"page":      pag.Page,
+		"limit":     pag.Limit,
 		"total":     total,
 	})
 }

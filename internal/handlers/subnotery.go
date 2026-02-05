@@ -2,14 +2,16 @@
 package handlers
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/Geetur/Notery/internal/models"
+	"github.com/Geetur/Notery/internal/helpers"
 )
+
+// subnoteryLog is the domain-specific logger for subnotery operations.
+var subnoteryLog = helpers.SubnoteryLog
 
 // SubnoteryHandler handles subnotery management HTTP requests.
 type SubnoteryHandler struct {
@@ -22,87 +24,90 @@ func CreateSubnoteryHandler(db *gorm.DB) *SubnoteryHandler {
 }
 
 // AddAdminToSubnotery grants admin privileges to a user for a specific subnotery.
+// Requires the target user's email and the subnotery ID from URL params.
 func (h *SubnoteryHandler) AddAdminToSubnotery(c *gin.Context) {
-	log.Println("Adding admin to subnotery...")
+	subnoteryLog.Log("ADD_ADMIN", "Processing add admin request")
 
-	subnoteryID := c.Param("subnotery_id")
+	// Parse subnotery ID from URL
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		subnoteryLog.Log("ADD_ADMIN", "Invalid subnotery ID in URL")
+		return
+	}
+
+	// Bind and validate request body
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 	}
-	// binding JSON request
-	log.Println("Binding JSON request...")
-	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Println("Failed to bind JSON:", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+	if !helpers.BindJSON(c, &req) {
+		subnoteryLog.Log("ADD_ADMIN", "Failed to bind JSON request")
 		return
 	}
-	log.Println("JSON request bound successfully:", req.Email)
+	subnoteryLog.Log("ADD_ADMIN", "Request validated", "subnoteryID", subnoteryID, "email", req.Email)
 
-	// looking up subnotery in database
-	log.Println("Looking up subnotery in database...")
-	var subnotery models.Subnotery
-	if err := h.DB.Where("id = ?", subnoteryID).First(&subnotery).Error; err != nil {
-		log.Println("Subnotery not found:", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
+	// Fetch subnotery from database
+	subnotery, ok := helpers.FetchSubnotery(c, h.DB, subnoteryID)
+	if !ok {
+		subnoteryLog.Log("ADD_ADMIN", "Subnotery not found", "subnoteryID", subnoteryID)
 		return
 	}
-	log.Println("Subnotery found:", subnotery.ID)
 
-	// look up user by email
-	log.Println("Looking up user by email...")
-	var user models.User
-	if err := h.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		log.Println("User not found:", err)
+	// Fetch user by email
+	user, found := helpers.FetchUserByEmail(h.DB, req.Email)
+	if !found {
+		subnoteryLog.Log("ADD_ADMIN", "User not found", "email", req.Email)
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
-	log.Println("User found:", user.ID)
+	subnoteryLog.Log("ADD_ADMIN", "User found", "userID", user.ID)
 
-	// add user as admin to subnotery
-	if err := h.DB.Model(&subnotery).Association("Admins").Append(&user); err != nil {
-		log.Println("Failed to add admin to subnotery:", err)
+	// Add user as admin to subnotery
+	if err := h.DB.Model(subnotery).Association("Admins").Append(user); err != nil {
+		subnoteryLog.Log("ADD_ADMIN", "Failed to add admin", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add admin to subnotery"})
 		return
 	}
-	log.Println("Admin added to subnotery successfully:", user.ID)
 
+	subnoteryLog.Log("ADD_ADMIN", "Admin added successfully", "subnoteryID", subnoteryID, "userID", user.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Admin added to subnotery successfully"})
 }
 
+// JoinSubnotery adds the authenticated user as a member of the specified subnotery.
 func (h *SubnoteryHandler) JoinSubnotery(c *gin.Context) {
-	log.Println("User joining subnotery...")
+	subnoteryLog.Log("JOIN", "Processing join subnotery request")
 
-	subnoteryID := c.Param("subnotery_id")
-	// looking up subnotery in database
-
-	log.Println("Looking up subnotery in database...")
-	var subnotery models.Subnotery
-	if err := h.DB.Where("id = ?", subnoteryID).First(&subnotery).Error; err != nil {
-		log.Println("Subnotery not found:", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
+	// Parse subnotery ID from URL
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		subnoteryLog.Log("JOIN", "Invalid subnotery ID in URL")
 		return
 	}
-	log.Println("Subnotery found:", subnotery.ID)
 
-	// get user ID from context
-	log.Println("Extracting user ID from context...")
-	userID := c.MustGet("user_id").(uint64)
-	log.Println("User ID extracted from context:", userID)
-
-	
-	// add user as member to subnotery
-	log.Println("adding user as member to subnotery...")
-	var user models.User
-	if err := h.DB.First(&user, userID).Error; err != nil {
-		log.Println("User not found:", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+	// Fetch subnotery from database
+	subnotery, ok := helpers.FetchSubnotery(c, h.DB, subnoteryID)
+	if !ok {
+		subnoteryLog.Log("JOIN", "Subnotery not found", "subnoteryID", subnoteryID)
 		return
 	}
-	if err := h.DB.Model(&subnotery).Association("Members").Append(&user); err != nil {
-		log.Println("Failed to add member to subnotery:", err)
+
+	// Get authenticated user ID
+	userID := helpers.GetUserID(c)
+	subnoteryLog.Log("JOIN", "User identified", "userID", userID, "subnoteryID", subnoteryID)
+
+	// Fetch user record
+	user, ok := helpers.FetchUser(c, h.DB, userID)
+	if !ok {
+		subnoteryLog.Log("JOIN", "User not found", "userID", userID)
+		return
+	}
+
+	// Add user as member to subnotery
+	if err := h.DB.Model(subnotery).Association("Members").Append(user); err != nil {
+		subnoteryLog.Log("JOIN", "Failed to add member", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to join subnotery"})
 		return
 	}
 
+	subnoteryLog.Log("JOIN", "User joined successfully", "userID", userID, "subnoteryID", subnoteryID)
 	c.JSON(http.StatusOK, gin.H{"message": "Joined subnotery successfully"})
 }

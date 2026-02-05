@@ -1,10 +1,9 @@
-// Package handlers/note.go contains the HTTP handlers for note operations
+// Package handlers/note.go contains the HTTP handlers for note operations.
 package handlers
 
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -13,8 +12,12 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Geetur/Notery/internal/database"
+	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 )
+
+// noteLog is the domain-specific logger for note operations.
+var noteLog = helpers.NoteLog
 
 // NoteHandler handles HTTP requests for note operations.
 type NoteHandler struct {
@@ -48,9 +51,9 @@ func (handler *NoteHandler) SetR2Client(r2 *database.R2Client) {
 func (handler *NoteHandler) deletePDFFromR2(ctx context.Context, noteID uint) {
 	if handler.R2 != nil {
 		if err := handler.R2.DeletePDF(ctx, noteID); err != nil {
-			log.Printf("Failed to delete PDF for note %d from R2: %v", noteID, err)
+			noteLog.Log("R2", "Failed to delete PDF", "noteID", noteID, "error", err)
 		} else {
-			log.Printf("Deleted PDF for note %d from R2", noteID)
+			noteLog.Log("R2", "Deleted PDF", "noteID", noteID)
 		}
 	}
 }
@@ -59,7 +62,7 @@ func (handler *NoteHandler) deletePDFFromR2(ctx context.Context, noteID uint) {
 func (handler *NoteHandler) addToFeed(ctx context.Context, note *models.Note) {
 	if handler.Feed != nil {
 		if err := handler.Feed.AddNoteToFeed(ctx, note); err != nil {
-			log.Printf("Failed to add note to feed: %v", err)
+			noteLog.Log("FEED", "Failed to add note to feed", "noteID", note.ID, "error", err)
 		}
 	}
 }
@@ -68,51 +71,46 @@ func (handler *NoteHandler) addToFeed(ctx context.Context, note *models.Note) {
 func (handler *NoteHandler) removeFromFeed(ctx context.Context, note *models.Note) {
 	if handler.Feed != nil {
 		if err := handler.Feed.RemoveNoteFromFeed(ctx, note); err != nil {
-			log.Printf("Failed to remove note from feed: %v", err)
+			noteLog.Log("FEED", "Failed to remove note from feed", "noteID", note.ID, "error", err)
 		}
 	}
 }
 
-// now we want to define different functions to handle CRUD operations for notes
-// so, if we want to create a new note, and also get all notes, we call
-// two separate functions, for example
-
-// CreateNote is a method of NoteHandler that handles the creation of a new note.
-// CreateNote interacts with the database to create a new note record and ensure its subnotery exists.
-// CreateNote auto-creates the subnotery when missing and assigns the creator as its first admin.
+// CreateNote handles the creation of a new note.
+// Auto-creates subnotery when missing and assigns the creator as its first admin.
 func (handler *NoteHandler) CreateNote(c *gin.Context) {
-	log.Println("Binding JSON request for note creation...")
+	noteLog.Log("CREATE", "Processing note creation request")
+
+	// Bind and validate request body
 	var req struct {
 		SubnoteryName string  `json:"subnotery_name" binding:"required"`
 		Title         string  `json:"title"`
 		Author        string  `json:"author"`
 		Price         float64 `json:"price"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Println("Failed to bind JSON:", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+	if !helpers.BindJSON(c, &req) {
+		noteLog.Log("CREATE", "Failed to bind JSON request")
 		return
 	}
-	log.Println("JSON request bound successfully for note creation:", req.SubnoteryName)
+	noteLog.Log("CREATE", "Request validated", "subnotery", req.SubnoteryName, "title", req.Title)
 
-	// extract user ID from context
-	log.Println("Extracting user ID from context for note creation...")
-	userID := c.MustGet("user_id").(uint64)
-	log.Println("User ID extracted from context for note creation:", userID)
+	// Extract authenticated user ID
+	userID := helpers.GetUserID(c)
+	noteLog.Log("CREATE", "User identified", "userID", userID)
 
-	// ensure subnotery exists or create it, assign creator as first admin if created
-	log.Println("Ensuring subnotery exists for note creation:", req.SubnoteryName)
+	// Execute note creation in transaction
 	var note models.Note
 	if err := handler.DB.Transaction(func(tx *gorm.DB) error {
 		var subnotery models.Subnotery
 		subnoteryCreated := false
 
+		// Find or create subnotery
 		if err := tx.Where("name = ?", req.SubnoteryName).First(&subnotery).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				log.Println("Subnotery not found. Creating new subnotery:", req.SubnoteryName)
+				noteLog.Log("CREATE", "Creating new subnotery", "name", req.SubnoteryName)
 				subnotery = models.Subnotery{Name: req.SubnoteryName}
 				if err := tx.Create(&subnotery).Error; err != nil {
-					log.Println("Failed to create subnotery:", err)
+					noteLog.Log("CREATE", "Failed to create subnotery", "error", err)
 					return err
 				}
 				subnoteryCreated = true
@@ -120,33 +118,27 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 				return err
 			}
 		}
-		log.Println("Subnotery ensured for note creation:", subnotery.ID)
+		noteLog.Log("CREATE", "Subnotery resolved", "subnoteryID", subnotery.ID)
 
-		log.Println("Checking if we need to assign creator as first admin for subnotery:", subnotery.ID)
+		// Assign creator as first admin if subnotery was just created
 		if subnoteryCreated {
-			log.Println("Assigning creator as first admin for subnotery:", subnotery.ID)
 			var user models.User
 			if err := tx.First(&user, userID).Error; err != nil {
-				log.Println("Failed to fetch user for assigning as first admin:", err)
+				noteLog.Log("CREATE", "Failed to fetch user", "error", err)
 				return err
 			}
 			if err := tx.Model(&subnotery).Association("Admins").Append(&user); err != nil {
-				log.Println("Failed to assign creator as first admin for subnotery:", err)
+				noteLog.Log("CREATE", "Failed to assign admin", "error", err)
 				return err
 			}
-			log.Println("Creator assigned as first admin for subnotery:", subnotery.ID)
-
-			// adding creator as a member of the subnotery as well
-			log.Println("Adding creator as member of the subnotery:", subnotery.ID)
 			if err := tx.Model(&subnotery).Association("Members").Append(&user); err != nil {
-				log.Println("Failed to add creator as member of the subnotery:", err)
+				noteLog.Log("CREATE", "Failed to add member", "error", err)
 				return err
 			}
-			log.Println("Creator added as member of the subnotery:", subnotery.ID)
+			noteLog.Log("CREATE", "Creator assigned as admin/member", "subnoteryID", subnotery.ID)
 		}
 
-		// create the note
-		log.Println("Creating note record in database...")
+		// Create the note record
 		note = models.Note{
 			Title:       req.Title,
 			Author:      req.Author,
@@ -155,21 +147,18 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 			SubnoteryID: subnotery.ID,
 			CreatorID:   userID,
 		}
-		// create the note record in the database
-		log.Println("Trying to create note with title:", note.Title)
 		if err := tx.Create(&note).Error; err != nil {
-			log.Println("Failed to create note:", err)
+			noteLog.Log("CREATE", "Failed to create note", "error", err)
 			return err
 		}
-
 		return nil
 	}); err != nil {
-		log.Println("Failed to create note:", err)
+		noteLog.Log("CREATE", "Transaction failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to internally create note"})
 		return
 	}
 
-	log.Println("Successfully created note with ID:", note.ID)
+	noteLog.Log("CREATE", "Note created successfully", "noteID", note.ID)
 	c.JSON(http.StatusCreated, note)
 }
 
@@ -177,56 +166,46 @@ func (handler *NoteHandler) CreateNote(c *gin.Context) {
 // DeleteNote removes the note from both the database and Meilisearch if approved.
 // DeleteNote interacts with the removeNoteFromIndex and indexNote handler methods.
 func (handler *NoteHandler) DeleteNote(c *gin.Context) {
-	noteID := c.Param("id")
-	// declare a note variable to hold the fetched note
-	var note models.Note
-	// first we need to fetch the note to check its status
-	log.Printf("Fetching note with ID: %s for deletion", noteID)
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
-		// check if the error is record not found
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("Note with ID: %s not found for deletion", noteID)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
-			return
-		}
-		// other errors
-		log.Printf("Failed to fetch note with ID for deletion: %s", noteID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+	noteLog.Log("DELETE", "Processing note deletion request")
+
+	// Fetch the note using helper
+	note, ok := helpers.MustFetchNote(c, handler.DB)
+	if !ok {
+		noteLog.Log("DELETE", "Note not found")
 		return
 	}
-	log.Printf("Note with ID: %s fetched successfully for deletion", noteID)
-	// if the note is approved, we need to remove it from Meilisearch and feed first
-	log.Printf("Trying to delete note with ID from meilisearch: %s", noteID)
+	noteLog.Log("DELETE", "Note fetched", "noteID", note.ID, "status", note.Status)
+
+	// Remove from Meilisearch and feed if approved
 	if note.Status == "Approved" {
 		if err := handler.removeNoteFromIndex(note.ID); err != nil {
-			log.Printf("Failed to remove approved note from Meilisearch: %v", err)
+			noteLog.Log("DELETE", "Failed to remove from search index", "noteID", note.ID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
 			return
 		}
-		// Remove from hot feed
-		handler.removeFromFeed(c.Request.Context(), &note)
+		handler.removeFromFeed(c.Request.Context(), note)
+		noteLog.Log("DELETE", "Removed from search index and feed", "noteID", note.ID)
 	}
-	log.Printf("Successfully deleted note with ID from meilisearch: %s", noteID)
-	// now we can delete the note from the database
-	log.Printf("Deleting note with ID: %s from database", noteID)
-	if err := handler.DB.Delete(&note).Error; err != nil {
-		log.Printf("Failed to delete note with ID: %s", noteID)
+
+	// Delete from database
+	if err := handler.DB.Delete(note).Error; err != nil {
+		noteLog.Log("DELETE", "Failed to delete from database", "noteID", note.ID, "error", err)
+		// Attempt to re-index if we had removed it
 		if note.Status == "Approved" {
-			if reindexErr := handler.indexNote(note); reindexErr != nil {
-				log.Printf("Failed to re-index note after delete error: %v", reindexErr)
+			if reindexErr := handler.indexNote(*note); reindexErr != nil {
+				noteLog.Log("DELETE", "Failed to re-index after delete error", "error", reindexErr)
 			}
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete note"})
 		return
 	}
-	log.Printf("Successfully deleted note with ID: %s from database", noteID)
 
-	// Delete PDF from R2 if it exists
+	// Cleanup PDF from R2 if exists
 	if note.HasPDF {
 		handler.deletePDFFromR2(c.Request.Context(), note.ID)
 	}
 
-	// successful deletion
+	noteLog.Log("DELETE", "Note deleted successfully", "noteID", note.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Note deleted successfully"})
 }
 
@@ -234,61 +213,53 @@ func (handler *NoteHandler) DeleteNote(c *gin.Context) {
 // RejectNote interacts with the database to update the note's status to "Rejected".
 // RejectNote does not interact with any handler methods.
 func (handler *NoteHandler) RejectNote(c *gin.Context) {
-	noteID := c.Param("id")
-	var note models.Note
-	log.Printf("Fetching note with ID: %s for rejection", noteID)
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("Note with ID: %s not found for rejection", noteID)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
-			return
-		}
-		log.Printf("Failed to fetch note with ID for rejection: %s", noteID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+	noteLog.Log("REJECT", "Processing note rejection request")
+
+	// Fetch the note using helper
+	note, ok := helpers.MustFetchNote(c, handler.DB)
+	if !ok {
+		noteLog.Log("REJECT", "Note not found")
 		return
 	}
+	noteLog.Log("REJECT", "Note fetched", "noteID", note.ID, "status", note.Status)
 
 	previousStatus := note.Status
-	log.Printf("Trying to reject note with ID: %s", noteID)
-	if err := handler.DB.Model(&note).Update("status", "Rejected").Error; err != nil {
-		log.Printf("Failed to reject note with ID: %s", noteID)
+
+	// Update status to Rejected
+	if err := handler.DB.Model(note).Update("status", "Rejected").Error; err != nil {
+		noteLog.Log("REJECT", "Failed to update status", "noteID", note.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject note"})
 		return
 	}
-	// this probably should never happen because rejection is a mechanism for non-approved notes
-	// but just in case, we handle the scenario where an approved note is being rejected
-	// deletion is a more appropriate action for approved notes
-	log.Printf("Checking if we need to remove approved note from meilisearch for note ID: %s", noteID)
+
+	// Handle edge case: if note was approved, remove from search index
 	if previousStatus == "Approved" {
-		log.Printf("Trying to remove approved note from meilisearch: %s", noteID)
+		noteLog.Log("REJECT", "Removing previously approved note from search", "noteID", note.ID)
 		if err := handler.removeNoteFromIndex(note.ID); err != nil {
-			log.Printf("Failed to remove approved note from Meilisearch: %v", err)
-			if rollbackErr := handler.DB.Model(&note).Update("status", previousStatus).Error; rollbackErr != nil {
-				log.Printf("Failed to rollback note rejection after index removal error: %v", rollbackErr)
+			noteLog.Log("REJECT", "Failed to remove from search index", "error", err)
+			// Rollback status update
+			if rollbackErr := handler.DB.Model(note).Update("status", previousStatus).Error; rollbackErr != nil {
+				noteLog.Log("REJECT", "Failed to rollback status", "error", rollbackErr)
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
 			return
 		}
-		// Remove from hot feed
-		handler.removeFromFeed(c.Request.Context(), &note)
+		handler.removeFromFeed(c.Request.Context(), note)
 	}
-	log.Printf("Successfully removed approved note from meilisearch for note ID: %s", noteID)
 
-	log.Printf("Deleting note from database")
-	if err := handler.DB.Delete(&note).Error; err != nil {
-		log.Printf("Failed to delete note with ID: %s after rejection", noteID)
+	// Delete the note from database
+	if err := handler.DB.Delete(note).Error; err != nil {
+		noteLog.Log("REJECT", "Failed to delete note", "noteID", note.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete note after rejection"})
 		return
 	}
-	log.Printf("Successfully deleted note with ID: %s after rejection", noteID)
 
-	// Delete PDF from R2 if it exists (cleanup after rejection)
+	// Cleanup PDF from R2 if exists
 	if note.HasPDF {
 		handler.deletePDFFromR2(c.Request.Context(), note.ID)
 	}
 
-	log.Printf("Successfully rejected note with ID: %s", noteID)
-	// successful rejection
+	noteLog.Log("REJECT", "Note rejected and deleted successfully", "noteID", note.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Note rejected successfully"})
 }
 
@@ -296,61 +267,55 @@ func (handler *NoteHandler) RejectNote(c *gin.Context) {
 // ApproveNote updates the note's status to "Approved" and indexes it in Meilisearch.
 // ApproveNote interacts with the indexNote handler method.
 func (handler *NoteHandler) ApproveNote(c *gin.Context) {
-	noteID := c.Param("id")
-	var note models.Note
-	// fetch the note to be approved
-	log.Printf("Fetching note with ID: %s for approval", noteID)
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
-			return
-		}
-		log.Printf("Failed to fetch note with ID: %s", noteID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+	noteLog.Log("APPROVE", "Processing note approval request")
+
+	// Fetch the note using helper
+	note, ok := helpers.MustFetchNote(c, handler.DB)
+	if !ok {
+		noteLog.Log("APPROVE", "Note not found")
 		return
 	}
-	log.Printf("Successfully fetched note with ID: %s for approval", noteID)
+	noteLog.Log("APPROVE", "Note fetched", "noteID", note.ID, "hasPDF", note.HasPDF)
 
-	// Ensure note has PDF content before approval
-	// This prevents approving "empty" notes without actual content
+	// Validate note has PDF content before approval
 	if !note.HasPDF {
-		log.Printf("Cannot approve note %s: no PDF uploaded", noteID)
+		noteLog.Log("APPROVE", "Cannot approve note without PDF", "noteID", note.ID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot approve note without PDF content"})
 		return
 	}
 
-	// update the note's status to "Approved"
-
-	log.Printf("Trying to approve note with ID: %s", noteID)
 	previousStatus := note.Status
 	wasApproved := previousStatus == "Approved"
+
+	// Update status to Approved if not already
 	if !wasApproved {
-		if err := handler.DB.Model(&note).Update("status", "Approved").Error; err != nil {
-			log.Printf("Failed to approve note with ID: %s", noteID)
+		if err := handler.DB.Model(note).Update("status", "Approved").Error; err != nil {
+			noteLog.Log("APPROVE", "Failed to update status", "noteID", note.ID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve note"})
 			return
 		}
 		note.Status = "Approved"
-		log.Printf("Successfully approved note with ID: %s", noteID)
+		noteLog.Log("APPROVE", "Status updated to Approved", "noteID", note.ID)
 	}
-	log.Printf("trying to update search index with approved note with ID: %s", noteID)
-	if err := handler.indexNote(note); err != nil {
-		log.Printf("Failed to index approved note: %v", err)
+
+	// Index note in Meilisearch for search
+	if err := handler.indexNote(*note); err != nil {
+		noteLog.Log("APPROVE", "Failed to index note", "noteID", note.ID, "error", err)
+		// Rollback status if we just changed it
 		if !wasApproved {
-			if rollbackErr := handler.DB.Model(&note).Update("status", previousStatus).Error; rollbackErr != nil {
-				log.Printf("Failed to rollback note approval after indexing error: %v", rollbackErr)
+			if rollbackErr := handler.DB.Model(note).Update("status", previousStatus).Error; rollbackErr != nil {
+				noteLog.Log("APPROVE", "Failed to rollback status", "error", rollbackErr)
 			}
 		}
-		log.Printf("Failed to index approved note with ID: %s", noteID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to index approved note"})
 		return
 	}
-	log.Printf("Successfully updated search index with approved note with ID: %s", noteID)
+	noteLog.Log("APPROVE", "Note indexed in search", "noteID", note.ID)
 
 	// Add to hot feed
-	handler.addToFeed(c.Request.Context(), &note)
+	handler.addToFeed(c.Request.Context(), note)
 
-	// successful approval
+	noteLog.Log("APPROVE", "Note approved successfully", "noteID", note.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Note approved successfully"})
 }
 
@@ -361,16 +326,15 @@ func (handler *NoteHandler) ApproveNote(c *gin.Context) {
 // GetNoteByID interacts with the database to fetch the note record.
 // GetNoteByID does not interact with any handler methods.
 func (handler *NoteHandler) GetNoteByID(c *gin.Context) {
-	noteID := c.Param("id")
-	var note models.Note
-	// fetch the note by ID
-	log.Printf("Fetching note with ID: %s", noteID)
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
-		log.Printf("Failed to fetch note with ID: %s", noteID)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+	noteLog.Log("GET", "Processing get note by ID request")
+
+	note, ok := helpers.MustFetchNote(c, handler.DB)
+	if !ok {
+		noteLog.Log("GET", "Note not found")
 		return
 	}
-	log.Printf("Successfully fetched note with ID: %s", noteID)
+
+	noteLog.Log("GET", "Note retrieved", "noteID", note.ID)
 	c.JSON(http.StatusOK, note)
 }
 
@@ -378,34 +342,35 @@ func (handler *NoteHandler) GetNoteByID(c *gin.Context) {
 // GetPendingNotes interacts with the database to fetch pending notes and user scope.
 // GetPendingNotes does not interact with any handler methods.
 func (handler *NoteHandler) GetPendingNotes(c *gin.Context) {
-	log.Println("Fetching pending notes for user ...")
+	noteLog.Log("PENDING", "Processing get pending notes request")
 
-	log.Println("Extracting user ID from context for pending notes...")
-	userID := c.MustGet("user_id").(uint64)
-	isGlobal := c.MustGet("admin_type").(bool)
-	log.Println("User ID extracted from context for pending notes:", userID)
+	userID := helpers.GetUserID(c)
+	isGlobal := helpers.GetAdminType(c)
+	noteLog.Log("PENDING", "Admin identified", "userID", userID, "isGlobal", isGlobal)
 
 	var notes []models.Note
-	log.Println("Trying to fetch pending notes")
 	if isGlobal {
-		log.Println("Global admin detected. Fetching all pending notes.")
+		// Global admin: fetch all pending notes
+		noteLog.Log("PENDING", "Fetching all pending notes (global admin)")
 		if err := handler.DB.Where("status = ?", "Pending").Find(&notes).Error; err != nil {
-			log.Println("Failed to fetch pending notes:", err)
+			noteLog.Log("PENDING", "Failed to fetch pending notes", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
 			return
 		}
 	} else {
-		log.Println("Fetching pending notes for admin subnoteries only:", userID)
+		// Subnotery admin: fetch pending notes for their communities only
+		noteLog.Log("PENDING", "Fetching pending notes for admin subnoteries", "userID", userID)
 		if err := handler.DB.
 			Joins("JOIN user_admins ON user_admins.subnotery_id = notes.subnotery_id").
 			Where("user_admins.user_id = ? AND notes.status = ?", userID, "Pending").
 			Find(&notes).Error; err != nil {
-			log.Println("Failed to fetch pending notes:", err)
+			noteLog.Log("PENDING", "Failed to fetch pending notes", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
 			return
 		}
 	}
-	log.Println("Successfully fetched pending notes")
+
+	noteLog.Log("PENDING", "Pending notes retrieved", "count", len(notes))
 	c.JSON(http.StatusOK, notes)
 }
 
@@ -413,14 +378,16 @@ func (handler *NoteHandler) GetPendingNotes(c *gin.Context) {
 // GetApprovedNotes interacts with the database to fetch approved notes.
 // GetApprovedNotes does not interact with any handler methods.
 func (handler *NoteHandler) GetApprovedNotes(c *gin.Context) {
+	noteLog.Log("APPROVED", "Processing get approved notes request")
+
 	var notes []models.Note
-	log.Println("Trying to fetch approved notes")
 	if err := handler.DB.Where("status = ?", "Approved").Find(&notes).Error; err != nil {
-		log.Println("Failed to fetch approved notes:", err)
+		noteLog.Log("APPROVED", "Failed to fetch approved notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
 		return
 	}
-	log.Println("Successfully fetched approved notes")
+
+	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes))
 	c.JSON(http.StatusOK, notes)
 }
 
@@ -428,7 +395,7 @@ func (handler *NoteHandler) GetApprovedNotes(c *gin.Context) {
 // indexNote interacts with Meilisearch to index the approved note.
 // indexNote interacts with no other handler methods.
 func (handler *NoteHandler) indexNote(note models.Note) error {
-	log.Printf("trying to index note with ID: %d in Meilisearch", note.ID)
+	noteLog.Log("INDEX", "Indexing note in Meilisearch", "noteID", note.ID)
 	if handler.Search == nil || handler.SearchIndex == "" {
 		return errors.New("meilisearch is not configured")
 	}
@@ -439,20 +406,20 @@ func (handler *NoteHandler) indexNote(note models.Note) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Successfully indexed note ID %d", note.ID)
+	noteLog.Log("INDEX", "Note indexed successfully", "noteID", note.ID)
 	return nil
 }
 
-// removeNoteFromIndex removes a note from the Meilisearch index
-// removeNoteFromIndex interacts with Meilisearch to remove the note.
-// removeNoteFromIndex interacts with no other handler methods.
+// removeNoteFromIndex removes a note from the Meilisearch index.
 func (handler *NoteHandler) removeNoteFromIndex(noteID uint) error {
-	log.Printf("trying to remove note with ID: %d from Meilisearch index", noteID)
+	noteLog.Log("INDEX", "Removing note from Meilisearch", "noteID", noteID)
 	if handler.Search == nil || handler.SearchIndex == "" {
 		return errors.New("meilisearch is not configured")
 	}
 	index := handler.Search.Index(handler.SearchIndex)
 	_, err := index.DeleteDocument(strconv.FormatUint(uint64(noteID), 10), nil)
-	log.Printf("successfully removed note with ID: %d from Meilisearch index", noteID)
+	if err == nil {
+		noteLog.Log("INDEX", "Note removed from index", "noteID", noteID)
+	}
 	return err
 }

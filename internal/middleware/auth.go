@@ -1,9 +1,8 @@
-// Package middleware/auth.go contains middleware for user authentication
+// Package middleware/auth.go contains middleware for user authentication.
 package middleware
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,75 +11,73 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+
+	"github.com/Geetur/Notery/internal/helpers"
 )
+
+// mwLog is the domain-specific logger for middleware operations.
+var mwLog = helpers.MiddlewareLog
 
 // RequireAuth is a middleware function that checks for a valid JWT token in the Authorization header
 // RequireAuth interacts with no other functions or methods.
 // RequireAuth interacts with no models.
 func RequireAuth(c *gin.Context) {
-	// Middleware to require authentication via JWT token
-	log.Println("Authenticating request...")
+	mwLog.Log("AUTH", "Authenticating request")
 
-	log.Println("Extracting Authorization header...")
+	// Extract Authorization header
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
-		log.Println("No Authorization header provided")
+		mwLog.Log("AUTH", "No Authorization header provided")
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
 		return
 	}
-	log.Println("Authorization header found")
-	// Extract the token from the "Bearer <token>" format
-	log.Println("Extracting token from Authorization header...")
+
+	// Extract token from "Bearer <token>" format
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 	if tokenString == authHeader {
-		log.Println("Invalid Authorization header format")
+		mwLog.Log("AUTH", "Invalid Authorization header format")
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Authorization header format"})
 		return
 	}
-	log.Println("Token extracted from Authorization header")
 
-	// Parse and validate the token
-	log.Println("loading JWT secret from environment...")
+	// Load JWT secret from environment
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found (ok):", err)
+		mwLog.Log("AUTH", "No .env file found (ok)")
 	}
 
-	log.Println("Parsing and validating JWT token...")
+	// Parse and validate the token
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Ensure the signing method is HMAC
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		// Return the secret key
-		secretKey := []byte(os.Getenv("JWT_SECRET"))
-		return secretKey, nil
+		return []byte(os.Getenv("JWT_SECRET")), nil
 	})
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if ok && token.Valid {
 		userID, exists := claims["user_id"]
 		if !exists {
-			log.Println("JWT token missing user_id claim")
+			mwLog.Log("AUTH", "JWT token missing user_id claim")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
 		userIDStr := fmt.Sprint(userID)
 		if userIDStr == "" {
-			log.Println("JWT token has empty user_id claim")
+			mwLog.Log("AUTH", "JWT token has empty user_id claim")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
 		userIDUint, err := strconv.ParseUint(userIDStr, 10, 64)
 		if err != nil {
-			log.Println("Invalid user_id claim in JWT token:", userIDStr)
+			mwLog.Log("AUTH", "Invalid user_id claim in JWT", "value", userIDStr)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
 		c.Set("user_id", userIDUint)
-		log.Println("JWT token is valid, user authenticated:", userIDStr)
+		mwLog.Log("AUTH", "User authenticated", "userID", userIDUint)
 		c.Next()
 	} else {
-		log.Println("Invalid JWT token:", err)
+		mwLog.Log("AUTH", "Invalid JWT token", "error", err)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 		return
 	}
@@ -105,7 +102,7 @@ func OptionalAuth(c *gin.Context) {
 	}
 
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found (ok):", err)
+		mwLog.Log("AUTH_OPT", "No .env file found (ok)")
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
