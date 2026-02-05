@@ -1,16 +1,18 @@
-// Package handlers/redis.go contains the HTTP handlers for cart operations
+// Package handlers/cart.go contains the HTTP handlers for cart operations
 package handlers
 
 import (
-	"log"
 	"net/http"
-	"strconv"
 
+	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
+
+// cartLog is the domain-specific logger for cart operations.
+var cartLog = helpers.CartLog
 
 // CartHandler handles shopping cart HTTP requests backed by Redis.
 type CartHandler struct {
@@ -18,16 +20,13 @@ type CartHandler struct {
 	DB  *gorm.DB
 }
 
-// CartRequest represents the expected structure of the cart addition request
-// this will ultimately be binded as a hset in redis
-// and userID will be used to lookup whatever info we need in postgres
+// CartRequest represents the expected structure of the cart addition request.
+// ItemID will be stored in a Redis set keyed by user ID.
 type CartRequest struct {
 	ItemID string `json:"item_id" binding:"required"`
-	// dont need a user ID here
-	// since it will be extracted from the JWT token in middleware
 }
 
-// CreateCartHandler initializes a new CartHandler with the given Redis client and database
+// CreateCartHandler initializes a new CartHandler with the given Redis client and database.
 func CreateCartHandler(rdb *redis.Client, db *gorm.DB) *CartHandler {
 	return &CartHandler{RDB: rdb, DB: db}
 }
@@ -36,43 +35,42 @@ func CreateCartHandler(rdb *redis.Client, db *gorm.DB) *CartHandler {
 // AddToCart interacts with Redis to add the item.
 // AddToCart interacts with no other handler methods.
 func (handler *CartHandler) AddToCart(c *gin.Context) {
-	// Use Redis SAdd to add an item to the user's cart
-	log.Println("trying to add item to cart in Redis...")
+	cartLog.Log("ADD", "Processing add to cart request")
+
+	// Bind and validate request body
 	var cartReq CartRequest
-	if err := c.ShouldBindJSON(&cartReq); err != nil {
-		log.Println("Failed to bind JSON:", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+	if !helpers.BindJSON(c, &cartReq) {
+		cartLog.Log("ADD", "Failed to bind JSON request")
 		return
 	}
 
-	log.Println("Extracting user ID from context...")
-	userID := c.MustGet("user_id").(uint64)
-	log.Println("User ID extracted from context:", userID)
+	// Extract authenticated user ID
+	userID := helpers.GetUserID(c)
+	cartLog.Log("ADD", "User identified", "userID", userID, "itemID", cartReq.ItemID)
 
-	// Verify note exists and is approved
-	log.Println("Verifying note exists and is approved...")
+	// Verify note exists and is approved before adding to cart
 	var note models.Note
 	if err := handler.DB.First(&note, cartReq.ItemID).Error; err != nil {
+		cartLog.Log("ADD", "Note not found", "itemID", cartReq.ItemID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
 	}
 	if note.Status != "Approved" {
+		cartLog.Log("ADD", "Attempt to add non-approved note", "noteID", note.ID, "status", note.Status)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only approved notes can be added to cart"})
 		return
 	}
-	log.Println("Note verified as approved:", note.ID)
 
-	key := "cart:" + strconv.FormatUint(userID, 10)
-	field := cartReq.ItemID
+	// Add item to user's cart set in Redis
 	ctx := c.Request.Context()
-	err := handler.RDB.SAdd(ctx, key, field).Err()
-	if err != nil {
-		log.Println("Failed to add item to cart in Redis:", err)
+	key := helpers.CartKey(userID)
+	if err := handler.RDB.SAdd(ctx, key, cartReq.ItemID).Err(); err != nil {
+		cartLog.Log("ADD", "Redis SAdd failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add item to cart"})
 		return
 	}
-	log.Println("successfully added item to cart in Redis")
 
+	cartLog.Log("ADD", "Item added successfully", "userID", userID, "itemID", cartReq.ItemID)
 	c.JSON(http.StatusOK, gin.H{"message": "Item added to cart successfully"})
 }
 
@@ -80,46 +78,44 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 // GetCart interacts with Redis to retrieve the cart items.
 // GetCart interacts with no other handler methods.
 func (handler *CartHandler) GetCart(c *gin.Context) {
-	// Use Redis SMembers to retrieve all items in the user's cart
+	cartLog.Log("GET", "Processing get cart request")
 
-	log.Println("Extracting user ID from context...")
-	userID := c.MustGet("user_id").(uint64)
-	log.Println("User ID extracted from context:", userID)
+	// Extract authenticated user ID
+	userID := helpers.GetUserID(c)
+	cartLog.Log("GET", "Fetching cart", "userID", userID)
 
-	log.Println("trying to retrieve cart from Redis...")
-	key := "cart:" + strconv.FormatUint(userID, 10)
+	// Retrieve all items from user's cart set in Redis
 	ctx := c.Request.Context()
+	key := helpers.CartKey(userID)
 	cartItems, err := handler.RDB.SMembers(ctx, key).Result()
 	if err != nil {
-		log.Println("Failed to retrieve cart from Redis:", err)
+		cartLog.Log("GET", "Redis SMembers failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve cart"})
 		return
 	}
-	log.Println("successfully retrieved cart from Redis")
 
+	cartLog.Log("GET", "Cart retrieved", "userID", userID, "itemCount", len(cartItems))
 	c.JSON(http.StatusOK, gin.H{"cart": cartItems})
 }
 
-// RemoveFromCart handles removing an item from the user's cart in Redis
-// RemoveFromCart interacts with Redis to remove the item.
-// RemoveFromCart interacts with no other handler methods.
+// RemoveFromCart handles removing an item from the user's cart in Redis.
 func (handler *CartHandler) RemoveFromCart(c *gin.Context) {
-	// Use Redis SRem to remove an item from the user's cart
+	cartLog.Log("REMOVE", "Processing remove from cart request")
 
-	log.Println("Extracting user ID from context...")
-	userID := c.MustGet("user_id").(uint64)
-	log.Println("User ID extracted from context:", userID)
-
-	log.Println("trying to remove item from cart...")
-	ctx := c.Request.Context()
+	// Extract authenticated user ID and item ID from URL
+	userID := helpers.GetUserID(c)
 	itemID := c.Param("item_id")
-	key := "cart:" + strconv.FormatUint(userID, 10)
-	err := handler.RDB.SRem(ctx, key, itemID).Err()
-	if err != nil {
-		log.Println("Failed to remove item from cart in Redis:", err)
+	cartLog.Log("REMOVE", "Removing item", "userID", userID, "itemID", itemID)
+
+	// Remove item from user's cart set in Redis
+	ctx := c.Request.Context()
+	key := helpers.CartKey(userID)
+	if err := handler.RDB.SRem(ctx, key, itemID).Err(); err != nil {
+		cartLog.Log("REMOVE", "Redis SRem failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove item from cart"})
 		return
 	}
-	log.Println("successfully removed item from cart")
+
+	cartLog.Log("REMOVE", "Item removed successfully", "userID", userID, "itemID", itemID)
 	c.JSON(http.StatusOK, gin.H{"message": "Item removed from cart successfully"})
 }

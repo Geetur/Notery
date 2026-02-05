@@ -38,7 +38,6 @@ package handlers
 import (
 	"errors"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -47,8 +46,12 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Geetur/Notery/internal/database"
+	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 )
+
+// contentLog is the shared logger for content operations
+var contentLog = helpers.ContentLog
 
 // ContentHandler handles PDF content operations.
 // It manages uploads, downloads (proxied viewing), and access verification.
@@ -91,23 +94,23 @@ const (
 //
 // Returns the highest access level the user has.
 func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
-	log.Printf("Checking access for user %d on note %d", userID, note.ID)
+	contentLog.Log("ACCESS_CHECK", "checking permissions", "user_id", userID, "note_id", note.ID, "note_status", note.Status)
 
 	// Check if user is the creator of this note (always has access)
 	if note.CreatorID == userID {
-		log.Printf("User %d is the creator of note %d", userID, note.ID)
+		contentLog.Log("ACCESS_GRANTED", "user is creator", "user_id", userID, "note_id", note.ID)
 		return AccessCreator
 	}
 
 	// Check if user is global admin
 	var user models.User
 	if err := handler.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
-		log.Printf("Failed to fetch user for access check: %v", err)
+		contentLog.Log("ACCESS_ERROR", "failed to fetch user", "user_id", userID, "error", err)
 		return AccessNone
 	}
 
 	if user.IsGlobalAdmin {
-		log.Printf("User %d has global admin access to note %d", userID, note.ID)
+		contentLog.Log("ACCESS_GRANTED", "global admin", "user_id", userID, "note_id", note.ID)
 		return AccessGlobalAdmin
 	}
 
@@ -118,7 +121,7 @@ func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note)
 		Count(&adminCount)
 
 	if adminCount > 0 {
-		log.Printf("User %d has subnotery admin access to note %d", userID, note.ID)
+		contentLog.Log("ACCESS_GRANTED", "subnotery admin", "user_id", userID, "note_id", note.ID, "subnotery_id", note.SubnoteryID)
 		return AccessSubAdmin
 	}
 
@@ -130,12 +133,12 @@ func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note)
 			Count(&purchaseCount)
 
 		if purchaseCount > 0 {
-			log.Printf("User %d has purchased access to note %d", userID, note.ID)
+			contentLog.Log("ACCESS_GRANTED", "purchased", "user_id", userID, "note_id", note.ID)
 			return AccessPurchased
 		}
 	}
 
-	log.Printf("User %d has no access to note %d", userID, note.ID)
+	contentLog.Log("ACCESS_DENIED", "no permission", "user_id", userID, "note_id", note.ID)
 	return AccessNone
 }
 
@@ -172,29 +175,26 @@ func (handler *ContentHandler) CanViewApprovedNote(userID uint64, note *models.N
 //
 // Route: POST /api/v1/notes/:id/content
 func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
-	log.Println("Processing PDF upload request...")
+	start := time.Now()
+	contentLog.Log("UPLOAD", "request received")
 
-	// Parse note ID from URL
-	noteIDStr := c.Param("id")
-	noteID, err := strconv.ParseUint(noteIDStr, 10, 64)
-	if err != nil {
-		log.Printf("Invalid note ID: %s", noteIDStr)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid note ID"})
+	// Parse note ID and get user ID using helpers
+	noteID, ok := helpers.MustParseNoteID(c)
+	if !ok {
 		return
 	}
-
-	// Get authenticated user
-	userID := c.MustGet("user_id").(uint64)
-	log.Printf("User %d attempting to upload PDF for note %d", userID, noteID)
+	userID := helpers.GetUserID(c)
+	contentLog.Log("UPLOAD", "processing", "user_id", userID, "note_id", noteID)
 
 	// Fetch the note
 	var note models.Note
 	if err := handler.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			contentLog.Log("UPLOAD", "note not found", "note_id", noteID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 			return
 		}
-		log.Printf("Failed to fetch note: %v", err)
+		contentLog.Log("UPLOAD", "database error fetching note", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
 		return
 	}
@@ -202,7 +202,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 	// Only allow upload for pending notes (can't change approved note content)
 	// This prevents content bait-and-switch after approval
 	if note.Status != "Pending" {
-		log.Printf("Cannot upload PDF to non-pending note %d (status: %s)", noteID, note.Status)
+		contentLog.Log("UPLOAD", "rejected - note not pending", "note_id", noteID, "status", note.Status)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot modify PDF for approved or rejected notes"})
 		return
 	}
@@ -214,7 +214,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 	// Get the uploaded file
 	file, header, err := c.Request.FormFile("pdf")
 	if err != nil {
-		log.Printf("Failed to get uploaded file: %v", err)
+		contentLog.Log("UPLOAD", "no file provided", "note_id", noteID, "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "PDF file required"})
 		return
 	}
@@ -223,7 +223,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 	// Validate file type (basic check - production should be more thorough)
 	contentType := header.Header.Get("Content-Type")
 	if contentType != "application/pdf" && contentType != "" {
-		log.Printf("Invalid content type: %s", contentType)
+		contentLog.Log("UPLOAD", "invalid content type", "note_id", noteID, "content_type", contentType)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "File must be a PDF"})
 		return
 	}
@@ -231,20 +231,22 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 	// Validate file size (e.g., max 50MB)
 	maxSize := int64(50 * 1024 * 1024) // 50MB
 	if header.Size > maxSize {
-		log.Printf("File too large: %d bytes", header.Size)
+		contentLog.Log("UPLOAD", "file too large", "note_id", noteID, "size_bytes", header.Size, "max_bytes", maxSize)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "PDF file too large (max 50MB)"})
 		return
 	}
 
-	log.Printf("Uploading PDF for note %d (size: %d bytes)", noteID, header.Size)
+	contentLog.Log("UPLOAD", "uploading to R2", "note_id", noteID, "size_bytes", header.Size, "filename", header.Filename)
 
 	// Upload to R2
 	ctx := c.Request.Context()
 	if err := handler.R2.UploadPDF(ctx, uint(noteID), file, header.Size); err != nil {
-		log.Printf("Failed to upload PDF to R2: %v", err)
+		contentLog.Log("UPLOAD", "R2 upload failed", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload PDF"})
 		return
 	}
+
+	contentLog.Log("UPLOAD", "R2 upload successful", "note_id", noteID)
 
 	// Update note metadata
 
@@ -253,13 +255,14 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 		"pdf_size":        header.Size,
 		"pdf_uploaded_at": time.Now(),
 	}).Error; err != nil {
-		log.Printf("Failed to update note PDF metadata: %v", err)
+		contentLog.Log("UPLOAD", "metadata update failed", "note_id", noteID, "error", err)
 		// PDF was uploaded but metadata failed - not ideal but not fatal
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "PDF uploaded but metadata update failed"})
 		return
 	}
 
-	log.Printf("Successfully uploaded PDF for note %d", noteID)
+	duration := time.Since(start)
+	contentLog.Log("UPLOAD", "completed successfully", "note_id", noteID, "size_bytes", header.Size, "duration_ms", duration.Milliseconds())
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "PDF uploaded successfully",
 		"pdf_size": header.Size,
@@ -277,36 +280,33 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 //
 // Route: GET /api/v1/notes/:id/content
 func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
-	log.Println("Processing PDF content request...")
+	start := time.Now()
+	contentLog.Log("VIEW", "request received")
 
-	// Parse note ID from URL
-	noteIDStr := c.Param("id")
-	noteID, err := strconv.ParseUint(noteIDStr, 10, 64)
-	if err != nil {
-		log.Printf("Invalid note ID: %s", noteIDStr)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid note ID"})
+	// Parse note ID and get user ID using helpers
+	noteID, ok := helpers.MustParseNoteID(c)
+	if !ok {
 		return
 	}
-
-	// Get authenticated user
-	userID := c.MustGet("user_id").(uint64)
-	log.Printf("User %d requesting PDF content for note %d", userID, noteID)
+	userID := helpers.GetUserID(c)
+	contentLog.Log("VIEW", "processing", "user_id", userID, "note_id", noteID)
 
 	// Fetch the note
 	var note models.Note
 	if err := handler.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			contentLog.Log("VIEW", "note not found", "note_id", noteID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 			return
 		}
-		log.Printf("Failed to fetch note: %v", err)
+		contentLog.Log("VIEW", "database error", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
 		return
 	}
 
 	// Check if note has a PDF
 	if !note.HasPDF {
-		log.Printf("Note %d has no PDF content", noteID)
+		contentLog.Log("VIEW", "no PDF content", "note_id", noteID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "No PDF content available for this note"})
 		return
 	}
@@ -320,7 +320,7 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 		// Only admins can view pending notes
 		hasAccess = handler.CanViewPendingNote(userID, &note)
 		if !hasAccess {
-			log.Printf("User %d denied access to pending note %d", userID, noteID)
+			contentLog.Log("VIEW", "denied - pending note", "user_id", userID, "note_id", noteID)
 			c.JSON(http.StatusForbidden, gin.H{"error": "This note is pending approval"})
 			return
 		}
@@ -329,28 +329,29 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 		// Must have purchased or be admin
 		hasAccess = handler.CanViewApprovedNote(userID, &note)
 		if !hasAccess {
-			log.Printf("User %d denied access to note %d (not purchased)", userID, noteID)
+			contentLog.Log("VIEW", "denied - not purchased", "user_id", userID, "note_id", noteID)
 			c.JSON(http.StatusForbidden, gin.H{"error": "You must purchase this note to view it"})
 			return
 		}
 
 	case "Rejected":
 		// Rejected notes cannot be viewed
-		log.Printf("User %d attempted to view rejected note %d", userID, noteID)
+		contentLog.Log("VIEW", "denied - note rejected", "user_id", userID, "note_id", noteID)
 		c.JSON(http.StatusGone, gin.H{"error": "This note has been rejected and is no longer available"})
 		return
 
 	default:
-		log.Printf("Unknown note status: %s", note.Status)
+		contentLog.Log("VIEW", "unknown status", "note_id", noteID, "status", note.Status)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Unknown note status"})
 		return
 	}
 
 	// Fetch PDF from R2
+	contentLog.Log("VIEW", "fetching from R2", "note_id", noteID)
 	ctx := c.Request.Context()
 	pdfContent, contentLength, err := handler.R2.GetPDFContent(ctx, uint(noteID))
 	if err != nil {
-		log.Printf("Failed to fetch PDF from R2: %v", err)
+		contentLog.Log("VIEW", "R2 fetch failed", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve PDF content"})
 		return
 	}
@@ -371,12 +372,13 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 	// Stream the PDF content to the response
 	c.Status(http.StatusOK)
 	if _, err := io.Copy(c.Writer, pdfContent); err != nil {
-		log.Printf("Failed to stream PDF content: %v", err)
+		contentLog.Log("VIEW", "stream failed", "note_id", noteID, "user_id", userID, "error", err)
 		// Can't return JSON error at this point, response already started
 		return
 	}
 
-	log.Printf("Successfully served PDF for note %d to user %d", noteID, userID)
+	duration := time.Since(start)
+	contentLog.Log("VIEW", "served successfully", "note_id", noteID, "user_id", userID, "size_bytes", contentLength, "duration_ms", duration.Milliseconds())
 }
 
 // AdminPreviewPDF is an alias for GetNotePDFContent that's clearer in admin routes.
@@ -403,10 +405,8 @@ func (handler *ContentHandler) AdminPreviewPDF(c *gin.Context) {
 //
 // Route: GET /api/v1/me/purchases
 func (handler *ContentHandler) GetMyPurchases(c *gin.Context) {
-	log.Println("Fetching user's purchased notes...")
-
-	userID := c.MustGet("user_id").(uint64)
-	log.Printf("Fetching purchases for user %d", userID)
+	userID := helpers.GetUserID(c)
+	contentLog.Log("MY_PURCHASES", "fetching", "user_id", userID)
 
 	// Fetch purchases with note details
 	type PurchasedNote struct {
@@ -426,12 +426,12 @@ func (handler *ContentHandler) GetMyPurchases(c *gin.Context) {
 		Scan(&purchasedNotes).Error
 
 	if err != nil {
-		log.Printf("Failed to fetch purchases: %v", err)
+		contentLog.Log("MY_PURCHASES", "database error", "user_id", userID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch purchases"})
 		return
 	}
 
-	log.Printf("Found %d purchases for user %d", len(purchasedNotes), userID)
+	contentLog.Log("MY_PURCHASES", "success", "user_id", userID, "count", len(purchasedNotes))
 	c.JSON(http.StatusOK, gin.H{"purchases": purchasedNotes})
 }
 
@@ -444,22 +444,22 @@ func (handler *ContentHandler) GetMyPurchases(c *gin.Context) {
 //
 // Route: DELETE /api/v1/admin/notes/:id/content (admin only)
 func (handler *ContentHandler) DeleteNotePDF(c *gin.Context) {
-	log.Println("Processing PDF deletion request...")
-
-	noteIDStr := c.Param("id")
-	noteID, err := strconv.ParseUint(noteIDStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid note ID"})
+	noteID, ok := helpers.MustParseNoteID(c)
+	if !ok {
 		return
 	}
+
+	contentLog.Log("DELETE", "processing", "note_id", noteID)
 
 	// Verify note exists
 	var note models.Note
 	if err := handler.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			contentLog.Log("DELETE", "note not found", "note_id", noteID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 			return
 		}
+		contentLog.Log("DELETE", "database error", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
 		return
 	}
@@ -467,7 +467,7 @@ func (handler *ContentHandler) DeleteNotePDF(c *gin.Context) {
 	// Delete from R2
 	ctx := c.Request.Context()
 	if err := handler.R2.DeletePDF(ctx, uint(noteID)); err != nil {
-		log.Printf("Failed to delete PDF from R2: %v", err)
+		contentLog.Log("DELETE", "R2 delete failed", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete PDF"})
 		return
 	}
@@ -478,10 +478,10 @@ func (handler *ContentHandler) DeleteNotePDF(c *gin.Context) {
 		"pdf_size":        0,
 		"pdf_uploaded_at": nil,
 	}).Error; err != nil {
-		log.Printf("Failed to update note metadata after PDF deletion: %v", err)
+		contentLog.Log("DELETE", "metadata update failed (non-fatal)", "note_id", noteID, "error", err)
 		// PDF deleted but metadata update failed - log but continue
 	}
 
-	log.Printf("Successfully deleted PDF for note %d", noteID)
+	contentLog.Log("DELETE", "completed successfully", "note_id", noteID)
 	c.JSON(http.StatusOK, gin.H{"message": "PDF deleted successfully"})
 }

@@ -4,17 +4,20 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
+
+// feedLog is the shared logger for feed operations
+var feedLog = helpers.FeedLog
 
 const (
 	// Redis key prefixes
@@ -63,14 +66,17 @@ func CalculateHotness(upvotes, downvotes uint64, createdAt time.Time) float64 {
 // UpdateNoteHotness interacts with no other handler methods.
 func (handler *FeedHandler) UpdateNoteHotness(ctx context.Context, note *models.Note) error {
 	hotness := CalculateHotness(note.Upvotes, note.Downvotes, note.CreatedAt)
+	feedLog.Log("HOTNESS", "calculated", "note_id", note.ID, "score", fmt.Sprintf("%.4f", hotness), "upvotes", note.Upvotes, "downvotes", note.Downvotes)
 
 	// Update in database
 	if err := handler.DB.Model(note).Update("hotness", hotness).Error; err != nil {
+		feedLog.Log("HOTNESS", "db update failed", "note_id", note.ID, "error", err)
 		return err
 	}
 
 	// Only approved notes go in the feed
 	if note.Status != "Approved" {
+		feedLog.Log("HOTNESS", "skipped feed (not approved)", "note_id", note.ID, "status", note.Status)
 		return nil
 	}
 
@@ -81,6 +87,7 @@ func (handler *FeedHandler) UpdateNoteHotness(ctx context.Context, note *models.
 		Score:  hotness,
 		Member: noteID,
 	}).Err(); err != nil {
+		feedLog.Log("HOTNESS", "redis global update failed", "note_id", note.ID, "error", err)
 		return err
 	}
 
@@ -90,9 +97,11 @@ func (handler *FeedHandler) UpdateNoteHotness(ctx context.Context, note *models.
 		Score:  hotness,
 		Member: noteID,
 	}).Err(); err != nil {
+		feedLog.Log("HOTNESS", "redis subnotery update failed", "note_id", note.ID, "subnotery_id", note.SubnoteryID, "error", err)
 		return err
 	}
 
+	feedLog.Log("HOTNESS", "updated successfully", "note_id", note.ID, "subnotery_id", note.SubnoteryID)
 	return nil
 }
 
@@ -112,16 +121,24 @@ func (handler *FeedHandler) AddNoteToFeed(ctx context.Context, note *models.Note
 // RemoveNoteFromFeed interacts with Redis to remove the note from feeds.
 // RemoveNoteFromFeed interacts with no other handler methods.
 func (handler *FeedHandler) RemoveNoteFromFeed(ctx context.Context, note *models.Note) error {
+	feedLog.Log("REMOVE", "removing from feeds", "note_id", note.ID, "subnotery_id", note.SubnoteryID)
 	noteID := strconv.FormatUint(uint64(note.ID), 10)
 
 	// Remove from global feed
 	if err := handler.RDB.ZRem(ctx, globalHotKey, noteID).Err(); err != nil {
+		feedLog.Log("REMOVE", "global feed removal failed", "note_id", note.ID, "error", err)
 		return err
 	}
 
 	// Remove from subnotery feed
 	subnoteryKey := subnoteryHotKey + strconv.FormatUint(uint64(note.SubnoteryID), 10)
-	return handler.RDB.ZRem(ctx, subnoteryKey, noteID).Err()
+	if err := handler.RDB.ZRem(ctx, subnoteryKey, noteID).Err(); err != nil {
+		feedLog.Log("REMOVE", "subnotery feed removal failed", "note_id", note.ID, "error", err)
+		return err
+	}
+
+	feedLog.Log("REMOVE", "removed successfully", "note_id", note.ID)
+	return nil
 }
 
 // GetHotFeed returns the hot feed for a user (personalized) or globally (public).
@@ -131,39 +148,35 @@ func (handler *FeedHandler) RemoveNoteFromFeed(ctx context.Context, note *models
 // GetHotFeed interacts with the database to fetch full note data.
 // GetHotFeed interacts with no other handler methods.
 func (handler *FeedHandler) GetHotFeed(c *gin.Context) {
+	start := time.Now()
 	ctx := c.Request.Context()
 
-	// Parse pagination params
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 25
-	}
-	offset := (page - 1) * limit
+	// Parse pagination using helpers
+	pag := helpers.ParsePagination(c)
 
 	// Check if user is authenticated (optional auth)
-	userID, authenticated := c.Get("user_id")
+	userID, authenticated := helpers.TryGetUserID(c)
 
 	var noteIDs []string
 
 	if authenticated {
-		log.Println("Fetching personalized hot feed for user:", userID)
-		noteIDs = handler.getPersonalizedFeed(ctx, userID.(uint64), offset, limit)
+		feedLog.Log("GET_FEED", "fetching personalized", "user_id", userID, "page", pag.Page, "limit", pag.Limit)
+		noteIDs = handler.getPersonalizedFeed(ctx, userID, pag.Offset, pag.Limit)
 	} else {
-		log.Println("Fetching global hot feed for anonymous user")
-		noteIDs = handler.getGlobalFeed(ctx, offset, limit)
+		feedLog.Log("GET_FEED", "fetching global (anonymous)", "page", pag.Page, "limit", pag.Limit)
+		noteIDs = handler.getGlobalFeed(ctx, pag.Offset, pag.Limit)
 	}
 
 	// Fetch full note data from database
 	notes := handler.fetchNotes(noteIDs)
 
+	duration := time.Since(start)
+	feedLog.Log("GET_FEED", "served", "count", len(notes), "page", pag.Page, "duration_ms", duration.Milliseconds())
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
-		"page":  page,
-		"limit": limit,
+		"page":  pag.Page,
+		"limit": pag.Limit,
 	})
 }
 
@@ -178,9 +191,11 @@ func (handler *FeedHandler) getPersonalizedFeed(ctx context.Context, userID uint
 		Pluck("subnotery_id", &subnoteryIDs)
 
 	if len(subnoteryIDs) == 0 {
-		// No subscriptions, just return global
+		feedLog.Log("PERSONALIZED", "no subscriptions, falling back to global", "user_id", userID)
 		return handler.getGlobalFeed(ctx, offset, limit)
 	}
+
+	feedLog.Log("PERSONALIZED", "building union feed", "user_id", userID, "subscriptions", len(subnoteryIDs))
 
 	// Build list of keys to union (subscribed subnoteries + global)
 	keys := make([]string, 0, len(subnoteryIDs)+1)
@@ -215,10 +230,11 @@ func (handler *FeedHandler) getPersonalizedFeed(ctx context.Context, userID uint
 	// Get the hot notes from the union
 	noteIDs, err := handler.RDB.ZRevRange(ctx, unionKey, int64(offset), int64(offset+limit-1)).Result()
 	if err != nil {
-		log.Println("Failed to get personalized feed:", err)
+		feedLog.Log("PERSONALIZED", "redis fetch failed", "user_id", userID, "error", err)
 		return []string{}
 	}
 
+	feedLog.Log("PERSONALIZED", "fetched", "user_id", userID, "count", len(noteIDs))
 	return noteIDs
 }
 
@@ -228,9 +244,10 @@ func (handler *FeedHandler) getPersonalizedFeed(ctx context.Context, userID uint
 func (handler *FeedHandler) getGlobalFeed(ctx context.Context, offset, limit int) []string {
 	noteIDs, err := handler.RDB.ZRevRange(ctx, globalHotKey, int64(offset), int64(offset+limit-1)).Result()
 	if err != nil {
-		log.Println("Failed to get global feed:", err)
+		feedLog.Log("GLOBAL", "redis fetch failed", "error", err)
 		return []string{}
 	}
+	feedLog.Log("GLOBAL", "fetched", "count", len(noteIDs))
 	return noteIDs
 }
 
@@ -274,12 +291,13 @@ func (handler *FeedHandler) fetchNotes(noteIDs []string) []models.Note {
 func (handler *FeedHandler) Upvote(c *gin.Context) {
 	ctx := c.Request.Context()
 	noteID := c.Param("id")
-	userID := c.MustGet("user_id").(uint64)
+	userID := helpers.GetUserID(c)
 
-	log.Println("User", userID, "upvoting note", noteID)
+	feedLog.Log("UPVOTE", "processing", "user_id", userID, "note_id", noteID)
 
 	var note models.Note
 	if err := handler.DB.First(&note, noteID).Error; err != nil {
+		feedLog.Log("UPVOTE", "note not found", "note_id", noteID, "error", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
 	}
@@ -290,19 +308,23 @@ func (handler *FeedHandler) Upvote(c *gin.Context) {
 
 	// Get current vote state
 	currentVote, _ := handler.RDB.HGet(ctx, voteKey, userVoteKey).Result()
+	feedLog.Log("UPVOTE", "current vote state", "user_id", userID, "note_id", noteID, "current", currentVote)
 
 	if currentVote == "up" {
 		// Remove upvote (toggle off)
+		feedLog.Log("UPVOTE", "toggling off", "user_id", userID, "note_id", noteID)
 		handler.RDB.HDel(ctx, voteKey, userVoteKey)
 		handler.DB.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1"))
 		note.Upvotes--
 	} else {
 		if currentVote == "down" {
 			// Switch from downvote to upvote
+			feedLog.Log("UPVOTE", "switching from downvote", "user_id", userID, "note_id", noteID)
 			handler.DB.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1"))
 			note.Downvotes--
 		}
 		// Add upvote
+		feedLog.Log("UPVOTE", "adding", "user_id", userID, "note_id", noteID)
 		handler.RDB.HSet(ctx, voteKey, userVoteKey, "up")
 		handler.DB.Model(&note).Update("upvotes", gorm.Expr("upvotes + 1"))
 		note.Upvotes++
@@ -310,9 +332,10 @@ func (handler *FeedHandler) Upvote(c *gin.Context) {
 
 	// Recalculate hotness
 	if err := handler.UpdateNoteHotness(ctx, &note); err != nil {
-		log.Println("Failed to update hotness:", err)
+		feedLog.Log("UPVOTE", "hotness update failed", "note_id", noteID, "error", err)
 	}
 
+	feedLog.Log("UPVOTE", "completed", "user_id", userID, "note_id", noteID, "upvotes", note.Upvotes, "downvotes", note.Downvotes)
 	c.JSON(http.StatusOK, gin.H{
 		"upvotes":   note.Upvotes,
 		"downvotes": note.Downvotes,
@@ -326,12 +349,13 @@ func (handler *FeedHandler) Upvote(c *gin.Context) {
 func (handler *FeedHandler) Downvote(c *gin.Context) {
 	ctx := c.Request.Context()
 	noteID := c.Param("id")
-	userID := c.MustGet("user_id").(uint64)
+	userID := helpers.GetUserID(c)
 
-	log.Println("User", userID, "downvoting note", noteID)
+	feedLog.Log("DOWNVOTE", "processing", "user_id", userID, "note_id", noteID)
 
 	var note models.Note
 	if err := handler.DB.First(&note, noteID).Error; err != nil {
+		feedLog.Log("DOWNVOTE", "note not found", "note_id", noteID, "error", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
 	}
@@ -340,19 +364,23 @@ func (handler *FeedHandler) Downvote(c *gin.Context) {
 	userVoteKey := fmt.Sprintf("%d", userID)
 
 	currentVote, _ := handler.RDB.HGet(ctx, voteKey, userVoteKey).Result()
+	feedLog.Log("DOWNVOTE", "current vote state", "user_id", userID, "note_id", noteID, "current", currentVote)
 
 	if currentVote == "down" {
 		// Remove downvote (toggle off)
+		feedLog.Log("DOWNVOTE", "toggling off", "user_id", userID, "note_id", noteID)
 		handler.RDB.HDel(ctx, voteKey, userVoteKey)
 		handler.DB.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1"))
 		note.Downvotes--
 	} else {
 		if currentVote == "up" {
 			// Switch from upvote to downvote
+			feedLog.Log("DOWNVOTE", "switching from upvote", "user_id", userID, "note_id", noteID)
 			handler.DB.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1"))
 			note.Upvotes--
 		}
 		// Add downvote
+		feedLog.Log("DOWNVOTE", "adding", "user_id", userID, "note_id", noteID)
 		handler.RDB.HSet(ctx, voteKey, userVoteKey, "down")
 		handler.DB.Model(&note).Update("downvotes", gorm.Expr("downvotes + 1"))
 		note.Downvotes++
@@ -360,9 +388,10 @@ func (handler *FeedHandler) Downvote(c *gin.Context) {
 
 	// Recalculate hotness
 	if err := handler.UpdateNoteHotness(ctx, &note); err != nil {
-		log.Println("Failed to update hotness:", err)
+		feedLog.Log("DOWNVOTE", "hotness update failed", "note_id", noteID, "error", err)
 	}
 
+	feedLog.Log("DOWNVOTE", "completed", "user_id", userID, "note_id", noteID, "upvotes", note.Upvotes, "downvotes", note.Downvotes)
 	c.JSON(http.StatusOK, gin.H{
 		"upvotes":   note.Upvotes,
 		"downvotes": note.Downvotes,
