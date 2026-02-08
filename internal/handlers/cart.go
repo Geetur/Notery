@@ -40,7 +40,7 @@ func (app *App) AddToCart(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
 	}
-	if note.Status != "Approved" {
+	if note.Status != models.StatusApproved {
 		cartLog.Log("ADD", "Attempt to add non-approved note", "noteID", note.ID, "status", note.Status)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only approved notes can be added to cart"})
 		return

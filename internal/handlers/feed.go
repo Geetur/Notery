@@ -60,7 +60,7 @@ func (app *App) UpdateNoteHotness(ctx context.Context, note *models.Note) error 
 	}
 
 	// Only approved notes go in the feed
-	if note.Status != "Approved" {
+	if note.Status != models.StatusApproved {
 		feedLog.Log("HOTNESS", "skipped feed (not approved)", "note_id", note.ID, "status", note.Status)
 		return nil
 	}
@@ -93,7 +93,7 @@ func (app *App) UpdateNoteHotness(ctx context.Context, note *models.Note) error 
 // AddNoteToFeed adds an approved note to the hot feeds.
 // Call this when a note is approved.
 func (app *App) AddNoteToFeed(ctx context.Context, note *models.Note) error {
-	if note.Status != "Approved" {
+	if note.Status != models.StatusApproved {
 		return nil
 	}
 	return app.UpdateNoteHotness(ctx, note)
@@ -260,6 +260,7 @@ func (app *App) fetchNotes(noteIDs []string) []models.Note {
 }
 
 // Upvote handles upvoting a note and updates hotness.
+// Uses a DB transaction as the source of truth; Redis vote cache is updated afterwards.
 func (app *App) Upvote(c *gin.Context) {
 	ctx := c.Request.Context()
 	noteID := c.Param("id")
@@ -274,32 +275,69 @@ func (app *App) Upvote(c *gin.Context) {
 		return
 	}
 
-	// Check if user already voted (using Redis set)
+	noteIDUint := uint64(note.ID)
+
+	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+		// Lock-read existing vote
+		var existing models.Vote
+		err := tx.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&existing).Error
+
+		if err == nil {
+			// Vote exists
+			if existing.Direction == models.VoteUp {
+				// Toggle off: remove upvote
+				if err := tx.Delete(&existing).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1")).Error; err != nil {
+					return err
+				}
+				note.Upvotes--
+				feedLog.Log("UPVOTE", "toggled off", "user_id", userID, "note_id", noteID)
+			} else {
+				// Switch from down → up
+				if err := tx.Model(&existing).Update("direction", models.VoteUp).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1")).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes + 1")).Error; err != nil {
+					return err
+				}
+				note.Downvotes--
+				note.Upvotes++
+				feedLog.Log("UPVOTE", "switched from down", "user_id", userID, "note_id", noteID)
+			}
+		} else {
+			// No existing vote – create upvote
+			vote := models.Vote{UserID: userID, NoteID: noteIDUint, Direction: models.VoteUp}
+			if err := tx.Create(&vote).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes + 1")).Error; err != nil {
+				return err
+			}
+			note.Upvotes++
+			feedLog.Log("UPVOTE", "added", "user_id", userID, "note_id", noteID)
+		}
+		return nil
+	}); err != nil {
+		feedLog.Log("UPVOTE", "transaction failed", "user_id", userID, "note_id", noteID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process vote"})
+		return
+	}
+
+	// Update Redis vote cache (best-effort)
 	voteKey := fmt.Sprintf("votes:%s", noteID)
 	userVoteKey := fmt.Sprintf("%d", userID)
-
-	// Get current vote state
-	currentVote, _ := app.RDB.HGet(ctx, voteKey, userVoteKey).Result()
-	feedLog.Log("UPVOTE", "current vote state", "user_id", userID, "note_id", noteID, "current", currentVote)
-
-	if currentVote == "up" {
-		// Remove upvote (toggle off)
-		feedLog.Log("UPVOTE", "toggling off", "user_id", userID, "note_id", noteID)
+	// Re-read the current vote state from DB to set cache correctly
+	var currentVote models.Vote
+	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
+		// Vote was removed (toggle-off)
 		app.RDB.HDel(ctx, voteKey, userVoteKey)
-		app.DB.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1"))
-		note.Upvotes--
 	} else {
-		if currentVote == "down" {
-			// Switch from downvote to upvote
-			feedLog.Log("UPVOTE", "switching from downvote", "user_id", userID, "note_id", noteID)
-			app.DB.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1"))
-			note.Downvotes--
-		}
-		// Add upvote
-		feedLog.Log("UPVOTE", "adding", "user_id", userID, "note_id", noteID)
-		app.RDB.HSet(ctx, voteKey, userVoteKey, "up")
-		app.DB.Model(&note).Update("upvotes", gorm.Expr("upvotes + 1"))
-		note.Upvotes++
+		app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
 	}
 
 	// Recalculate hotness
@@ -316,6 +354,7 @@ func (app *App) Upvote(c *gin.Context) {
 }
 
 // Downvote handles downvoting a note and updates hotness.
+// Uses a DB transaction as the source of truth; Redis vote cache is updated afterwards.
 func (app *App) Downvote(c *gin.Context) {
 	ctx := c.Request.Context()
 	noteID := c.Param("id")
@@ -330,30 +369,65 @@ func (app *App) Downvote(c *gin.Context) {
 		return
 	}
 
+	noteIDUint := uint64(note.ID)
+
+	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+		var existing models.Vote
+		err := tx.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&existing).Error
+
+		if err == nil {
+			if existing.Direction == models.VoteDown {
+				// Toggle off: remove downvote
+				if err := tx.Delete(&existing).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1")).Error; err != nil {
+					return err
+				}
+				note.Downvotes--
+				feedLog.Log("DOWNVOTE", "toggled off", "user_id", userID, "note_id", noteID)
+			} else {
+				// Switch from up → down
+				if err := tx.Model(&existing).Update("direction", models.VoteDown).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1")).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes + 1")).Error; err != nil {
+					return err
+				}
+				note.Upvotes--
+				note.Downvotes++
+				feedLog.Log("DOWNVOTE", "switched from up", "user_id", userID, "note_id", noteID)
+			}
+		} else {
+			// No existing vote – create downvote
+			vote := models.Vote{UserID: userID, NoteID: noteIDUint, Direction: models.VoteDown}
+			if err := tx.Create(&vote).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes + 1")).Error; err != nil {
+				return err
+			}
+			note.Downvotes++
+			feedLog.Log("DOWNVOTE", "added", "user_id", userID, "note_id", noteID)
+		}
+		return nil
+	}); err != nil {
+		feedLog.Log("DOWNVOTE", "transaction failed", "user_id", userID, "note_id", noteID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process vote"})
+		return
+	}
+
+	// Update Redis vote cache (best-effort)
 	voteKey := fmt.Sprintf("votes:%s", noteID)
 	userVoteKey := fmt.Sprintf("%d", userID)
-
-	currentVote, _ := app.RDB.HGet(ctx, voteKey, userVoteKey).Result()
-	feedLog.Log("DOWNVOTE", "current vote state", "user_id", userID, "note_id", noteID, "current", currentVote)
-
-	if currentVote == "down" {
-		// Remove downvote (toggle off)
-		feedLog.Log("DOWNVOTE", "toggling off", "user_id", userID, "note_id", noteID)
+	var currentVote models.Vote
+	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
 		app.RDB.HDel(ctx, voteKey, userVoteKey)
-		app.DB.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1"))
-		note.Downvotes--
 	} else {
-		if currentVote == "up" {
-			// Switch from upvote to downvote
-			feedLog.Log("DOWNVOTE", "switching from upvote", "user_id", userID, "note_id", noteID)
-			app.DB.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1"))
-			note.Upvotes--
-		}
-		// Add downvote
-		feedLog.Log("DOWNVOTE", "adding", "user_id", userID, "note_id", noteID)
-		app.RDB.HSet(ctx, voteKey, userVoteKey, "down")
-		app.DB.Model(&note).Update("downvotes", gorm.Expr("downvotes + 1"))
-		note.Downvotes++
+		app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
 	}
 
 	// Recalculate hotness

@@ -1,33 +1,33 @@
 // Package handlers/purchase.go contains HTTP handlers for purchase operations.
 // This file manages note purchases (checkout) and purchase history.
 //
-// PURCHASE FLOW:
-// --------------
-// 1. User adds approved note to cart (existing cart handler)
-// 2. User initiates checkout (this handler)
-// 3. System validates cart items are still approved and available
-// 4. System creates Purchase records for each item
-// 5. Cart is cleared
-// 6. User can now view purchased notes via content handler
+// PURCHASE FLOW (with Order state machine):
+// ------------------------------------------
+// 1. User adds approved notes to cart (cart handler)
+// 2. User initiates checkout with an idempotency key
+// 3. System creates an Order (pending) with OrderItems
+// 4. System validates all items (approved, has PDF, not already purchased)
+// 5. Order transitions: pending → paid → fulfilled
+// 6. Purchase records are created during fulfillment
+// 7. Cart is cleared
 //
 // PAYMENT INTEGRATION (FUTURE):
 // -----------------------------
-// Currently, this is a simplified checkout that creates purchase records directly.
-// In production, you would integrate with a payment provider (Stripe, etc.):
-// 1. Create a payment intent with the total amount
-// 2. Wait for webhook confirmation of successful payment
-// 3. Only then create Purchase records
-//
-// The current implementation is suitable for testing and can be extended.
+// When a real payment provider is integrated:
+// - Step 4 creates a PaymentIntent externally
+// - A webhook confirms payment → transitions Order to "paid"
+// - Fulfillment runs on the "paid" event
+// The current implementation auto-transitions for testing.
 package handlers
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -36,25 +36,39 @@ import (
 // purchaseLog is the shared logger for purchase operations
 var purchaseLog = helpers.PurchaseLog
 
-// CheckoutCart processes the user's cart and creates purchase records.
+// CheckoutCart processes the user's cart through the Order state machine.
 //
-// This endpoint:
-// 1. Fetches all items from user's Redis cart
-// 2. Validates each item (note exists, is approved, not already purchased)
-// 3. Creates Purchase records for valid items
-// 4. Clears the cart on success
-//
-// In production, this would integrate with payment processing between steps 2-3.
-//
-// Response: JSON with list of successfully purchased note IDs
+// Request body (optional): { "idempotency_key": "uuid-here" }
 //
 // Route: POST /api/v1/checkout
 func (app *App) CheckoutCart(c *gin.Context) {
 	start := time.Now()
 
-	// Get authenticated user using helpers
 	userID := helpers.GetUserID(c)
 	purchaseLog.Log("CHECKOUT", "initiated", "user_id", userID)
+
+	// Accept optional idempotency key
+	var body struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	// Best-effort bind; missing key is fine
+	_ = c.ShouldBindJSON(&body)
+
+	// If idempotency key provided, check for existing order
+	if body.IdempotencyKey != "" {
+		var existing models.Order
+		if err := app.DB.Where("idempotency_key = ? AND user_id = ?", body.IdempotencyKey, userID).
+			Preload("Items").First(&existing).Error; err == nil {
+			purchaseLog.Log("CHECKOUT", "idempotent hit", "user_id", userID, "order_id", existing.ID)
+			c.JSON(http.StatusOK, gin.H{
+				"order_id":    existing.ID,
+				"status":      existing.Status,
+				"total_cents": existing.TotalCents,
+				"idempotent":  true,
+			})
+			return
+		}
+	}
 
 	// Fetch cart items from Redis
 	ctx := c.Request.Context()
@@ -75,100 +89,137 @@ func (app *App) CheckoutCart(c *gin.Context) {
 
 	purchaseLog.Log("CHECKOUT", "processing cart", "user_id", userID, "item_count", len(cartItems))
 
-	// Process each cart item
-	var purchasedIDs []uint
-	var errors []string
-	var totalAmount float64
+	// ---------- Phase 1: Validate & build order ----------
+	var orderItems []models.OrderItem
+	var validNotes []models.Note
+	var warnings []string
+	var totalCents int64
 
 	for _, itemIDStr := range cartItems {
 		noteID, parseErr := strconv.ParseUint(itemIDStr, 10, 64)
 		if parseErr != nil {
-			errors = append(errors, "Invalid item ID: "+itemIDStr)
+			warnings = append(warnings, "Invalid item ID: "+itemIDStr)
 			continue
 		}
 
-		// Fetch the note
 		var note models.Note
 		if err := app.DB.First(&note, noteID).Error; err != nil {
-			errors = append(errors, "Note not found: "+itemIDStr)
+			warnings = append(warnings, "Note not found: "+itemIDStr)
 			continue
 		}
-
-		// Validate note is approved
-		if note.Status != "Approved" {
-			errors = append(errors, "Note not available: "+note.Title)
+		if note.Status != models.StatusApproved {
+			warnings = append(warnings, "Note not available: "+note.Title)
 			continue
 		}
-
-		// Validate note has PDF content
 		if !note.HasPDF {
-			errors = append(errors, "Note has no content: "+note.Title)
+			warnings = append(warnings, "Note has no content: "+note.Title)
 			continue
 		}
 
-		// Check if already purchased (prevent duplicate purchases)
-		var existingPurchase models.Purchase
-		if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&existingPurchase).Error; err == nil {
-			errors = append(errors, "Already purchased: "+note.Title)
+		// Check if already purchased
+		var existing models.Purchase
+		if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&existing).Error; err == nil {
+			warnings = append(warnings, "Already purchased: "+note.Title)
 			continue
 		}
 
-		// Create purchase record
-		purchase := models.Purchase{
-			UserID:      uint(userID),
-			NoteID:      note.ID,
-			PricePaid:   note.Price,
-			PurchasedAt: time.Now(),
-		}
-
-		if err := app.DB.Create(&purchase).Error; err != nil {
-			purchaseLog.Log("CHECKOUT", "db error creating purchase", "user_id", userID, "note_id", noteID, "error", err)
-			errors = append(errors, "Failed to purchase: "+note.Title)
-			continue
-		}
-
-		purchasedIDs = append(purchasedIDs, note.ID)
-		totalAmount += note.Price
-		purchaseLog.Log("CHECKOUT", "item purchased", "user_id", userID, "note_id", noteID, "price", note.Price)
+		orderItems = append(orderItems, models.OrderItem{
+			NoteID:     note.ID,
+			PriceCents: note.Price,
+		})
+		validNotes = append(validNotes, note)
+		totalCents += note.Price
 	}
 
-	// Clear the cart (only remove successfully purchased items)
-	for _, purchasedID := range purchasedIDs {
-		app.RDB.SRem(ctx, cartKey, strconv.FormatUint(uint64(purchasedID), 10))
-	}
-
-	// Build response
-	response := gin.H{
-		"purchased_count": len(purchasedIDs),
-		"purchased_ids":   purchasedIDs,
-		"total_amount":    totalAmount,
-	}
-
-	if len(errors) > 0 {
-		response["warnings"] = errors
-	}
-
-	if len(purchasedIDs) == 0 {
-		purchaseLog.Log("CHECKOUT", "failed - no items purchased", "user_id", userID, "warnings", len(errors))
+	if len(orderItems) == 0 {
+		purchaseLog.Log("CHECKOUT", "no valid items", "user_id", userID, "warnings", len(warnings))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":    "No items could be purchased",
-			"warnings": errors,
+			"warnings": warnings,
 		})
 		return
 	}
 
+	// ---------- Phase 2: Create order + fulfil in one transaction ----------
+	var order models.Order
+
+	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+		// Create Order (pending)
+		order = models.Order{
+			UserID:         userID,
+			Status:         models.OrderPending,
+			TotalCents:     totalCents,
+			IdempotencyKey: body.IdempotencyKey,
+		}
+		if err := tx.Create(&order).Error; err != nil {
+			return err
+		}
+
+		// Create OrderItems
+		for i := range orderItems {
+			orderItems[i].OrderID = order.ID
+		}
+		if err := tx.Create(&orderItems).Error; err != nil {
+			return err
+		}
+
+		// Transition: pending → paid (auto for now, webhook in production)
+		if err := tx.Model(&order).Update("status", models.OrderPaid).Error; err != nil {
+			return err
+		}
+
+		// Transition: paid → fulfilled — create Purchase records
+		for _, note := range validNotes {
+			purchase := models.Purchase{
+				UserID:      uint(userID),
+				NoteID:      note.ID,
+				PricePaid:   note.Price,
+				PurchasedAt: time.Now(),
+			}
+			if err := tx.Create(&purchase).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Model(&order).Update("status", models.OrderFulfilled).Error; err != nil {
+			return err
+		}
+		order.Status = models.OrderFulfilled
+
+		return nil
+	}); err != nil {
+		purchaseLog.Log("CHECKOUT", "transaction failed", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Checkout failed"})
+		return
+	}
+
+	// Clear successfully purchased items from cart
+	for _, note := range validNotes {
+		app.RDB.SRem(ctx, cartKey, strconv.FormatUint(uint64(note.ID), 10))
+	}
+
+	response := gin.H{
+		"order_id":        order.ID,
+		"status":          order.Status,
+		"purchased_count": len(validNotes),
+		"total_cents":     totalCents,
+	}
+	if len(warnings) > 0 {
+		response["warnings"] = warnings
+	}
+
 	duration := time.Since(start)
-	purchaseLog.Log("CHECKOUT", "completed", "user_id", userID, "items", len(purchasedIDs), "total", fmt.Sprintf("%.2f", totalAmount), "duration_ms", duration.Milliseconds())
+	purchaseLog.Log("CHECKOUT", "completed", "user_id", userID, "order_id", order.ID, "items", len(validNotes), "total_cents", totalCents, "duration_ms", duration.Milliseconds())
 	c.JSON(http.StatusOK, response)
 }
 
 // PurchaseSingleNote handles direct purchase of a single note (not from cart).
+// Creates a single-item Order → fulfils it in one transaction.
 //
-// This is useful for "Buy Now" buttons that bypass the cart entirely.
+// Request body (optional): { "idempotency_key": "uuid-here" }
 //
 // Route: POST /api/v1/notes/:id/purchase
 func (app *App) PurchaseSingleNote(c *gin.Context) {
-	// Get authenticated user and note ID using helpers
 	userID := helpers.GetUserID(c)
 	noteID, ok := helpers.MustParseNoteID(c)
 	if !ok {
@@ -177,7 +228,26 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 
 	purchaseLog.Log("SINGLE", "processing", "user_id", userID, "note_id", noteID)
 
-	// Fetch the note
+	var body struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	_ = c.ShouldBindJSON(&body)
+
+	// Idempotency check
+	if body.IdempotencyKey != "" {
+		var existing models.Order
+		if err := app.DB.Where("idempotency_key = ? AND user_id = ?", body.IdempotencyKey, userID).
+			First(&existing).Error; err == nil {
+			purchaseLog.Log("SINGLE", "idempotent hit", "user_id", userID, "order_id", existing.ID)
+			c.JSON(http.StatusOK, gin.H{
+				"order_id":   existing.ID,
+				"status":     existing.Status,
+				"idempotent": true,
+			})
+			return
+		}
+	}
+
 	var note models.Note
 	if err := app.DB.First(&note, noteID).Error; err != nil {
 		purchaseLog.Log("SINGLE", "note not found", "note_id", noteID, "error", err)
@@ -185,13 +255,11 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 		return
 	}
 
-	// Validate note is purchasable
-	if note.Status != "Approved" {
+	if note.Status != models.StatusApproved {
 		purchaseLog.Log("SINGLE", "not approved", "note_id", noteID, "status", note.Status)
 		c.JSON(http.StatusForbidden, gin.H{"error": "This note is not available for purchase"})
 		return
 	}
-
 	if !note.HasPDF {
 		purchaseLog.Log("SINGLE", "no PDF", "note_id", noteID)
 		c.JSON(http.StatusForbidden, gin.H{"error": "This note has no content"})
@@ -209,27 +277,68 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 		return
 	}
 
-	// Create purchase record
-	purchase := models.Purchase{
-		UserID:      uint(userID),
-		NoteID:      note.ID,
-		PricePaid:   note.Price,
-		PurchasedAt: time.Now(),
-	}
+	var order models.Order
 
-	if err := app.DB.Create(&purchase).Error; err != nil {
-		purchaseLog.Log("SINGLE", "db error", "user_id", userID, "note_id", noteID, "error", err)
+	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+		order = models.Order{
+			UserID:         userID,
+			Status:         models.OrderPending,
+			TotalCents:     note.Price,
+			IdempotencyKey: body.IdempotencyKey,
+		}
+		if err := tx.Create(&order).Error; err != nil {
+			return err
+		}
+
+		item := models.OrderItem{
+			OrderID:    order.ID,
+			NoteID:     note.ID,
+			PriceCents: note.Price,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			return err
+		}
+
+		// Auto-transition: pending → paid → fulfilled
+		if err := tx.Model(&order).Update("status", models.OrderPaid).Error; err != nil {
+			return err
+		}
+
+		purchase := models.Purchase{
+			UserID:      uint(userID),
+			NoteID:      note.ID,
+			PricePaid:   note.Price,
+			PurchasedAt: time.Now(),
+		}
+		if err := tx.Create(&purchase).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&order).Update("status", models.OrderFulfilled).Error; err != nil {
+			return err
+		}
+		order.Status = models.OrderFulfilled
+
+		return nil
+	}); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			purchaseLog.Log("SINGLE", "duplicate purchase prevented", "user_id", userID, "note_id", noteID)
+			c.JSON(http.StatusConflict, gin.H{"error": "You have already purchased this note"})
+			return
+		}
+		purchaseLog.Log("SINGLE", "transaction failed", "user_id", userID, "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete purchase"})
 		return
 	}
 
-	purchaseLog.Log("SINGLE", "success", "user_id", userID, "note_id", noteID, "price", note.Price)
+	purchaseLog.Log("SINGLE", "success", "user_id", userID, "note_id", noteID, "order_id", order.ID, "price_cents", note.Price)
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "Purchase successful",
+		"order_id":     order.ID,
 		"note_id":      note.ID,
 		"note_title":   note.Title,
 		"price_paid":   note.Price,
-		"purchased_at": purchase.PurchasedAt,
+		"purchased_at": time.Now(),
 	})
 }
 
@@ -279,7 +388,7 @@ func (app *App) GetPurchaseHistory(c *gin.Context) {
 		NoteID      uint      `json:"note_id"`
 		NoteTitle   string    `json:"note_title"`
 		NoteAuthor  string    `json:"note_author"`
-		PricePaid   float64   `json:"price_paid"`
+		PricePaid   int64     `json:"price_paid"`
 		PurchasedAt time.Time `json:"purchased_at"`
 		HasPDF      bool      `json:"has_pdf"`
 	}

@@ -36,10 +36,10 @@ func (app *App) CreateNote(c *gin.Context) {
 
 	// Bind and validate request body
 	var req struct {
-		SubnoteryName string  `json:"subnotery_name" binding:"required"`
-		Title         string  `json:"title"`
-		Author        string  `json:"author"`
-		Price         float64 `json:"price"`
+		SubnoteryName string `json:"subnotery_name" binding:"required"`
+		Title         string `json:"title"`
+		Author        string `json:"author"`
+		Price         int64  `json:"price"`
 	}
 	if !helpers.BindJSON(c, &req) {
 		noteLog.Log("CREATE", "Failed to bind JSON request")
@@ -96,7 +96,7 @@ func (app *App) CreateNote(c *gin.Context) {
 			Title:       req.Title,
 			Author:      req.Author,
 			Price:       req.Price,
-			Status:      "Pending",
+			Status:      models.StatusPending,
 			SubnoteryID: subnotery.ID,
 			CreatorID:   userID,
 		}
@@ -129,7 +129,7 @@ func (app *App) DeleteNote(c *gin.Context) {
 	noteLog.Log("DELETE", "Note fetched", "noteID", note.ID, "status", note.Status)
 
 	// Remove from Meilisearch and feed if approved
-	if note.Status == "Approved" {
+	if note.Status == models.StatusApproved {
 		if err := app.removeNoteFromIndex(note.ID); err != nil {
 			noteLog.Log("DELETE", "Failed to remove from search index", "noteID", note.ID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
@@ -145,7 +145,7 @@ func (app *App) DeleteNote(c *gin.Context) {
 	if err := app.DB.Delete(note).Error; err != nil {
 		noteLog.Log("DELETE", "Failed to delete from database", "noteID", note.ID, "error", err)
 		// Attempt to re-index if we had removed it
-		if note.Status == "Approved" {
+		if note.Status == models.StatusApproved {
 			if reindexErr := app.indexNote(*note); reindexErr != nil {
 				noteLog.Log("DELETE", "Failed to re-index after delete error", "error", reindexErr)
 			}
@@ -178,14 +178,14 @@ func (app *App) RejectNote(c *gin.Context) {
 	previousStatus := note.Status
 
 	// Update status to Rejected
-	if err := app.DB.Model(note).Update("status", "Rejected").Error; err != nil {
+	if err := app.DB.Model(note).Update("status", models.StatusRejected).Error; err != nil {
 		noteLog.Log("REJECT", "Failed to update status", "noteID", note.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject note"})
 		return
 	}
 
 	// Handle edge case: if note was approved, remove from search index
-	if previousStatus == "Approved" {
+	if previousStatus == models.StatusApproved {
 		noteLog.Log("REJECT", "Removing previously approved note from search", "noteID", note.ID)
 		if err := app.removeNoteFromIndex(note.ID); err != nil {
 			noteLog.Log("REJECT", "Failed to remove from search index", "error", err)
@@ -238,16 +238,16 @@ func (app *App) ApproveNote(c *gin.Context) {
 	}
 
 	previousStatus := note.Status
-	wasApproved := previousStatus == "Approved"
+	wasApproved := previousStatus == models.StatusApproved
 
 	// Update status to Approved if not already
 	if !wasApproved {
-		if err := app.DB.Model(note).Update("status", "Approved").Error; err != nil {
+		if err := app.DB.Model(note).Update("status", models.StatusApproved).Error; err != nil {
 			noteLog.Log("APPROVE", "Failed to update status", "noteID", note.ID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve note"})
 			return
 		}
-		note.Status = "Approved"
+		note.Status = models.StatusApproved
 		noteLog.Log("APPROVE", "Status updated to Approved", "noteID", note.ID)
 	}
 
@@ -300,7 +300,7 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 	if isGlobal {
 		// Global admin: fetch all pending notes
 		noteLog.Log("PENDING", "Fetching all pending notes (global admin)")
-		if err := app.DB.Where("status = ?", "Pending").Find(&notes).Error; err != nil {
+		if err := app.DB.Where("status = ?", models.StatusPending).Find(&notes).Error; err != nil {
 			noteLog.Log("PENDING", "Failed to fetch pending notes", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
 			return
@@ -310,7 +310,7 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 		noteLog.Log("PENDING", "Fetching pending notes for admin subnoteries", "userID", userID)
 		if err := app.DB.
 			Joins("JOIN user_admins ON user_admins.subnotery_id = notes.subnotery_id").
-			Where("user_admins.user_id = ? AND notes.status = ?", userID, "Pending").
+			Where("user_admins.user_id = ? AND notes.status = ?", userID, models.StatusPending).
 			Find(&notes).Error; err != nil {
 			noteLog.Log("PENDING", "Failed to fetch pending notes", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
@@ -327,7 +327,7 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 	noteLog.Log("APPROVED", "Processing get approved notes request")
 
 	var notes []models.Note
-	if err := app.DB.Where("status = ?", "Approved").Find(&notes).Error; err != nil {
+	if err := app.DB.Where("status = ?", models.StatusApproved).Find(&notes).Error; err != nil {
 		noteLog.Log("APPROVED", "Failed to fetch approved notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
 		return

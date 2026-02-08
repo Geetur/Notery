@@ -6,12 +6,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Geetur/Notery/internal/config"
 	"github.com/Geetur/Notery/internal/database"
 	"github.com/Geetur/Notery/internal/handlers"
 	"github.com/Geetur/Notery/internal/middleware"
 )
 
 func main() {
+	// ----- Load configuration once at startup -----
+	log.Println("loading configuration...")
+	cfg := config.Load()
+	log.Println("configuration loaded.")
+
 	// ----- setting up the database connection ----------------------------------------------
 	log.Println("initializing database...")
 	db, err := database.InitDatabase()
@@ -61,6 +67,7 @@ func main() {
 		R2:          r2Client,
 		Meilisearch: meiliClient,
 		SearchIndex: meiliIndex,
+		JWTSecret:   cfg.JWTSecret,
 	})
 
 	// health check endpoint
@@ -77,11 +84,11 @@ func main() {
 	api.POST("/login", app.Login)
 
 	// feed endpoint (public with optional auth for personalization)
-	api.GET("/feed/hot", middleware.OptionalAuth, app.GetHotFeed)
+	api.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
 
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
-	protected.Use(middleware.RequireAuth)
+	protected.Use(middleware.RequireAuth(cfg.JWTSecret))
 	{
 		// note endpoints
 		protected.GET("/notes/:id", app.GetNoteByID)
