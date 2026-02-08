@@ -133,6 +133,8 @@ var (
 	AuthLog       = NewLogger("AUTH")
 	SubnoteryLog  = NewLogger("SUBNOTERY")
 	MiddlewareLog = NewLogger("MIDDLEWARE")
+	PaymentLog    = NewLogger("PAYMENT")
+	WebhookLog    = NewLogger("WEBHOOK")
 )
 
 // ----- RESPONSE HELPERS -----

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Geetur/Notery/internal/database"
 	"github.com/Geetur/Notery/internal/helpers"
+	"github.com/Geetur/Notery/internal/payment"
 )
 
 // appLog is the domain-specific logger for app-level operations.
@@ -33,6 +34,10 @@ type App struct {
 
 	// JWTSecret is the signing key for JWT authentication tokens.
 	JWTSecret string
+
+	// Payment is the payment processing service (e.g., Stripe).
+	// When nil, purchases auto-fulfil without payment (development mode).
+	Payment payment.Service
 }
 
 // AppConfig holds the configuration options for creating an App instance.
@@ -43,6 +48,7 @@ type AppConfig struct {
 	Meilisearch meilisearch.ServiceManager
 	SearchIndex string
 	JWTSecret   string
+	Payment     payment.Service
 }
 
 // NewApp creates and returns a new App instance with the given configuration.
@@ -55,8 +61,9 @@ func NewApp(cfg AppConfig) *App {
 		Search:      cfg.Meilisearch,
 		SearchIndex: cfg.SearchIndex,
 		JWTSecret:   cfg.JWTSecret,
+		Payment:     cfg.Payment,
 	}
 
-	appLog.Log("INIT", "App initialized", "hasDB", cfg.DB != nil, "hasRedis", cfg.Redis != nil, "hasR2", cfg.R2 != nil, "hasMeili", cfg.Meilisearch != nil, "hasJWT", cfg.JWTSecret != "")
+	appLog.Log("INIT", "App initialized", "hasDB", cfg.DB != nil, "hasRedis", cfg.Redis != nil, "hasR2", cfg.R2 != nil, "hasMeili", cfg.Meilisearch != nil, "hasJWT", cfg.JWTSecret != "", "hasPayment", cfg.Payment != nil)
 	return app
 }
