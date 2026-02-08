@@ -45,30 +45,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/Geetur/Notery/internal/database"
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 )
 
 // contentLog is the shared logger for content operations
 var contentLog = helpers.ContentLog
-
-// ContentHandler handles PDF content operations.
-// It manages uploads, downloads (proxied viewing), and access verification.
-type ContentHandler struct {
-	DB *gorm.DB
-	R2 *database.R2Client
-}
-
-// CreateContentHandler returns a new ContentHandler with the given dependencies.
-// CreateContentHandler interacts with no other handler methods.
-// CreateContentHandler interacts with the database and R2 client.
-func CreateContentHandler(db *gorm.DB, r2 *database.R2Client) *ContentHandler {
-	return &ContentHandler{
-		DB: db,
-		R2: r2,
-	}
-}
 
 // ----- ACCESS VERIFICATION HELPERS -----
 // These helpers centralize access control logic for reuse across handlers.
@@ -85,15 +67,13 @@ const (
 )
 
 // CheckNoteAccess determines what access level a user has for a specific note.
-// CheckNoteAccess interacts with the database to verify permissions.
-// CheckNoteAccess does not interact with any other handler methods.
 //
 // Parameters:
 // - userID: The authenticated user's ID
 // - note: The note being accessed
 //
 // Returns the highest access level the user has.
-func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
+func (app *App) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
 	contentLog.Log("ACCESS_CHECK", "checking permissions", "user_id", userID, "note_id", note.ID, "note_status", note.Status)
 
 	// Check if user is the creator of this note (always has access)
@@ -104,7 +84,7 @@ func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note)
 
 	// Check if user is global admin
 	var user models.User
-	if err := handler.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
+	if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
 		contentLog.Log("ACCESS_ERROR", "failed to fetch user", "user_id", userID, "error", err)
 		return AccessNone
 	}
@@ -116,7 +96,7 @@ func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note)
 
 	// Check if user is admin of this note's subnotery
 	var adminCount int64
-	handler.DB.Table("user_admins").
+	app.DB.Table("user_admins").
 		Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).
 		Count(&adminCount)
 
@@ -128,7 +108,7 @@ func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note)
 	// For approved notes, check if user purchased it
 	if note.Status == "Approved" {
 		var purchaseCount int64
-		handler.DB.Model(&models.Purchase{}).
+		app.DB.Model(&models.Purchase{}).
 			Where("user_id = ? AND note_id = ?", userID, note.ID).
 			Count(&purchaseCount)
 
@@ -144,27 +124,21 @@ func (handler *ContentHandler) CheckNoteAccess(userID uint64, note *models.Note)
 
 // CanViewPendingNote checks if a user can view a pending note's PDF.
 // Only creators and admins (subnotery or global) can view pending notes.
-// CanViewPendingNote interacts with CheckNoteAccess.
-// CanViewPendingNote does not interact with any other handler methods.
-func (handler *ContentHandler) CanViewPendingNote(userID uint64, note *models.Note) bool {
-	access := handler.CheckNoteAccess(userID, note)
+func (app *App) CanViewPendingNote(userID uint64, note *models.Note) bool {
+	access := app.CheckNoteAccess(userID, note)
 	return access == AccessCreator || access == AccessSubAdmin || access == AccessGlobalAdmin
 }
 
 // CanViewApprovedNote checks if a user can view an approved note's PDF.
 // Requires purchase OR admin access.
-// CanViewApprovedNote interacts with CheckNoteAccess.
-// CanViewApprovedNote does not interact with any other handler methods.
-func (handler *ContentHandler) CanViewApprovedNote(userID uint64, note *models.Note) bool {
-	access := handler.CheckNoteAccess(userID, note)
+func (app *App) CanViewApprovedNote(userID uint64, note *models.Note) bool {
+	access := app.CheckNoteAccess(userID, note)
 	return access != AccessNone
 }
 
 // ----- HTTP HANDLERS -----
 
 // UploadNotePDF handles PDF upload for a note.
-// UploadNotePDF interacts with R2 to store the PDF.
-// UploadNotePDF interacts with the database to update the note's PDF metadata.
 //
 // This endpoint is called after note creation to upload the PDF content.
 // Only the note's status and existence are checked - any authenticated user
@@ -174,7 +148,7 @@ func (handler *ContentHandler) CanViewApprovedNote(userID uint64, note *models.N
 // Response: JSON with success message or error
 //
 // Route: POST /api/v1/notes/:id/content
-func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
+func (app *App) UploadNotePDF(c *gin.Context) {
 	start := time.Now()
 	contentLog.Log("UPLOAD", "request received")
 
@@ -188,7 +162,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 
 	// Fetch the note
 	var note models.Note
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
+	if err := app.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			contentLog.Log("UPLOAD", "note not found", "note_id", noteID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
@@ -240,7 +214,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 
 	// Upload to R2
 	ctx := c.Request.Context()
-	if err := handler.R2.UploadPDF(ctx, uint(noteID), file, header.Size); err != nil {
+	if err := app.R2.UploadPDF(ctx, uint(noteID), file, header.Size); err != nil {
 		contentLog.Log("UPLOAD", "R2 upload failed", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload PDF"})
 		return
@@ -250,7 +224,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 
 	// Update note metadata
 
-	if err := handler.DB.Model(&note).Updates(map[string]interface{}{
+	if err := app.DB.Model(&note).Updates(map[string]interface{}{
 		"has_pdf":         true,
 		"pdf_size":        header.Size,
 		"pdf_uploaded_at": time.Now(),
@@ -270,8 +244,6 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 }
 
 // GetNotePDFContent serves the PDF content for viewing.
-// GetNotePDFContent interacts with R2 to fetch PDF content.
-// GetNotePDFContent interacts with CheckNoteAccess for authorization.
 //
 // This is the core endpoint for the in-app PDF viewer.
 // It proxies the PDF from R2 with headers that encourage viewing over downloading.
@@ -279,7 +251,7 @@ func (handler *ContentHandler) UploadNotePDF(c *gin.Context) {
 // Response: application/pdf stream with inline disposition
 //
 // Route: GET /api/v1/notes/:id/content
-func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
+func (app *App) GetNotePDFContent(c *gin.Context) {
 	start := time.Now()
 	contentLog.Log("VIEW", "request received")
 
@@ -293,7 +265,7 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 
 	// Fetch the note
 	var note models.Note
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
+	if err := app.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			contentLog.Log("VIEW", "note not found", "note_id", noteID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
@@ -318,7 +290,7 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 	switch note.Status {
 	case "Pending":
 		// Only admins can view pending notes
-		hasAccess = handler.CanViewPendingNote(userID, &note)
+		hasAccess = app.CanViewPendingNote(userID, &note)
 		if !hasAccess {
 			contentLog.Log("VIEW", "denied - pending note", "user_id", userID, "note_id", noteID)
 			c.JSON(http.StatusForbidden, gin.H{"error": "This note is pending approval"})
@@ -327,7 +299,7 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 
 	case "Approved":
 		// Must have purchased or be admin
-		hasAccess = handler.CanViewApprovedNote(userID, &note)
+		hasAccess = app.CanViewApprovedNote(userID, &note)
 		if !hasAccess {
 			contentLog.Log("VIEW", "denied - not purchased", "user_id", userID, "note_id", noteID)
 			c.JSON(http.StatusForbidden, gin.H{"error": "You must purchase this note to view it"})
@@ -349,7 +321,7 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 	// Fetch PDF from R2
 	contentLog.Log("VIEW", "fetching from R2", "note_id", noteID)
 	ctx := c.Request.Context()
-	pdfContent, contentLength, err := handler.R2.GetPDFContent(ctx, uint(noteID))
+	pdfContent, contentLength, err := app.R2.GetPDFContent(ctx, uint(noteID))
 	if err != nil {
 		contentLog.Log("VIEW", "R2 fetch failed", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve PDF content"})
@@ -382,29 +354,25 @@ func (handler *ContentHandler) GetNotePDFContent(c *gin.Context) {
 }
 
 // AdminPreviewPDF is an alias for GetNotePDFContent that's clearer in admin routes.
-// AdminPreviewPDF interacts with GetNotePDFContent (same handler).
-// AdminPreviewPDF does not interact with any other handler methods.
 //
 // The access control in GetNotePDFContent already handles admin verification,
 // so this just provides a semantically clearer endpoint for the admin workflow.
 //
 // Route: GET /api/v1/admin/notes/:id/preview
-func (handler *ContentHandler) AdminPreviewPDF(c *gin.Context) {
+func (app *App) AdminPreviewPDF(c *gin.Context) {
 	// The actual access control is in GetNotePDFContent
 	// This endpoint just provides clearer semantics for admin UIs
-	handler.GetNotePDFContent(c)
+	app.GetNotePDFContent(c)
 }
 
 // GetMyPurchases returns all notes purchased by the authenticated user.
-// GetMyPurchases interacts with the database to fetch purchases.
-// GetMyPurchases does not interact with any other handler methods.
 //
 // This is used to show the "My Purchased Notes" section in the user's account.
 //
 // Response: JSON array of notes with purchase info
 //
 // Route: GET /api/v1/me/purchases
-func (handler *ContentHandler) GetMyPurchases(c *gin.Context) {
+func (app *App) GetMyPurchases(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 	contentLog.Log("MY_PURCHASES", "fetching", "user_id", userID)
 
@@ -418,7 +386,7 @@ func (handler *ContentHandler) GetMyPurchases(c *gin.Context) {
 	var purchasedNotes []PurchasedNote
 
 	// Join purchases with notes to get full note info
-	err := handler.DB.Table("purchases").
+	err := app.DB.Table("purchases").
 		Select("notes.*, purchases.price_paid, purchases.purchased_at").
 		Joins("JOIN notes ON notes.id = purchases.note_id").
 		Where("purchases.user_id = ?", userID).
@@ -436,14 +404,12 @@ func (handler *ContentHandler) GetMyPurchases(c *gin.Context) {
 }
 
 // DeleteNotePDF removes a note's PDF from R2 storage.
-// DeleteNotePDF interacts with R2 to delete the PDF.
-// DeleteNotePDF interacts with the database to update note metadata.
 //
 // This should be called when a note is rejected or deleted.
 // It's also exposed as an admin endpoint for manual cleanup.
 //
 // Route: DELETE /api/v1/admin/notes/:id/content (admin only)
-func (handler *ContentHandler) DeleteNotePDF(c *gin.Context) {
+func (app *App) DeleteNotePDF(c *gin.Context) {
 	noteID, ok := helpers.MustParseNoteID(c)
 	if !ok {
 		return
@@ -453,7 +419,7 @@ func (handler *ContentHandler) DeleteNotePDF(c *gin.Context) {
 
 	// Verify note exists
 	var note models.Note
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
+	if err := app.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			contentLog.Log("DELETE", "note not found", "note_id", noteID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
@@ -466,14 +432,14 @@ func (handler *ContentHandler) DeleteNotePDF(c *gin.Context) {
 
 	// Delete from R2
 	ctx := c.Request.Context()
-	if err := handler.R2.DeletePDF(ctx, uint(noteID)); err != nil {
+	if err := app.R2.DeletePDF(ctx, uint(noteID)); err != nil {
 		contentLog.Log("DELETE", "R2 delete failed", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete PDF"})
 		return
 	}
 
 	// Update note metadata
-	if err := handler.DB.Model(&note).Updates(map[string]interface{}{
+	if err := app.DB.Model(&note).Updates(map[string]interface{}{
 		"has_pdf":         false,
 		"pdf_size":        0,
 		"pdf_uploaded_at": nil,

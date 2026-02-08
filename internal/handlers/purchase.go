@@ -28,8 +28,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -38,26 +36,7 @@ import (
 // purchaseLog is the shared logger for purchase operations
 var purchaseLog = helpers.PurchaseLog
 
-// PurchaseHandler handles purchase-related HTTP requests.
-// It manages checkout flow and purchase history.
-type PurchaseHandler struct {
-	DB  *gorm.DB
-	RDB *redis.Client
-}
-
-// CreatePurchaseHandler initializes a new PurchaseHandler with the given dependencies.
-// CreatePurchaseHandler interacts with no other handler methods.
-// CreatePurchaseHandler interacts with the database and Redis.
-func CreatePurchaseHandler(db *gorm.DB, rdb *redis.Client) *PurchaseHandler {
-	return &PurchaseHandler{
-		DB:  db,
-		RDB: rdb,
-	}
-}
-
 // CheckoutCart processes the user's cart and creates purchase records.
-// CheckoutCart interacts with Redis to get cart items.
-// CheckoutCart interacts with the database to create purchases.
 //
 // This endpoint:
 // 1. Fetches all items from user's Redis cart
@@ -70,7 +49,7 @@ func CreatePurchaseHandler(db *gorm.DB, rdb *redis.Client) *PurchaseHandler {
 // Response: JSON with list of successfully purchased note IDs
 //
 // Route: POST /api/v1/checkout
-func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
+func (app *App) CheckoutCart(c *gin.Context) {
 	start := time.Now()
 
 	// Get authenticated user using helpers
@@ -81,7 +60,7 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 	ctx := c.Request.Context()
 	cartKey := "cart:" + strconv.FormatUint(userID, 10)
 
-	cartItems, err := handler.RDB.SMembers(ctx, cartKey).Result()
+	cartItems, err := app.RDB.SMembers(ctx, cartKey).Result()
 	if err != nil {
 		purchaseLog.Log("CHECKOUT", "redis error", "user_id", userID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch cart"})
@@ -110,7 +89,7 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 
 		// Fetch the note
 		var note models.Note
-		if err := handler.DB.First(&note, noteID).Error; err != nil {
+		if err := app.DB.First(&note, noteID).Error; err != nil {
 			errors = append(errors, "Note not found: "+itemIDStr)
 			continue
 		}
@@ -129,7 +108,7 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 
 		// Check if already purchased (prevent duplicate purchases)
 		var existingPurchase models.Purchase
-		if err := handler.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&existingPurchase).Error; err == nil {
+		if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&existingPurchase).Error; err == nil {
 			errors = append(errors, "Already purchased: "+note.Title)
 			continue
 		}
@@ -142,7 +121,7 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 			PurchasedAt: time.Now(),
 		}
 
-		if err := handler.DB.Create(&purchase).Error; err != nil {
+		if err := app.DB.Create(&purchase).Error; err != nil {
 			purchaseLog.Log("CHECKOUT", "db error creating purchase", "user_id", userID, "note_id", noteID, "error", err)
 			errors = append(errors, "Failed to purchase: "+note.Title)
 			continue
@@ -155,7 +134,7 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 
 	// Clear the cart (only remove successfully purchased items)
 	for _, purchasedID := range purchasedIDs {
-		handler.RDB.SRem(ctx, cartKey, strconv.FormatUint(uint64(purchasedID), 10))
+		app.RDB.SRem(ctx, cartKey, strconv.FormatUint(uint64(purchasedID), 10))
 	}
 
 	// Build response
@@ -184,13 +163,11 @@ func (handler *PurchaseHandler) CheckoutCart(c *gin.Context) {
 }
 
 // PurchaseSingleNote handles direct purchase of a single note (not from cart).
-// PurchaseSingleNote interacts with the database to create a purchase.
-// PurchaseSingleNote does not interact with any other handler methods.
 //
 // This is useful for "Buy Now" buttons that bypass the cart entirely.
 //
 // Route: POST /api/v1/notes/:id/purchase
-func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
+func (app *App) PurchaseSingleNote(c *gin.Context) {
 	// Get authenticated user and note ID using helpers
 	userID := helpers.GetUserID(c)
 	noteID, ok := helpers.MustParseNoteID(c)
@@ -202,7 +179,7 @@ func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
 
 	// Fetch the note
 	var note models.Note
-	if err := handler.DB.First(&note, noteID).Error; err != nil {
+	if err := app.DB.First(&note, noteID).Error; err != nil {
 		purchaseLog.Log("SINGLE", "note not found", "note_id", noteID, "error", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
@@ -223,7 +200,7 @@ func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
 
 	// Check if already purchased
 	var existingPurchase models.Purchase
-	if err := handler.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&existingPurchase).Error; err == nil {
+	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&existingPurchase).Error; err == nil {
 		purchaseLog.Log("SINGLE", "already purchased", "user_id", userID, "note_id", noteID)
 		c.JSON(http.StatusConflict, gin.H{
 			"error":        "You have already purchased this note",
@@ -240,7 +217,7 @@ func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
 		PurchasedAt: time.Now(),
 	}
 
-	if err := handler.DB.Create(&purchase).Error; err != nil {
+	if err := app.DB.Create(&purchase).Error; err != nil {
 		purchaseLog.Log("SINGLE", "db error", "user_id", userID, "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete purchase"})
 		return
@@ -257,13 +234,11 @@ func (handler *PurchaseHandler) PurchaseSingleNote(c *gin.Context) {
 }
 
 // CheckPurchaseStatus checks if the user has purchased a specific note.
-// CheckPurchaseStatus interacts with the database to check purchase existence.
-// CheckPurchaseStatus does not interact with any other handler methods.
 //
 // Useful for frontend to show "Buy" vs "View" button.
 //
 // Route: GET /api/v1/notes/:id/purchased
-func (handler *PurchaseHandler) CheckPurchaseStatus(c *gin.Context) {
+func (app *App) CheckPurchaseStatus(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 	noteID, ok := helpers.MustParseNoteID(c)
 	if !ok {
@@ -271,7 +246,7 @@ func (handler *PurchaseHandler) CheckPurchaseStatus(c *gin.Context) {
 	}
 
 	var purchase models.Purchase
-	if err := handler.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&purchase).Error; err != nil {
+	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteID).First(&purchase).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"purchased": false,
 		})
@@ -286,11 +261,9 @@ func (handler *PurchaseHandler) CheckPurchaseStatus(c *gin.Context) {
 }
 
 // GetPurchaseHistory returns paginated purchase history for the user.
-// GetPurchaseHistory interacts with the database to fetch purchases.
-// GetPurchaseHistory does not interact with any other handler methods.
 //
 // Route: GET /api/v1/me/purchases/history
-func (handler *PurchaseHandler) GetPurchaseHistory(c *gin.Context) {
+func (app *App) GetPurchaseHistory(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 
 	// Parse pagination using helpers
@@ -298,7 +271,7 @@ func (handler *PurchaseHandler) GetPurchaseHistory(c *gin.Context) {
 
 	// Count total purchases
 	var total int64
-	handler.DB.Model(&models.Purchase{}).Where("user_id = ?", userID).Count(&total)
+	app.DB.Model(&models.Purchase{}).Where("user_id = ?", userID).Count(&total)
 
 	// Fetch purchases with note details
 	type PurchaseWithNote struct {
@@ -313,7 +286,7 @@ func (handler *PurchaseHandler) GetPurchaseHistory(c *gin.Context) {
 
 	var purchases []PurchaseWithNote
 
-	err := handler.DB.Table("purchases").
+	err := app.DB.Table("purchases").
 		Select("purchases.id as purchase_id, purchases.note_id, notes.title as note_title, notes.author as note_author, purchases.price_paid, purchases.purchased_at, notes.has_pdf").
 		Joins("JOIN notes ON notes.id = purchases.note_id").
 		Where("purchases.user_id = ?", userID).

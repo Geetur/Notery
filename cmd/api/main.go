@@ -54,28 +54,14 @@ func main() {
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
-	// initializing the note handler with the database connection
-	noteHandler := handlers.CreateNoteHandler(db, meiliClient, meiliIndex)
-	// this needs to be changed so it dosent rely on database package directly
-	cartHandler := handlers.CreateCartHandler(redisClient, db)
-
-	authHandler := handlers.CreateAuthHandler(db)
-
-	subnoteryHandler := handlers.CreateSubnoteryHandler(db)
-
-	feedHandler := handlers.CreateFeedHandler(redisClient, db)
-
-	// content handler for PDF operations (backed by R2)
-	// This handles PDF uploads, viewing, and access control
-	contentHandler := handlers.CreateContentHandler(db, r2Client)
-
-	// purchase handler for checkout and purchase history
-	purchaseHandler := handlers.CreatePurchaseHandler(db, redisClient)
-
-	// Wire up feed handler to note handler for hot feed updates
-	noteHandler.SetFeedHandler(feedHandler)
-	// Wire up R2 client to note handler for PDF cleanup on delete/reject
-	noteHandler.SetR2Client(r2Client)
+	// Initialize the unified App handler with all dependencies
+	app := handlers.NewApp(handlers.AppConfig{
+		DB:          db,
+		Redis:       redisClient,
+		R2:          r2Client,
+		Meilisearch: meiliClient,
+		SearchIndex: meiliIndex,
+	})
 
 	// health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -87,52 +73,52 @@ func main() {
 
 	api := router.Group("/api/v1")
 	// auth endpoints (public)
-	api.POST("/signup", authHandler.Signup)
-	api.POST("/login", authHandler.Login)
+	api.POST("/signup", app.Signup)
+	api.POST("/login", app.Login)
 
 	// feed endpoint (public with optional auth for personalization)
-	api.GET("/feed/hot", middleware.OptionalAuth, feedHandler.GetHotFeed)
+	api.GET("/feed/hot", middleware.OptionalAuth, app.GetHotFeed)
 
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
 	protected.Use(middleware.RequireAuth)
 	{
 		// note endpoints
-		protected.GET("/notes/:id", noteHandler.GetNoteByID)
-		protected.POST("/notes", noteHandler.CreateNote)
-		protected.GET("/notes/approved", noteHandler.GetApprovedNotes)
+		protected.GET("/notes/:id", app.GetNoteByID)
+		protected.POST("/notes", app.CreateNote)
+		protected.GET("/notes/approved", app.GetApprovedNotes)
 
 		// ----- PDF Content Endpoints -----
 		// Upload PDF for a note (note creator uploads after creating note metadata)
-		protected.POST("/notes/:id/content", contentHandler.UploadNotePDF)
+		protected.POST("/notes/:id/content", app.UploadNotePDF)
 		// View/stream PDF content (requires purchase or admin access)
-		protected.GET("/notes/:id/content", contentHandler.GetNotePDFContent)
+		protected.GET("/notes/:id/content", app.GetNotePDFContent)
 
 		// voting endpoints
-		protected.POST("/notes/:id/upvote", feedHandler.Upvote)
-		protected.POST("/notes/:id/downvote", feedHandler.Downvote)
+		protected.POST("/notes/:id/upvote", app.Upvote)
+		protected.POST("/notes/:id/downvote", app.Downvote)
 
 		// cart endpoints
-		protected.GET("/cart", cartHandler.GetCart)
-		protected.POST("/cart", cartHandler.AddToCart)
-		protected.DELETE("/cart/:item_id", cartHandler.RemoveFromCart)
+		protected.GET("/cart", app.GetCart)
+		protected.POST("/cart", app.AddToCart)
+		protected.DELETE("/cart/:item_id", app.RemoveFromCart)
 
 		// ----- Purchase Endpoints -----
 		// Checkout entire cart
-		protected.POST("/checkout", purchaseHandler.CheckoutCart)
+		protected.POST("/checkout", app.CheckoutCart)
 		// Direct purchase of single note (bypass cart)
-		protected.POST("/notes/:id/purchase", purchaseHandler.PurchaseSingleNote)
+		protected.POST("/notes/:id/purchase", app.PurchaseSingleNote)
 		// Check if user purchased a specific note
-		protected.GET("/notes/:id/purchased", purchaseHandler.CheckPurchaseStatus)
+		protected.GET("/notes/:id/purchased", app.CheckPurchaseStatus)
 
 		// ----- User Account Endpoints -----
 		// Get all purchased notes (for "My Purchases" page)
-		protected.GET("/me/purchases", contentHandler.GetMyPurchases)
+		protected.GET("/me/purchases", app.GetMyPurchases)
 		// Get detailed purchase history with pagination
-		protected.GET("/me/purchases/history", purchaseHandler.GetPurchaseHistory)
+		protected.GET("/me/purchases/history", app.GetPurchaseHistory)
 
 		//subnotery endpoints
-		protected.POST("/subnoteries/:subnotery_id/join", subnoteryHandler.JoinSubnotery)
+		protected.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
 	}
 
 	// applying the RequireAdmin middleware to admin-only routes
@@ -140,19 +126,19 @@ func main() {
 	adminProtected.Use(middleware.RequireAdmin(db))
 	{
 		// note admin endpoints
-		adminProtected.GET("/notes/pending", noteHandler.GetPendingNotes)
-		adminProtected.PATCH("/notes/:id/approve", noteHandler.ApproveNote)
-		adminProtected.PATCH("/notes/:id/reject", noteHandler.RejectNote)
-		adminProtected.DELETE("/notes/:id", noteHandler.DeleteNote)
+		adminProtected.GET("/notes/pending", app.GetPendingNotes)
+		adminProtected.PATCH("/notes/:id/approve", app.ApproveNote)
+		adminProtected.PATCH("/notes/:id/reject", app.RejectNote)
+		adminProtected.DELETE("/notes/:id", app.DeleteNote)
 
 		// ----- PDF Admin Endpoints -----
 		// Preview PDF during approval (same as user view but uses admin access)
-		adminProtected.GET("/admin/notes/:id/preview", contentHandler.AdminPreviewPDF)
+		adminProtected.GET("/admin/notes/:id/preview", app.AdminPreviewPDF)
 		// Delete PDF content only (without deleting note)
-		adminProtected.DELETE("/admin/notes/:id/content", contentHandler.DeleteNotePDF)
+		adminProtected.DELETE("/admin/notes/:id/content", app.DeleteNotePDF)
 
 		// subnotery admin endpoints
-		adminProtected.POST("/subnoteries/:subnotery_id/admins", subnoteryHandler.AddAdminToSubnotery)
+		adminProtected.POST("/subnoteries/:subnotery_id/admins", app.AddAdminToSubnotery)
 	}
 
 	// starting the API server
