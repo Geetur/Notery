@@ -30,6 +30,9 @@ type App struct {
 	// Meilisearch client for full-text search
 	Search      meilisearch.ServiceManager
 	SearchIndex string
+
+	// JWTSecret is the signing key for JWT authentication tokens.
+	JWTSecret string
 }
 
 // AppConfig holds the configuration options for creating an App instance.
@@ -39,6 +42,7 @@ type AppConfig struct {
 	R2          *database.R2Client
 	Meilisearch meilisearch.ServiceManager
 	SearchIndex string
+	JWTSecret   string
 }
 
 // NewApp creates and returns a new App instance with the given configuration.
@@ -50,8 +54,9 @@ func NewApp(cfg AppConfig) *App {
 		R2:          cfg.R2,
 		Search:      cfg.Meilisearch,
 		SearchIndex: cfg.SearchIndex,
+		JWTSecret:   cfg.JWTSecret,
 	}
 
-	appLog.Log("INIT", "App initialized", "hasDB", cfg.DB != nil, "hasRedis", cfg.Redis != nil, "hasR2", cfg.R2 != nil, "hasMeili", cfg.Meilisearch != nil)
+	appLog.Log("INIT", "App initialized", "hasDB", cfg.DB != nil, "hasRedis", cfg.Redis != nil, "hasR2", cfg.R2 != nil, "hasMeili", cfg.Meilisearch != nil, "hasJWT", cfg.JWTSecret != "")
 	return app
 }

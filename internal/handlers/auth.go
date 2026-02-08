@@ -4,12 +4,10 @@ package handlers
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/joho/godotenv"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -89,11 +87,8 @@ func (app *App) Login(c *gin.Context) {
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
 
-	// Load JWT secret from environment
-	if err := godotenv.Load(); err != nil {
-		authLog.Log("LOGIN", "No .env file found (ok)")
-	}
-	secretKey := []byte(os.Getenv("JWT_SECRET"))
+	// Sign token with pre-loaded JWT secret
+	secretKey := []byte(app.JWTSecret)
 	if len(secretKey) == 0 {
 		authLog.Log("LOGIN", "JWT_SECRET not configured")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "JWT secret not configured"})

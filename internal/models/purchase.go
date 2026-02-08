@@ -38,9 +38,10 @@ type Purchase struct {
 	// NoteID is the note that was purchased
 	NoteID uint `json:"note_id" gorm:"index;not null"`
 
-	// PricePaid records what the user paid at time of purchase
-	// This is important because note prices can change over time
-	PricePaid float64 `json:"price_paid"`
+	// PricePaid records what the user paid at time of purchase, in cents.
+	// This is important because note prices can change over time.
+	// e.g., 499 = $4.99
+	PricePaid int64 `json:"price_paid"`
 
 	// PurchasedAt records when the purchase was made
 	PurchasedAt time.Time `json:"purchased_at"`

@@ -3,20 +3,27 @@ package models
 
 import "time"
 
+// NoteStatus represents the approval state of a note.
+type NoteStatus string
+
+const (
+	// StatusPending means the note is awaiting admin approval.
+	StatusPending NoteStatus = "Pending"
+	// StatusApproved means the note is live and purchasable.
+	StatusApproved NoteStatus = "Approved"
+	// StatusRejected means the note was declined by an admin.
+	StatusRejected NoteStatus = "Rejected"
+)
+
 // Note represents a note entity in the system.
 // A note is a piece of content (PDF) that users can purchase and view.
 //
 // LIFECYCLE:
 // 1. User creates note with metadata + uploads PDF
-// 2. Note starts in "Pending" status, PDF stored in R2
+// 2. Note starts in StatusPending, PDF stored in R2
 // 3. Admin reviews note (can view PDF) and approves/rejects
 // 4. Approved notes are searchable and purchasable
 // 5. Users who purchase can view the PDF in-app
-//
-// STATUS VALUES:
-// - "Pending": Awaiting admin approval
-// - "Approved": Live and purchasable
-// - "Rejected": Declined by admin (note and PDF deleted)
 type Note struct {
 	// ID is the primary key for all intents and purposes
 	ID uint `json:"id" gorm:"primaryKey"`
@@ -29,14 +36,15 @@ type Note struct {
 	Title  string `json:"title" gorm:"index"`
 	Author string `json:"author" gorm:"index"`
 
-	// Status tracks the approval state: "Pending", "Approved", or "Rejected"
-	Status string `json:"status" gorm:"index"`
+	// Status tracks the approval state: StatusPending, StatusApproved, or StatusRejected
+	Status NoteStatus `json:"status" gorm:"index"`
 
 	// SubnoteryID links this note to its parent community
 	SubnoteryID uint `json:"subnotery_id" gorm:"index;not null"`
 
-	// Price is what users pay to access this note (in cents for precision)
-	Price float64 `json:"price"`
+	// Price is what users pay to access this note, stored in cents for precision.
+	// e.g., 499 = $4.99
+	Price int64 `json:"price"`
 
 	// ----- PDF Content Fields -----
 	// HasPDF indicates whether a PDF has been uploaded for this note.

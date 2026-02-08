@@ -106,7 +106,7 @@ func (app *App) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
 	}
 
 	// For approved notes, check if user purchased it
-	if note.Status == "Approved" {
+	if note.Status == models.StatusApproved {
 		var purchaseCount int64
 		app.DB.Model(&models.Purchase{}).
 			Where("user_id = ? AND note_id = ?", userID, note.ID).
@@ -175,7 +175,7 @@ func (app *App) UploadNotePDF(c *gin.Context) {
 
 	// Only allow upload for pending notes (can't change approved note content)
 	// This prevents content bait-and-switch after approval
-	if note.Status != "Pending" {
+	if note.Status != models.StatusPending {
 		contentLog.Log("UPLOAD", "rejected - note not pending", "note_id", noteID, "status", note.Status)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot modify PDF for approved or rejected notes"})
 		return
@@ -288,7 +288,7 @@ func (app *App) GetNotePDFContent(c *gin.Context) {
 	var hasAccess bool
 
 	switch note.Status {
-	case "Pending":
+	case models.StatusPending:
 		// Only admins can view pending notes
 		hasAccess = app.CanViewPendingNote(userID, &note)
 		if !hasAccess {
@@ -297,7 +297,7 @@ func (app *App) GetNotePDFContent(c *gin.Context) {
 			return
 		}
 
-	case "Approved":
+	case models.StatusApproved:
 		// Must have purchased or be admin
 		hasAccess = app.CanViewApprovedNote(userID, &note)
 		if !hasAccess {
@@ -306,7 +306,7 @@ func (app *App) GetNotePDFContent(c *gin.Context) {
 			return
 		}
 
-	case "Rejected":
+	case models.StatusRejected:
 		// Rejected notes cannot be viewed
 		contentLog.Log("VIEW", "denied - note rejected", "user_id", userID, "note_id", noteID)
 		c.JSON(http.StatusGone, gin.H{"error": "This note has been rejected and is no longer available"})
@@ -379,7 +379,7 @@ func (app *App) GetMyPurchases(c *gin.Context) {
 	// Fetch purchases with note details
 	type PurchasedNote struct {
 		models.Note
-		PricePaid   float64   `json:"price_paid"`
+		PricePaid   int64     `json:"price_paid"`
 		PurchasedAt time.Time `json:"purchased_at"`
 	}
 
