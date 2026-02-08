@@ -1,4 +1,4 @@
-// Package handlers/cart.go contains the HTTP handlers for cart operations
+// Package handlers/cart.go contains the HTTP handlers for cart operations.
 package handlers
 
 import (
@@ -7,18 +7,10 @@ import (
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
 )
 
 // cartLog is the domain-specific logger for cart operations.
 var cartLog = helpers.CartLog
-
-// CartHandler handles shopping cart HTTP requests backed by Redis.
-type CartHandler struct {
-	RDB *redis.Client
-	DB  *gorm.DB
-}
 
 // CartRequest represents the expected structure of the cart addition request.
 // ItemID will be stored in a Redis set keyed by user ID.
@@ -26,15 +18,8 @@ type CartRequest struct {
 	ItemID string `json:"item_id" binding:"required"`
 }
 
-// CreateCartHandler initializes a new CartHandler with the given Redis client and database.
-func CreateCartHandler(rdb *redis.Client, db *gorm.DB) *CartHandler {
-	return &CartHandler{RDB: rdb, DB: db}
-}
-
-// AddToCart handles adding an item to the user's cart in Redis
-// AddToCart interacts with Redis to add the item.
-// AddToCart interacts with no other handler methods.
-func (handler *CartHandler) AddToCart(c *gin.Context) {
+// AddToCart handles adding an item to the user's cart in Redis.
+func (app *App) AddToCart(c *gin.Context) {
 	cartLog.Log("ADD", "Processing add to cart request")
 
 	// Bind and validate request body
@@ -50,7 +35,7 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 
 	// Verify note exists and is approved before adding to cart
 	var note models.Note
-	if err := handler.DB.First(&note, cartReq.ItemID).Error; err != nil {
+	if err := app.DB.First(&note, cartReq.ItemID).Error; err != nil {
 		cartLog.Log("ADD", "Note not found", "itemID", cartReq.ItemID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
@@ -64,7 +49,7 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 	// Add item to user's cart set in Redis
 	ctx := c.Request.Context()
 	key := helpers.CartKey(userID)
-	if err := handler.RDB.SAdd(ctx, key, cartReq.ItemID).Err(); err != nil {
+	if err := app.RDB.SAdd(ctx, key, cartReq.ItemID).Err(); err != nil {
 		cartLog.Log("ADD", "Redis SAdd failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add item to cart"})
 		return
@@ -74,10 +59,8 @@ func (handler *CartHandler) AddToCart(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Item added to cart successfully"})
 }
 
-// GetCart handles retrieving all items in the user's cart from Redis
-// GetCart interacts with Redis to retrieve the cart items.
-// GetCart interacts with no other handler methods.
-func (handler *CartHandler) GetCart(c *gin.Context) {
+// GetCart handles retrieving all items in the user's cart from Redis.
+func (app *App) GetCart(c *gin.Context) {
 	cartLog.Log("GET", "Processing get cart request")
 
 	// Extract authenticated user ID
@@ -87,7 +70,7 @@ func (handler *CartHandler) GetCart(c *gin.Context) {
 	// Retrieve all items from user's cart set in Redis
 	ctx := c.Request.Context()
 	key := helpers.CartKey(userID)
-	cartItems, err := handler.RDB.SMembers(ctx, key).Result()
+	cartItems, err := app.RDB.SMembers(ctx, key).Result()
 	if err != nil {
 		cartLog.Log("GET", "Redis SMembers failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve cart"})
@@ -99,7 +82,7 @@ func (handler *CartHandler) GetCart(c *gin.Context) {
 }
 
 // RemoveFromCart handles removing an item from the user's cart in Redis.
-func (handler *CartHandler) RemoveFromCart(c *gin.Context) {
+func (app *App) RemoveFromCart(c *gin.Context) {
 	cartLog.Log("REMOVE", "Processing remove from cart request")
 
 	// Extract authenticated user ID and item ID from URL
@@ -110,7 +93,7 @@ func (handler *CartHandler) RemoveFromCart(c *gin.Context) {
 	// Remove item from user's cart set in Redis
 	ctx := c.Request.Context()
 	key := helpers.CartKey(userID)
-	if err := handler.RDB.SRem(ctx, key, itemID).Err(); err != nil {
+	if err := app.RDB.SRem(ctx, key, itemID).Err(); err != nil {
 		cartLog.Log("REMOVE", "Redis SRem failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove item from cart"})
 		return

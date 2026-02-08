@@ -10,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
-	"gorm.io/gorm"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -19,26 +18,14 @@ import (
 // authLog is the domain-specific logger for authentication operations.
 var authLog = helpers.AuthLog
 
-// AuthHandler handles authentication-related HTTP requests.
-type AuthHandler struct {
-	DB *gorm.DB
-}
-
 // AuthRequest represents the JSON body for signup and login requests.
 type AuthRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 }
 
-// CreateAuthHandler returns a new AuthHandler with the given database connection.
-func CreateAuthHandler(db *gorm.DB) *AuthHandler {
-	return &AuthHandler{DB: db}
-}
-
-// Signup handles user authentication and JWT token generation
-// Signup interacts with the User model and database to verify credentials.
-// Signup interacts with no other handler methods.
-func (handler *AuthHandler) Signup(c *gin.Context) {
+// Signup handles user registration and account creation.
+func (app *App) Signup(c *gin.Context) {
 	authLog.Log("SIGNUP", "Processing signup request")
 
 	// Bind and validate request body
@@ -58,7 +45,7 @@ func (handler *AuthHandler) Signup(c *gin.Context) {
 	}
 
 	// Persist user to database
-	if result := handler.DB.Create(user); result.Error != nil {
+	if result := app.DB.Create(user); result.Error != nil {
 		authLog.Log("SIGNUP", "Failed to create user in database", "error", result.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user (email already exists?)"})
 		return
@@ -69,8 +56,7 @@ func (handler *AuthHandler) Signup(c *gin.Context) {
 }
 
 // Login handles user authentication and JWT token generation.
-// Validates credentials and returns a signed JWT token on success.
-func (handler *AuthHandler) Login(c *gin.Context) {
+func (app *App) Login(c *gin.Context) {
 	authLog.Log("LOGIN", "Processing login request")
 
 	// Bind and validate request body
@@ -82,7 +68,7 @@ func (handler *AuthHandler) Login(c *gin.Context) {
 	authLog.Log("LOGIN", "Request validated", "email", authReq.Email)
 
 	// Find user by email
-	user, found := helpers.FetchUserByEmail(handler.DB, authReq.Email)
+	user, found := helpers.FetchUserByEmail(app.DB, authReq.Email)
 	if !found {
 		authLog.Log("LOGIN", "User not found", "email", authReq.Email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
