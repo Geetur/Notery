@@ -26,7 +26,7 @@ type Order struct {
 	ID uint `json:"id" gorm:"primaryKey"`
 
 	// UserID is the buyer.
-	UserID uint64 `json:"user_id" gorm:"index;not null"`
+	UserID uint64 `json:"user_id" gorm:"uniqueIndex:idx_order_user_idempotency;index;not null"`
 
 	// Status tracks the order through its lifecycle.
 	Status OrderStatus `json:"status" gorm:"index;not null;default:'pending'"`
@@ -36,7 +36,8 @@ type Order struct {
 
 	// IdempotencyKey prevents duplicate orders from retried requests.
 	// Clients should generate a UUID and include it with checkout requests.
-	IdempotencyKey string `json:"idempotency_key" gorm:"uniqueIndex;size:64"`
+	// Scoped per-user so two different users can never collide.
+	IdempotencyKey string `json:"idempotency_key" gorm:"uniqueIndex:idx_order_user_idempotency;size:64"`
 
 	// ----- Future Payment Integration -----
 	// PaymentIntentID stores the external payment processor reference (e.g. Stripe pi_xxx).
