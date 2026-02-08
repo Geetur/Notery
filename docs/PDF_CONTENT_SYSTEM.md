@@ -112,6 +112,9 @@ type Order struct {
     TotalCents      int64       `json:"total_cents"`
     IdempotencyKey  string      `json:"idempotency_key"` // Per-user composite unique
     PaymentIntentID string      `json:"payment_intent_id,omitempty"`
+    PaidAt          *time.Time  `json:"paid_at,omitempty"`
+    FailedAt        *time.Time  `json:"failed_at,omitempty"`
+    FailureReason   string      `json:"failure_reason,omitempty"`
     Items           []OrderItem `json:"items,omitempty"`
 }
 ```
@@ -123,6 +126,8 @@ pending ──▶ paid ──▶ fulfilled
    │                     │
    └──▶ failed     refunded
 ```
+
+See [PAYMENT_SYSTEM.md](PAYMENT_SYSTEM.md) for the full payment integration architecture.
 
 ### 5. Content Handler (`internal/handlers/content.go`)
 
@@ -143,8 +148,10 @@ Manages PDF operations with access control:
 ### 6. Purchase Handler (`internal/handlers/purchase.go`)
 
 Handles the purchase flow:
-- `CheckoutCart` — Process cart items, create Order + OrderItems + Purchases in a DB transaction
-- `PurchaseSingleNote` — Direct "Buy Now" purchase
+- `CheckoutCart` — Process cart items, create Order + OrderItems, initiate Stripe PaymentIntent (or auto-fulfil in dev mode)
+- `PurchaseSingleNote` — Direct "Buy Now" purchase with payment
+- `GetOrderStatus` — Poll order state (pending/paid/fulfilled/failed)
+- `ConfirmOrder` — Manual reconciliation by checking Stripe directly
 - `CheckPurchaseStatus` — Check if user owns a note
 - `GetPurchaseHistory` — Paginated purchase history
 
@@ -195,9 +202,11 @@ Handles the purchase flow:
 3. User checkouts (POST /api/v1/checkout)
    → Creates Order (pending) + OrderItems in a DB transaction
    → Validates all items are approved
-   → Transitions Order → paid → fulfilled
-   → Creates Purchase records
-   → Clears cart
+   → If Stripe is configured: creates PaymentIntent, returns client_secret
+   → Frontend confirms payment with Stripe.js
+   → Stripe webhook fires → Order transitions: pending → paid → fulfilled
+   → Purchase records created, cart cleared
+   (In dev mode without Stripe: auto-fulfils immediately)
 
 4. User views purchased note (GET /api/v1/notes/:id/content)
    → Access control checks Purchase record exists
@@ -382,7 +391,7 @@ curl http://localhost:8080/api/v1/notes/1/content \
 
 ## Future Enhancements
 
-1. **Payment Integration** — Integrate Stripe/PayPal; Order stays `pending` until webhook confirms payment
+1. ~~**Payment Integration**~~ — **Implemented** — Stripe PaymentIntent flow with webhook fulfilment. See [PAYMENT_SYSTEM.md](PAYMENT_SYSTEM.md).
 2. **Watermarking** — Add user-specific watermarks to PDFs at view time
 3. **View Analytics** — Track viewing patterns (time spent, pages viewed)
 4. **Subscription Model** — Time-limited access with `ExpiresAt` field
