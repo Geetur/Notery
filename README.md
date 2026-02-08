@@ -1,28 +1,79 @@
 # Notery
 
-Notery is a marketplace for notes — a RESTful API built with Go that allows users to create, share, and manage notes within communities called "subnoteries."
+Notery is a marketplace for notes — a RESTful API built with Go that allows users to create, share, and purchase notes within communities called "subnoteries."
 
 <img width="1024" height="1024" alt="Scribbled _N_ logo in ink" src="https://github.com/user-attachments/assets/b7ec42b5-f272-4b4a-ac7d-d0b6e6a99394" />
 
 ## Features
 
-- **User Authentication** — JWT-based signup and login
-- **Note Management** — Create, view, approve, reject, and delete notes
-- **Subnoteries** — Community-based note organization with admin controls
+- **User Authentication** — JWT-based signup/login; secret loaded once at startup
+- **Note Management** — Create, view, approve, reject, and delete notes with typed status constants
+- **PDF Content** — Secure upload, proxy-only viewing, and access-controlled streaming via Cloudflare R2
+- **Subnoteries** — Community-based note organisation with scoped admin controls
 - **Shopping Cart** — Redis-backed cart system for purchasing notes
+- **Purchases & Orders** — Order state machine (pending → paid → fulfilled), idempotency-key support, int64 cent-based prices
+- **Voting & Hot Feed** — Reddit-style hotness algorithm; DB-authoritative votes table with Redis cache
 - **Full-Text Search** — Meilisearch integration for approved notes
-- **Role-Based Access** — Global admins and subnotery-specific admins
+- **Role-Based Access** — Global admins, subnotery-scoped admins, creators, and purchasers
 
 ## Tech Stack
 
-| Component   | Technology                                                 |
-| ----------- | ---------------------------------------------------------- |
-| Language    | Go 1.25+                                                   |
-| Framework   | [Gin](https://github.com/gin-gonic/gin)                    |
-| Database    | PostgreSQL 16 (via GORM)                                   |
-| Cache       | Redis 7                                                    |
-| Search      | [Meilisearch](https://www.meilisearch.com/)                |
-| Auth        | JWT (HS256)                                                |
+| Component  | Technology                                          |
+| ---------- | --------------------------------------------------- |
+| Language   | Go 1.25+                                            |
+| Framework  | [Gin](https://github.com/gin-gonic/gin)             |
+| Database   | PostgreSQL 16 (via GORM)                             |
+| Cache      | Redis 7                                              |
+| Search     | [Meilisearch](https://www.meilisearch.com/)          |
+| Storage    | Cloudflare R2 (S3-compatible)                        |
+| Auth       | JWT (HS256)                                          |
+
+## Architecture Overview
+
+```mermaid
+graph LR
+    Client([Client])
+    Client -->|HTTP| GIN[Gin Router]
+
+    subgraph API["Notery API (Go)"]
+        GIN --> MW["Middleware<br/>RequireAuth · OptionalAuth · RequireAdmin"]
+        MW --> H["Handlers<br/>auth · note · content · feed<br/>cart · purchase · subnotery"]
+        H --> HELPERS[helpers]
+    end
+
+    H -->|GORM| PG[(PostgreSQL)]
+    H -->|go-redis| RD[(Redis)]
+    H -->|meilisearch-go| MS[(Meilisearch)]
+    H -->|S3 API| R2[(Cloudflare R2)]
+```
+
+### Request Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant R as Router
+    participant A as Auth Middleware
+    participant AD as Admin Middleware
+    participant H as Handler
+    participant DB as PostgreSQL
+    participant RD as Redis
+    participant S as Meilisearch
+    participant R2 as Cloudflare R2
+
+    C->>R: HTTP Request
+    R->>A: RequireAuth (JWT validated once via pre-loaded secret)
+    A->>H: user_id set in context
+    alt Admin Route
+        A->>AD: RequireAdmin (scope resolved from :subnotery_id or :id)
+        AD->>H: admin_type set in context
+    end
+    H->>DB: Query / Transact
+    H->>RD: Cache read/write (votes, cart, feed)
+    H->>S: Index / Search (approved notes)
+    H->>R2: Upload / Stream PDF
+    H->>C: JSON or PDF stream
+```
 
 ## Project Structure
 
@@ -30,25 +81,44 @@ Notery is a marketplace for notes — a RESTful API built with Go that allows us
 Notery/
 ├── cmd/
 │   └── api/
-│       └── main.go          # Application entrypoint
+│       └── main.go              # Entrypoint — config, init, routing
 ├── internal/
+│   ├── config/
+│   │   └── config.go            # Centralised .env loading (once at startup)
 │   ├── database/
-│   │   ├── database.go      # PostgreSQL initialization
-│   │   ├── redis.go         # Redis initialization
-│   │   └── meilisearch.go   # Meilisearch initialization
+│   │   ├── database.go          # PostgreSQL init + migrations
+│   │   ├── redis.go             # Redis init
+│   │   ├── meilisearch.go       # Meilisearch init
+│   │   └── r2.go                # Cloudflare R2 client
 │   ├── handlers/
-│   │   ├── auth.go          # Authentication handlers
-│   │   ├── cart.go          # Shopping cart handlers
-│   │   ├── note.go          # Note CRUD handlers
-│   │   └── subnotery.go     # Subnotery management handlers
+│   │   ├── app.go               # Unified App struct (DB, Redis, R2, Meili, JWT)
+│   │   ├── auth.go              # Signup / Login
+│   │   ├── cart.go              # Cart CRUD (Redis set)
+│   │   ├── content.go           # PDF upload / view / delete + access control
+│   │   ├── feed.go              # Hot feed, voting (DB tx + Redis cache)
+│   │   ├── note.go              # Note CRUD, approve/reject
+│   │   ├── purchase.go          # Checkout, single purchase, history
+│   │   └── subnotery.go         # Join subnotery, add admin
+│   ├── helpers/
+│   │   ├── helpers.go           # Pagination, logging, binding, auth context
+│   │   ├── cart.go              # Cart Redis key builder
+│   │   ├── note.go              # Note fetch/parse helpers
+│   │   ├── subnotery.go         # Subnotery fetch/parse helpers
+│   │   └── user.go              # User fetch helpers
 │   ├── middleware/
-│   │   ├── auth.go          # JWT authentication middleware
-│   │   └── admin.go         # Admin authorization middleware
+│   │   ├── auth.go              # RequireAuth / OptionalAuth (JWT factory fns)
+│   │   └── admin.go             # RequireAdmin (global or subnotery-scoped)
 │   └── models/
-│       ├── note.go          # Note model
-│       ├── subnotery.go     # Subnotery model
-│       └── user.go          # User model
-├── docker-compose.yml       # Local development services
+│       ├── note.go              # Note + NoteStatus enum
+│       ├── order.go             # Order + OrderItem + OrderStatus enum
+│       ├── purchase.go          # Purchase record
+│       ├── subnotery.go         # Subnotery (community)
+│       ├── user.go              # User + bcrypt auth
+│       └── vote.go              # Vote + VoteDirection enum
+├── docs/
+│   └── PDF_CONTENT_SYSTEM.md    # Detailed PDF architecture docs
+├── scripts/                     # Dev/test scripts
+├── docker-compose.yml
 ├── go.mod
 └── README.md
 ```
@@ -84,6 +154,12 @@ MEILISEARCH_HOST=http://localhost:7700
 MEILISEARCH_MASTER_KEY=yourmeilisearchkey
 MEILISEARCH_INDEX=notes
 
+# Cloudflare R2
+R2_ACCOUNT_ID=your_cloudflare_account_id
+R2_ACCESS_KEY_ID=your_r2_access_key
+R2_SECRET_ACCESS_KEY=your_r2_secret_key
+R2_BUCKET_NAME=notery-pdfs
+
 # JWT
 JWT_SECRET=your-super-secret-key
 ```
@@ -108,45 +184,111 @@ JWT_SECRET=your-super-secret-key
    curl http://localhost:8080/health
    ```
 
-## API Endpoints (RBAC)
+## API Endpoints
 
 ### Public
 
-| Method | Endpoint            | Description          |
-| ------ | ------------------- | -------------------- |
-| GET    | `/health`           | Health check         |
-| POST   | `/api/v1/signup`    | Register a new user  |
-| POST   | `/api/v1/login`     | Authenticate user    |
+| Method | Endpoint         | Description        |
+| ------ | ---------------- | ------------------ |
+| GET    | `/health`        | Health check       |
+| POST   | `/api/v1/signup` | Register new user  |
+| POST   | `/api/v1/login`  | Authenticate user  |
+
+### Public (Optional Auth)
+
+| Method | Endpoint             | Description                              |
+| ------ | -------------------- | ---------------------------------------- |
+| GET    | `/api/v1/feed/hot`   | Hot feed (personalised if authenticated) |
 
 ### Protected (Requires JWT)
 
-| Method | Endpoint                  | Description                |
-| ------ | ------------------------- | -------------------------- |
-| GET    | `/api/v1/notes/:id`       | Get note by ID             |
-| POST   | `/api/v1/notes`           | Create a new note          |
-| GET    | `/api/v1/notes/approved`  | List all approved notes    |
-| GET    | `/api/v1/cart`            | Get user's cart            |
-| POST   | `/api/v1/cart`            | Add item to cart           |
-| DELETE | `/api/v1/cart/:item_id`   | Remove item from cart      |
+| Method | Endpoint                            | Description                        |
+| ------ | ----------------------------------- | ---------------------------------- |
+| GET    | `/api/v1/notes/:id`                 | Get note by ID                     |
+| POST   | `/api/v1/notes`                     | Create a new note                  |
+| GET    | `/api/v1/notes/approved`            | List approved notes                |
+| POST   | `/api/v1/notes/:id/content`         | Upload PDF (creator/admin only)    |
+| GET    | `/api/v1/notes/:id/content`         | View/stream PDF (owner/purchaser)  |
+| POST   | `/api/v1/notes/:id/upvote`          | Upvote a note                      |
+| POST   | `/api/v1/notes/:id/downvote`        | Downvote a note                    |
+| GET    | `/api/v1/cart`                      | View cart                          |
+| POST   | `/api/v1/cart`                      | Add note to cart                   |
+| DELETE | `/api/v1/cart/:item_id`             | Remove item from cart              |
+| POST   | `/api/v1/checkout`                  | Checkout cart → create order       |
+| POST   | `/api/v1/notes/:id/purchase`        | Direct "Buy Now" purchase          |
+| GET    | `/api/v1/notes/:id/purchased`       | Check purchase status              |
+| GET    | `/api/v1/me/purchases`              | List purchased notes               |
+| GET    | `/api/v1/me/purchases/history`      | Paginated purchase history         |
+| POST   | `/api/v1/subnoteries/:id/join`      | Join a subnotery                   |
 
-### Admin Only
+### Admin Only (Global or Subnotery-Scoped)
 
-| Method | Endpoint                      | Description          |
-| ------ | ----------------------------- | -------------------- |
-| GET    | `/api/v1/notes/pending`       | List pending notes   |
-| PATCH  | `/api/v1/notes/:id/approve`   | Approve a note       |
-| PATCH  | `/api/v1/notes/:id/reject`    | Reject a note        |
-| DELETE | `/api/v1/notes/:id`           | Delete a note        |
+| Method | Endpoint                                   | Description              |
+| ------ | ------------------------------------------ | ------------------------ |
+| GET    | `/api/v1/notes/pending`                    | List pending notes       |
+| PATCH  | `/api/v1/notes/:id/approve`                | Approve a note           |
+| PATCH  | `/api/v1/notes/:id/reject`                 | Reject a note            |
+| DELETE | `/api/v1/notes/:id`                        | Delete a note            |
+| GET    | `/api/v1/admin/notes/:id/preview`          | Preview PDF (admin)      |
+| DELETE | `/api/v1/admin/notes/:id/content`          | Delete PDF content       |
+| POST   | `/api/v1/subnoteries/:id/admins`           | Add admin to subnotery   |
+
+## Data Models
+
+### Key Domain Types
+
+| Model       | Key Fields                                                         |
+| ----------- | ------------------------------------------------------------------ |
+| `Note`      | `ID`, `CreatorID`, `Title`, `Author`, `Status` (enum), `Price` (int64 cents), `SubnoteryID`, `HasPDF`, `Upvotes`, `Downvotes`, `Hotness` |
+| `User`      | `ID`, `Email`, `Hash` (bcrypt), `IsGlobalAdmin`, `AdminOf` (m2m)  |
+| `Purchase`  | `ID`, `UserID`, `NoteID`, `PricePaid` (int64 cents), `PurchasedAt`|
+| `Order`     | `ID`, `UserID`, `Status` (enum), `TotalCents`, `IdempotencyKey` (per-user unique), `Items[]` |
+| `OrderItem` | `ID`, `OrderID`, `NoteID`, `PriceCents`                           |
+| `Vote`      | `ID`, `UserID`, `NoteID` (composite unique), `Direction` (enum)   |
+| `Subnotery` | `ID`, `Name`, `Admins` (m2m), `Members` (m2m)                     |
+
+### Status Enums
+
+```
+NoteStatus:   StatusPending | StatusApproved | StatusRejected
+OrderStatus:  OrderPending  | OrderPaid      | OrderFulfilled | OrderFailed | OrderRefunded
+VoteDirection: VoteUp       | VoteDown
+```
+
+## Design Decisions
+
+### Prices in Cents (int64)
+
+All monetary values are stored as `int64` cents (e.g., `499` = $4.99). This avoids floating-point rounding errors inherent to `float64` and is the industry standard for financial data.
+
+### Centralised Config
+
+Environment variables are loaded **once** at startup via `internal/config/config.go`. Middleware and handlers receive secrets through constructor injection — no per-request `godotenv.Load()` or `os.Getenv()` calls.
+
+### DB-Authoritative Votes
+
+The `votes` table is the source of truth for vote state. Each vote operation runs inside a single DB transaction that atomically updates both the `votes` row and the `notes` counter columns. Redis vote hashes are updated as a best-effort cache afterwards.
+
+### Order State Machine
+
+Purchases are backed by an `orders` table with a clear lifecycle (`pending → paid → fulfilled`). The `idempotency_key` is scoped per-user via a composite unique index to prevent duplicate orders from retried requests without causing cross-user collisions.
+
+### Subnotery-Scoped Admin Checks
+
+The admin middleware resolves a subnotery ID from either `:subnotery_id` or by looking up the note's `subnotery_id` from `:id`. The scoped check ensures a subnotery admin of community A cannot perform admin actions on community B.
+
+### PDF Upload Authorization
+
+Only the note's creator or an admin (subnotery or global) can upload PDF content to a pending note. This prevents content hijacking where a malicious user could replace someone else's pending upload.
 
 ## Testing
-
-Run unit tests:
 
 ```bash
 go test ./...
 ```
 
 ## License
+
 Copyright (c) 2026 Jeter Pontes. All rights reserved.
 
 This repository is proprietary. No permission is granted to use, copy, modify, or distribute this code without explicit written permission.

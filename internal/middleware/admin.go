@@ -54,12 +54,14 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 		var subnoteryID uint64
 		if subnoteryIDStr != "" {
 			mwLog.Log("ADMIN", "Subnotery ID in URL", "subnoteryID", subnoteryIDStr)
-			_, err := strconv.ParseUint(subnoteryIDStr, 10, 64)
+			parsedID, err := strconv.ParseUint(subnoteryIDStr, 10, 64)
 			if err != nil {
 				mwLog.Log("ADMIN", "Invalid subnotery ID", "value", subnoteryIDStr)
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid subnotery ID"})
 				return
 			}
+			subnoteryID = parsedID
+			mwLog.Log("ADMIN", "Resolved subnotery from URL param", "subnoteryID", subnoteryID)
 		} else {
 			// Try to derive subnotery from note ID
 			noteIDStr := c.Param("id")

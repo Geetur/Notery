@@ -181,9 +181,14 @@ func (app *App) UploadNotePDF(c *gin.Context) {
 		return
 	}
 
-	// For now, we allow any authenticated user to upload to pending notes.
-	// In production, we might want to verify the uploader is the note creator.
-	// This could be done by adding a CreatorID field to the Note model.
+	// Only the note creator or an admin may upload content.
+	// This prevents malicious users from replacing someone else's pending PDF.
+	access := app.CheckNoteAccess(userID, &note)
+	if access != AccessCreator && access != AccessSubAdmin && access != AccessGlobalAdmin {
+		contentLog.Log("UPLOAD", "denied - not creator or admin", "user_id", userID, "note_id", noteID, "creator_id", note.CreatorID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the note creator or an admin can upload content"})
+		return
+	}
 
 	// Get the uploaded file
 	file, header, err := c.Request.FormFile("pdf")
