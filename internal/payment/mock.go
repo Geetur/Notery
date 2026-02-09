@@ -37,6 +37,8 @@ func (m *MockService) CreatePaymentIntent(ctx context.Context, params CreateInte
 		PaymentIntentID: "pi_mock_" + params.IdempotencyKey,
 		ClientSecret:    "pi_mock_secret_" + params.IdempotencyKey,
 		Status:          "requires_payment_method",
+		AmountCents:     params.AmountCents,
+		Currency:        params.Currency,
 	}, nil
 }
 

@@ -30,6 +30,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -71,23 +72,82 @@ func (app *App) CheckoutCart(c *gin.Context) {
 			Preload("Items").First(&existing).Error; err == nil {
 			purchaseLog.Log("CHECKOUT", "idempotent hit", "user_id", userID, "order_id", existing.ID, "status", existing.Status)
 
-			response := gin.H{
-				"order_id":    existing.ID,
-				"status":      existing.Status,
-				"total_cents": existing.TotalCents,
-				"idempotent":  true,
+			// Non-pending states: return final status immediately
+			if existing.Status != models.OrderPending {
+				c.JSON(http.StatusOK, gin.H{
+					"order_id":    existing.ID,
+					"status":      existing.Status,
+					"total_cents": existing.TotalCents,
+					"idempotent":  true,
+				})
+				return
 			}
 
-			// If order is still pending with a PaymentIntent, re-fetch client_secret
-			if existing.Status == models.OrderPending && existing.PaymentIntentID != "" && app.Payment != nil {
+			// Pending with PaymentIntent: re-fetch client_secret
+			if existing.PaymentIntentID != "" && app.Payment != nil {
 				pi, piErr := app.Payment.RetrievePaymentIntent(ctx, existing.PaymentIntentID)
 				if piErr == nil {
-					response["client_secret"] = pi.ClientSecret
-					response["payment_intent_id"] = pi.PaymentIntentID
+					c.JSON(http.StatusOK, gin.H{
+						"order_id":          existing.ID,
+						"status":            existing.Status,
+						"total_cents":       existing.TotalCents,
+						"client_secret":     pi.ClientSecret,
+						"payment_intent_id": pi.PaymentIntentID,
+						"idempotent":        true,
+					})
+					return
 				}
+				purchaseLog.Log("CHECKOUT", "PI retrieval failed, retrying creation", "order_id", existing.ID, "error", piErr)
 			}
 
-			c.JSON(http.StatusOK, response)
+			// Pending without PI (or PI retrieval failed): retry payment for existing order.
+			// This handles the case where a previous PI creation had a transient Stripe failure.
+			if app.Payment != nil && existing.TotalCents > 0 {
+				piResult, piErr := app.Payment.CreatePaymentIntent(ctx, payment.CreateIntentParams{
+					OrderID:        existing.ID,
+					AmountCents:    existing.TotalCents,
+					Currency:       "usd",
+					IdempotencyKey: body.IdempotencyKey,
+					Metadata: map[string]string{
+						"order_id": strconv.FormatUint(uint64(existing.ID), 10),
+						"user_id":  strconv.FormatUint(userID, 10),
+					},
+				})
+				if piErr != nil {
+					purchaseLog.Log("CHECKOUT", "PI retry failed", "order_id", existing.ID, "error", piErr)
+					c.JSON(http.StatusBadGateway, gin.H{
+						"error":     "Failed to initiate payment — please retry",
+						"order_id":  existing.ID,
+						"retryable": true,
+					})
+					return
+				}
+				app.DB.Model(&existing).Update("payment_intent_id", piResult.PaymentIntentID)
+				c.JSON(http.StatusOK, gin.H{
+					"order_id":          existing.ID,
+					"status":            existing.Status,
+					"total_cents":       existing.TotalCents,
+					"client_secret":     piResult.ClientSecret,
+					"payment_intent_id": piResult.PaymentIntentID,
+					"idempotent":        true,
+				})
+				return
+			}
+
+			// Pending free order or no payment provider: retry auto-fulfil
+			if err := app.fulfilOrder(&existing); err != nil {
+				purchaseLog.Log("CHECKOUT", "auto-fulfil retry failed", "order_id", existing.ID, "error", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Checkout failed"})
+				return
+			}
+			app.clearCartItems(ctx, userID, existing.Items)
+			c.JSON(http.StatusOK, gin.H{
+				"order_id":        existing.ID,
+				"status":          existing.Status,
+				"purchased_count": len(existing.Items),
+				"total_cents":     existing.TotalCents,
+				"idempotent":      true,
+			})
 			return
 		}
 	}
@@ -233,14 +293,12 @@ func (app *App) CheckoutCart(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		purchaseLog.Log("CHECKOUT", "payment intent failed", "user_id", userID, "order_id", order.ID, "error", err)
-		now := time.Now()
-		app.DB.Model(&order).Updates(map[string]interface{}{
-			"status":         models.OrderFailed,
-			"failed_at":      now,
-			"failure_reason": "Failed to create payment intent",
+		purchaseLog.Log("CHECKOUT", "payment intent failed (retryable)", "user_id", userID, "order_id", order.ID, "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":     "Failed to initiate payment — please retry",
+			"order_id":  order.ID,
+			"retryable": true,
 		})
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to initiate payment"})
 		return
 	}
 
@@ -295,21 +353,80 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 			Preload("Items").First(&existing).Error; err == nil {
 			purchaseLog.Log("SINGLE", "idempotent hit", "user_id", userID, "order_id", existing.ID, "status", existing.Status)
 
-			response := gin.H{
-				"order_id":   existing.ID,
-				"status":     existing.Status,
-				"idempotent": true,
+			// Non-pending states: return final status
+			if existing.Status != models.OrderPending {
+				c.JSON(http.StatusOK, gin.H{
+					"order_id":   existing.ID,
+					"status":     existing.Status,
+					"idempotent": true,
+				})
+				return
 			}
 
-			if existing.Status == models.OrderPending && existing.PaymentIntentID != "" && app.Payment != nil {
+			// Pending with PaymentIntent: re-fetch client_secret
+			if existing.PaymentIntentID != "" && app.Payment != nil {
 				pi, piErr := app.Payment.RetrievePaymentIntent(ctx, existing.PaymentIntentID)
 				if piErr == nil {
-					response["client_secret"] = pi.ClientSecret
-					response["payment_intent_id"] = pi.PaymentIntentID
+					c.JSON(http.StatusOK, gin.H{
+						"order_id":          existing.ID,
+						"status":            existing.Status,
+						"total_cents":       existing.TotalCents,
+						"client_secret":     pi.ClientSecret,
+						"payment_intent_id": pi.PaymentIntentID,
+						"idempotent":        true,
+					})
+					return
 				}
+				purchaseLog.Log("SINGLE", "PI retrieval failed, retrying creation", "order_id", existing.ID, "error", piErr)
 			}
 
-			c.JSON(http.StatusOK, response)
+			// Pending without PI: retry payment creation
+			if app.Payment != nil && existing.TotalCents > 0 {
+				piResult, piErr := app.Payment.CreatePaymentIntent(ctx, payment.CreateIntentParams{
+					OrderID:        existing.ID,
+					AmountCents:    existing.TotalCents,
+					Currency:       "usd",
+					IdempotencyKey: body.IdempotencyKey,
+					Metadata: map[string]string{
+						"order_id": strconv.FormatUint(uint64(existing.ID), 10),
+						"user_id":  strconv.FormatUint(userID, 10),
+						"note_id":  strconv.FormatUint(noteID, 10),
+					},
+				})
+				if piErr != nil {
+					purchaseLog.Log("SINGLE", "PI retry failed", "order_id", existing.ID, "error", piErr)
+					c.JSON(http.StatusBadGateway, gin.H{
+						"error":     "Failed to initiate payment — please retry",
+						"order_id":  existing.ID,
+						"retryable": true,
+					})
+					return
+				}
+				app.DB.Model(&existing).Update("payment_intent_id", piResult.PaymentIntentID)
+				c.JSON(http.StatusOK, gin.H{
+					"order_id":          existing.ID,
+					"status":            existing.Status,
+					"total_cents":       existing.TotalCents,
+					"client_secret":     piResult.ClientSecret,
+					"payment_intent_id": piResult.PaymentIntentID,
+					"idempotent":        true,
+				})
+				return
+			}
+
+			// Pending free order or no payment provider: retry auto-fulfil
+			if err := app.fulfilOrder(&existing); err != nil {
+				purchaseLog.Log("SINGLE", "auto-fulfil retry failed", "order_id", existing.ID, "error", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete purchase"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"message":      "Purchase successful",
+				"order_id":     existing.ID,
+				"status":       existing.Status,
+				"purchased_at": time.Now(),
+				"idempotent":   true,
+			})
 			return
 		}
 	}
@@ -422,14 +539,12 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		purchaseLog.Log("SINGLE", "payment intent failed", "user_id", userID, "order_id", order.ID, "error", err)
-		now := time.Now()
-		app.DB.Model(&order).Updates(map[string]interface{}{
-			"status":         models.OrderFailed,
-			"failed_at":      now,
-			"failure_reason": "Failed to create payment intent",
+		purchaseLog.Log("SINGLE", "payment intent failed (retryable)", "user_id", userID, "order_id", order.ID, "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":     "Failed to initiate payment — please retry",
+			"order_id":  order.ID,
+			"retryable": true,
 		})
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to initiate payment"})
 		return
 	}
 
@@ -531,9 +646,14 @@ func (app *App) GetPurchaseHistory(c *gin.Context) {
 
 // fulfilOrder transitions an order to fulfilled state, creating Purchase records.
 // This is the shared fulfilment logic used by both auto-fulfil mode and webhook processing.
+//
+// CONCURRENCY SAFETY:
+// Uses SELECT ... FOR UPDATE to lock the order row, preventing concurrent webhook
+// deliveries from double-fulfilling. The status is re-checked under the lock.
+//
 // The method is idempotent: if the order is already fulfilled, it returns nil.
 func (app *App) fulfilOrder(order *models.Order) error {
-	// Idempotent: already done
+	// Fast path: already done (no lock needed)
 	if order.Status == models.OrderFulfilled {
 		return nil
 	}
@@ -552,9 +672,27 @@ func (app *App) fulfilOrder(order *models.Order) error {
 
 	now := time.Now()
 	return app.DB.Transaction(func(tx *gorm.DB) error {
+		// Acquire row-level lock to prevent concurrent webhook races.
+		// If two webhooks arrive simultaneously, the second blocks here
+		// until the first commits, then sees the updated status and returns idempotently.
+		var locked models.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&locked, order.ID).Error; err != nil {
+			return fmt.Errorf("failed to lock order %d: %w", order.ID, err)
+		}
+
+		// Re-check status under the lock — another goroutine may have already fulfilled.
+		if locked.Status == models.OrderFulfilled {
+			order.Status = models.OrderFulfilled
+			return nil // idempotent
+		}
+		if locked.Status != models.OrderPending && locked.Status != models.OrderPaid {
+			return fmt.Errorf("cannot fulfil order %d: status is %s (concurrent modification)", order.ID, locked.Status)
+		}
+
 		// Transition pending → paid if not already
-		if order.Status == models.OrderPending {
-			if err := tx.Model(order).Updates(map[string]interface{}{
+		if locked.Status == models.OrderPending {
+			if err := tx.Model(&locked).Updates(map[string]interface{}{
 				"status":  models.OrderPaid,
 				"paid_at": now,
 			}).Error; err != nil {
@@ -577,7 +715,7 @@ func (app *App) fulfilOrder(order *models.Order) error {
 		}
 
 		// Transition to fulfilled
-		if err := tx.Model(order).Update("status", models.OrderFulfilled).Error; err != nil {
+		if err := tx.Model(&locked).Update("status", models.OrderFulfilled).Error; err != nil {
 			return err
 		}
 
@@ -706,6 +844,14 @@ func (app *App) ConfirmOrder(c *gin.Context) {
 
 	switch result.Status {
 	case "succeeded":
+		// Verify amount matches order (defense against misconfiguration/bugs)
+		if result.AmountCents != order.TotalCents {
+			purchaseLog.Log("CONFIRM", "CRITICAL: amount mismatch",
+				"order_id", order.ID, "expected_cents", order.TotalCents, "stripe_cents", result.AmountCents)
+			c.JSON(http.StatusConflict, gin.H{"error": "Payment amount does not match order total — contact support"})
+			return
+		}
+
 		// Payment confirmed — fulfil order
 		if err := app.fulfilOrder(&order); err != nil {
 			purchaseLog.Log("CONFIRM", "fulfilment failed", "order_id", order.ID, "error", err)

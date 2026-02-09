@@ -129,6 +129,16 @@ func (app *App) handlePaymentSucceeded(c *gin.Context, event *payment.WebhookEve
 		return
 	}
 
+	// Verify payment amount and currency match the order (defense against misconfiguration/bugs).
+	// Return 200 so Stripe doesn't endlessly retry with a permanently wrong amount.
+	if event.AmountCents != order.TotalCents {
+		webhookLog.Log("SUCCESS", "CRITICAL: amount mismatch — order NOT fulfilled",
+			"order_id", order.ID, "expected_cents", order.TotalCents,
+			"webhook_cents", event.AmountCents, "currency", event.Currency)
+		c.JSON(http.StatusOK, gin.H{"received": true, "error": "amount mismatch — manual review required"})
+		return
+	}
+
 	// Fulfil the order
 	if err := app.fulfilOrder(&order); err != nil {
 		webhookLog.Log("SUCCESS", "fulfilment failed", "order_id", order.ID, "error", err)
@@ -148,7 +158,8 @@ func (app *App) handlePaymentSucceeded(c *gin.Context, event *payment.WebhookEve
 // handlePaymentFailed processes a failed payment.
 // Transitions the Order to failed state with the failure reason.
 func (app *App) handlePaymentFailed(c *gin.Context, event *payment.WebhookEvent) {
-	webhookLog.Log("FAILED", "processing payment failure", "pi_id", event.PaymentIntentID, "reason", event.FailureMessage)
+	webhookLog.Log("FAILED", "processing payment failure", "pi_id", event.PaymentIntentID,
+		"reason", event.FailureMessage, "amount_cents", event.AmountCents, "currency", event.Currency)
 
 	var order models.Order
 	if err := app.DB.Where("payment_intent_id = ?", event.PaymentIntentID).First(&order).Error; err != nil {
@@ -160,6 +171,12 @@ func (app *App) handlePaymentFailed(c *gin.Context, event *payment.WebhookEvent)
 		webhookLog.Log("FAILED", "db error", "pi_id", event.PaymentIntentID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
+	}
+
+	// Log amount mismatch for investigation (don't block failure processing — we're not granting access)
+	if event.AmountCents != order.TotalCents {
+		webhookLog.Log("FAILED", "WARNING: amount mismatch on failed payment",
+			"order_id", order.ID, "expected_cents", order.TotalCents, "webhook_cents", event.AmountCents)
 	}
 
 	// Idempotency: if already failed, acknowledge

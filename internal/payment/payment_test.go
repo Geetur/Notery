@@ -63,6 +63,12 @@ func TestMockServiceDefaults(t *testing.T) {
 	if result.Status != "requires_payment_method" {
 		t.Errorf("expected Status 'requires_payment_method', got %q", result.Status)
 	}
+	if result.AmountCents != 999 {
+		t.Errorf("expected AmountCents 999, got %d", result.AmountCents)
+	}
+	if result.Currency != "usd" {
+		t.Errorf("expected Currency 'usd', got %q", result.Currency)
+	}
 
 	// RetrievePaymentIntent with defaults
 	result, err = svc.RetrievePaymentIntent(ctx, "pi_existing")

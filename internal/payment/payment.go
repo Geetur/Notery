@@ -64,6 +64,12 @@ type IntentResult struct {
 
 	// Status is the current status of the PaymentIntent (e.g., "requires_payment_method").
 	Status string
+
+	// AmountCents is the payment amount in the smallest currency unit (populated from provider).
+	AmountCents int64
+
+	// Currency is the ISO 4217 currency code (e.g., "usd") from the provider.
+	Currency string
 }
 
 // WebhookEventType categorises webhook events the system handles.
@@ -84,6 +90,12 @@ type WebhookEvent struct {
 
 	// PaymentIntentID is the provider's reference for the payment.
 	PaymentIntentID string
+
+	// AmountCents is the payment amount in the smallest currency unit.
+	AmountCents int64
+
+	// Currency is the ISO 4217 currency code (e.g., "usd").
+	Currency string
 
 	// FailureMessage describes why payment failed (populated only for failed events).
 	FailureMessage string
