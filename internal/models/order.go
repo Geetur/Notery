@@ -34,6 +34,10 @@ type Order struct {
 	// TotalCents is the sum of all item prices at time of checkout, in cents.
 	TotalCents int64 `json:"total_cents"`
 
+	// Currency is the ISO 4217 currency code used for this order (e.g., "usd").
+	// Stored at order creation to allow webhook/reconciliation verification.
+	Currency string `json:"currency" gorm:"size:3;not null;default:'usd'"`
+
 	// IdempotencyKey prevents duplicate orders from retried requests.
 	// Clients should generate a UUID and include it with checkout requests.
 	// Scoped per-user so two different users can never collide.

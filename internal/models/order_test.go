@@ -96,6 +96,10 @@ func TestOrderModelFieldDefaults(t *testing.T) {
 		t.Errorf("expected 0 TotalCents, got %d", order.TotalCents)
 	}
 
+	if order.Currency != "" {
+		t.Errorf("expected empty default Currency (DB default), got %q", order.Currency)
+	}
+
 	if order.PaidAt != nil {
 		t.Error("expected nil PaidAt")
 	}
@@ -118,6 +122,7 @@ func TestOrderItemRelationship(t *testing.T) {
 		UserID:     1,
 		Status:     OrderPending,
 		TotalCents: 1998,
+		Currency:   "usd",
 		Items: []OrderItem{
 			{NoteID: 10, PriceCents: 999},
 			{NoteID: 20, PriceCents: 999},

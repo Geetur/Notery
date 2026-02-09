@@ -7,6 +7,7 @@
 // 3. Parses event type and dispatches:
 //   - payment_intent.succeeded → fulfil order (create Purchases, clear cart)
 //   - payment_intent.payment_failed → mark order as failed
+//   - payment_intent.canceled → mark order as failed/canceled
 //   - Other events → acknowledge with 200 OK
 //
 // IDEMPOTENCY:
@@ -89,6 +90,8 @@ func (app *App) HandleStripeWebhook(c *gin.Context) {
 		app.handlePaymentSucceeded(c, event)
 	case payment.EventPaymentFailed:
 		app.handlePaymentFailed(c, event)
+	case payment.EventPaymentCanceled:
+		app.handlePaymentCanceled(c, event)
 	default:
 		c.JSON(http.StatusOK, gin.H{"received": true})
 	}
@@ -136,6 +139,13 @@ func (app *App) handlePaymentSucceeded(c *gin.Context, event *payment.WebhookEve
 			"order_id", order.ID, "expected_cents", order.TotalCents,
 			"webhook_cents", event.AmountCents, "currency", event.Currency)
 		c.JSON(http.StatusOK, gin.H{"received": true, "error": "amount mismatch — manual review required"})
+		return
+	}
+	if event.Currency != order.Currency {
+		webhookLog.Log("SUCCESS", "CRITICAL: currency mismatch — order NOT fulfilled",
+			"order_id", order.ID, "expected_currency", order.Currency,
+			"webhook_currency", event.Currency)
+		c.JSON(http.StatusOK, gin.H{"received": true, "error": "currency mismatch — manual review required"})
 		return
 	}
 
@@ -210,5 +220,58 @@ func (app *App) handlePaymentFailed(c *gin.Context, event *payment.WebhookEvent)
 	}
 
 	webhookLog.Log("FAILED", "order marked as failed", "order_id", order.ID, "reason", failureReason)
+	c.JSON(http.StatusOK, gin.H{"received": true, "order_id": order.ID, "status": "failed"})
+}
+
+// handlePaymentCanceled processes a canceled payment intent.
+// Transitions the Order to failed state. This prevents orders from being stuck
+// in pending when the PaymentIntent is canceled via Stripe Dashboard or API.
+func (app *App) handlePaymentCanceled(c *gin.Context, event *payment.WebhookEvent) {
+	webhookLog.Log("CANCELED", "processing payment cancellation", "pi_id", event.PaymentIntentID,
+		"reason", event.FailureMessage)
+
+	var order models.Order
+	if err := app.DB.Where("payment_intent_id = ?", event.PaymentIntentID).First(&order).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			webhookLog.Log("CANCELED", "order not found", "pi_id", event.PaymentIntentID)
+			c.JSON(http.StatusOK, gin.H{"received": true, "error": "order not found"})
+			return
+		}
+		webhookLog.Log("CANCELED", "db error", "pi_id", event.PaymentIntentID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// Idempotency: if already failed, acknowledge
+	if order.Status == models.OrderFailed {
+		webhookLog.Log("CANCELED", "already failed (idempotent)", "order_id", order.ID)
+		c.JSON(http.StatusOK, gin.H{"received": true, "already_processed": true})
+		return
+	}
+
+	// Don't cancel orders that are already fulfilled — fulfillment wins
+	if order.Status == models.OrderFulfilled || order.Status == models.OrderPaid {
+		webhookLog.Log("CANCELED", "order already processed, ignoring cancellation", "order_id", order.ID, "status", order.Status)
+		c.JSON(http.StatusOK, gin.H{"received": true, "ignored": true})
+		return
+	}
+
+	now := time.Now()
+	failureReason := event.FailureMessage
+	if len(failureReason) > 512 {
+		failureReason = failureReason[:512]
+	}
+
+	if err := app.DB.Model(&order).Updates(map[string]interface{}{
+		"status":         models.OrderFailed,
+		"failed_at":      now,
+		"failure_reason": failureReason,
+	}).Error; err != nil {
+		webhookLog.Log("CANCELED", "failed to update order", "order_id", order.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update order"})
+		return
+	}
+
+	webhookLog.Log("CANCELED", "order marked as failed (canceled)", "order_id", order.ID, "reason", failureReason)
 	c.JSON(http.StatusOK, gin.H{"received": true, "order_id": order.ID, "status": "failed"})
 }

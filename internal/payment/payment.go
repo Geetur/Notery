@@ -81,6 +81,9 @@ const (
 
 	// EventPaymentFailed indicates a payment attempt failed.
 	EventPaymentFailed WebhookEventType = "payment_intent.payment_failed"
+
+	// EventPaymentCanceled indicates the payment intent was canceled.
+	EventPaymentCanceled WebhookEventType = "payment_intent.canceled"
 )
 
 // WebhookEvent is the normalised representation of a payment webhook event.
