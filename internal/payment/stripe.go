@@ -125,6 +125,23 @@ func (s *StripeService) VerifyWebhookSignature(payload []byte, signature string)
 			FailureMessage:  failMsg,
 		}, nil
 
+	case "payment_intent.canceled":
+		var pi stripe.PaymentIntent
+		if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
+			return nil, fmt.Errorf("stripe: unmarshal payment_intent.canceled: %w", err)
+		}
+		cancelMsg := "Payment was canceled"
+		if pi.CancellationReason != "" {
+			cancelMsg = "Canceled: " + string(pi.CancellationReason)
+		}
+		return &WebhookEvent{
+			Type:            EventPaymentCanceled,
+			PaymentIntentID: pi.ID,
+			AmountCents:     pi.Amount,
+			Currency:        string(pi.Currency),
+			FailureMessage:  cancelMsg,
+		}, nil
+
 	default:
 		return nil, ErrUnsupportedEvent
 	}

@@ -106,7 +106,7 @@ func (app *App) CheckoutCart(c *gin.Context) {
 				piResult, piErr := app.Payment.CreatePaymentIntent(ctx, payment.CreateIntentParams{
 					OrderID:        existing.ID,
 					AmountCents:    existing.TotalCents,
-					Currency:       "usd",
+					Currency:       existing.Currency,
 					IdempotencyKey: body.IdempotencyKey,
 					Metadata: map[string]string{
 						"order_id": strconv.FormatUint(uint64(existing.ID), 10),
@@ -225,6 +225,7 @@ func (app *App) CheckoutCart(c *gin.Context) {
 			UserID:         userID,
 			Status:         models.OrderPending,
 			TotalCents:     totalCents,
+			Currency:       "usd",
 			IdempotencyKey: body.IdempotencyKey,
 		}
 		if err := tx.Create(&order).Error; err != nil {
@@ -385,7 +386,7 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 				piResult, piErr := app.Payment.CreatePaymentIntent(ctx, payment.CreateIntentParams{
 					OrderID:        existing.ID,
 					AmountCents:    existing.TotalCents,
-					Currency:       "usd",
+					Currency:       existing.Currency,
 					IdempotencyKey: body.IdempotencyKey,
 					Metadata: map[string]string{
 						"order_id": strconv.FormatUint(uint64(existing.ID), 10),
@@ -472,6 +473,7 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 			UserID:         userID,
 			Status:         models.OrderPending,
 			TotalCents:     note.Price,
+			Currency:       "usd",
 			IdempotencyKey: body.IdempotencyKey,
 		}
 		if err := tx.Create(&order).Error; err != nil {
@@ -849,6 +851,12 @@ func (app *App) ConfirmOrder(c *gin.Context) {
 			purchaseLog.Log("CONFIRM", "CRITICAL: amount mismatch",
 				"order_id", order.ID, "expected_cents", order.TotalCents, "stripe_cents", result.AmountCents)
 			c.JSON(http.StatusConflict, gin.H{"error": "Payment amount does not match order total — contact support"})
+			return
+		}
+		if result.Currency != order.Currency {
+			purchaseLog.Log("CONFIRM", "CRITICAL: currency mismatch",
+				"order_id", order.ID, "expected_currency", order.Currency, "stripe_currency", result.Currency)
+			c.JSON(http.StatusConflict, gin.H{"error": "Payment currency does not match order — contact support"})
 			return
 		}
 

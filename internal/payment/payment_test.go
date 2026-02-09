@@ -21,6 +21,7 @@ func TestEventTypeConstants(t *testing.T) {
 	}{
 		{EventPaymentSucceeded, "payment_intent.succeeded"},
 		{EventPaymentFailed, "payment_intent.payment_failed"},
+		{EventPaymentCanceled, "payment_intent.canceled"},
 	}
 
 	for _, tt := range tests {
