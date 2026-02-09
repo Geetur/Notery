@@ -26,7 +26,7 @@ func NewStripeService(secretKey, webhookSecret string) *StripeService {
 }
 
 // CreatePaymentIntent creates a Stripe PaymentIntent for the given order.
-func (s *StripeService) CreatePaymentIntent(_ context.Context, params CreateIntentParams) (*IntentResult, error) {
+func (s *StripeService) CreatePaymentIntent(ctx context.Context, params CreateIntentParams) (*IntentResult, error) {
 	piParams := &stripe.PaymentIntentParams{
 		Amount:   stripe.Int64(params.AmountCents),
 		Currency: stripe.String(params.Currency),
@@ -34,6 +34,7 @@ func (s *StripeService) CreatePaymentIntent(_ context.Context, params CreateInte
 			Enabled: stripe.Bool(true),
 		},
 	}
+	piParams.Context = ctx
 
 	// Attach metadata for webhook reconciliation
 	if params.Metadata != nil {
@@ -61,12 +62,17 @@ func (s *StripeService) CreatePaymentIntent(_ context.Context, params CreateInte
 		PaymentIntentID: pi.ID,
 		ClientSecret:    pi.ClientSecret,
 		Status:          string(pi.Status),
+		AmountCents:     pi.Amount,
+		Currency:        string(pi.Currency),
 	}, nil
 }
 
 // RetrievePaymentIntent fetches an existing PaymentIntent from Stripe.
-func (s *StripeService) RetrievePaymentIntent(_ context.Context, paymentIntentID string) (*IntentResult, error) {
-	pi, err := paymentintent.Get(paymentIntentID, nil)
+func (s *StripeService) RetrievePaymentIntent(ctx context.Context, paymentIntentID string) (*IntentResult, error) {
+	params := &stripe.PaymentIntentParams{}
+	params.Context = ctx
+
+	pi, err := paymentintent.Get(paymentIntentID, params)
 	if err != nil {
 		return nil, fmt.Errorf("stripe: retrieve payment intent: %w", err)
 	}
@@ -75,6 +81,8 @@ func (s *StripeService) RetrievePaymentIntent(_ context.Context, paymentIntentID
 		PaymentIntentID: pi.ID,
 		ClientSecret:    pi.ClientSecret,
 		Status:          string(pi.Status),
+		AmountCents:     pi.Amount,
+		Currency:        string(pi.Currency),
 	}, nil
 }
 
@@ -96,6 +104,8 @@ func (s *StripeService) VerifyWebhookSignature(payload []byte, signature string)
 		return &WebhookEvent{
 			Type:            EventPaymentSucceeded,
 			PaymentIntentID: pi.ID,
+			AmountCents:     pi.Amount,
+			Currency:        string(pi.Currency),
 		}, nil
 
 	case "payment_intent.payment_failed":
@@ -110,6 +120,8 @@ func (s *StripeService) VerifyWebhookSignature(payload []byte, signature string)
 		return &WebhookEvent{
 			Type:            EventPaymentFailed,
 			PaymentIntentID: pi.ID,
+			AmountCents:     pi.Amount,
+			Currency:        string(pi.Currency),
 			FailureMessage:  failMsg,
 		}, nil
 
