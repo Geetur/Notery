@@ -70,7 +70,7 @@ func connect() (*gorm.DB, error) {
 // It does NOT delete unused columns to protect data.
 func migrate(db *gorm.DB) error {
 	// First, migrate all models
-	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}); err != nil {
+	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}); err != nil {
 		return err
 	}
 
@@ -83,6 +83,15 @@ func migrate(db *gorm.DB) error {
 	`).Error; err != nil {
 		log.Printf("Warning: Could not create unique index on purchases (may already exist): %v", err)
 		// Don't return error - index might already exist
+	}
+
+	// Composite unique index on comment votes to prevent double-voting.
+	// One vote per user per comment, enforced at the DB level.
+	if err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_comment_votes_user_comment
+		ON comment_votes(comment_id, user_id)
+	`).Error; err != nil {
+		log.Printf("Warning: Could not create unique index on comment_votes (may already exist): %v", err)
 	}
 
 	return nil

@@ -124,6 +124,22 @@ func main() {
 		// Get detailed purchase history with pagination
 		protected.GET("/me/purchases/history", app.GetPurchaseHistory)
 
+		// ----- Comment Endpoints -----
+		// List threaded comments for a note (Wilson score ranked)
+		protected.GET("/notes/:id/comments", app.GetNoteComments)
+		// Create a new comment or reply on a note
+		protected.POST("/notes/:id/comments", app.CreateComment)
+		// Get a single comment with its reply subtree ("Continue this thread")
+		protected.GET("/comments/:comment_id", app.GetComment)
+		// Edit own comment
+		protected.PUT("/comments/:comment_id", app.EditComment)
+		// Soft-delete own comment
+		protected.DELETE("/comments/:comment_id", app.DeleteComment)
+		// Vote on a comment (+1 upvote, -1 downvote, toggle)
+		protected.POST("/comments/:comment_id/vote", app.VoteComment)
+		// Remove vote from a comment
+		protected.DELETE("/comments/:comment_id/vote", app.RemoveCommentVote)
+
 		//subnotery endpoints
 		protected.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
 	}

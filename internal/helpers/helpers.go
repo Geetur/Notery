@@ -133,6 +133,7 @@ var (
 	AuthLog       = NewLogger("AUTH")
 	SubnoteryLog  = NewLogger("SUBNOTERY")
 	MiddlewareLog = NewLogger("MIDDLEWARE")
+	CommentLog    = NewLogger("COMMENT")
 )
 
 // ----- RESPONSE HELPERS -----
