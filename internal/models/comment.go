@@ -74,6 +74,11 @@ const EditGracePeriod = 3 * time.Minute
 // Reddit uses ~10 levels of nesting.
 const MaxTreeDepth = 10
 
+// MaxWriteDepth is the maximum allowed nesting depth when creating a reply.
+// Prevents DoS via pathologically deep comment chains that bloat memory during
+// recursive tree assembly. Separate from MaxTreeDepth (a read-time display limit).
+const MaxWriteDepth = 15
+
 // Comment represents a user's comment on a note.
 //
 // TREE STRUCTURE:

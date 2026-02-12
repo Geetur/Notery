@@ -86,9 +86,22 @@ func main() {
 	// feed endpoint (public with optional auth for personalization)
 	api.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
 
+	// ----- Comment Read Endpoints (public, optional auth for user_vote field) -----
+	// FIX #6: Comment listing is publicly readable. Auth is optional so logged-in
+	// users get their vote state attached to each comment.
+	api.GET("/notes/:id/comments",
+		middleware.OptionalAuth(cfg.JWTSecret),
+		app.GetNoteComments)
+	api.GET("/comments/:comment_id",
+		middleware.OptionalAuth(cfg.JWTSecret),
+		app.GetComment)
+
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
 	protected.Use(middleware.RequireAuth(cfg.JWTSecret))
+
+	// Apply per-user write rate limiting to all protected (mutating) routes.
+	protected.Use(middleware.RateLimit(redisClient, middleware.DefaultWriteRateLimit, "write:"))
 	{
 		// note endpoints
 		protected.GET("/notes/:id", app.GetNoteByID)
@@ -124,16 +137,12 @@ func main() {
 		// Get detailed purchase history with pagination
 		protected.GET("/me/purchases/history", app.GetPurchaseHistory)
 
-		// ----- Comment Endpoints -----
-		// List threaded comments for a note (Wilson score ranked)
-		protected.GET("/notes/:id/comments", app.GetNoteComments)
+		// ----- Comment Write Endpoints -----
 		// Create a new comment or reply on a note
 		protected.POST("/notes/:id/comments", app.CreateComment)
-		// Get a single comment with its reply subtree ("Continue this thread")
-		protected.GET("/comments/:comment_id", app.GetComment)
 		// Edit own comment
 		protected.PUT("/comments/:comment_id", app.EditComment)
-		// Soft-delete own comment
+		// Soft-delete own comment (also allows subnotery admin delete below)
 		protected.DELETE("/comments/:comment_id", app.DeleteComment)
 		// Vote on a comment (+1 upvote, -1 downvote, toggle)
 		protected.POST("/comments/:comment_id/vote", app.VoteComment)

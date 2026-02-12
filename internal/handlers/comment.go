@@ -131,6 +131,12 @@ func (app *App) GetNoteComments(c *gin.Context) {
 		Where("note_id = ? AND parent_id IS NULL", noteID).
 		Count(&totalTopLevel)
 
+	// Count total comments to detect truncation
+	var totalComments int64
+	app.DB.Model(&models.Comment{}).
+		Where("note_id = ?", noteID).
+		Count(&totalComments)
+
 	// Fetch all comments for this note (hard cap for safety)
 	var comments []models.Comment
 	if err := app.DB.Where("note_id = ?", noteID).
@@ -164,15 +170,19 @@ func (app *App) GetNoteComments(c *gin.Context) {
 		end = len(roots)
 	}
 
+	// Detect truncation: total comments in DB exceed the hard cap we fetched
+	truncated := totalComments > int64(maxCommentsPerNote)
+
 	commentLog.Log("LIST", "served", "note_id", noteID, "total_top", totalTopLevel,
-		"page", pag.Page, "sort", string(sortOrder), "tree_nodes", len(comments))
+		"page", pag.Page, "sort", string(sortOrder), "tree_nodes", len(comments), "truncated", truncated)
 
 	c.JSON(http.StatusOK, gin.H{
-		"comments": roots[start:end],
-		"total":    totalTopLevel,
-		"page":     pag.Page,
-		"limit":    pag.Limit,
-		"sort":     sortOrder,
+		"comments":  roots[start:end],
+		"total":     totalTopLevel,
+		"page":      pag.Page,
+		"limit":     pag.Limit,
+		"sort":      sortOrder,
+		"truncated": truncated,
 	})
 }
 
@@ -250,6 +260,15 @@ func (app *App) CreateComment(c *gin.Context) {
 			return
 		}
 		depth = parent.Depth + 1
+
+		// Enforce maximum write depth to prevent pathologically deep chains (DoS)
+		if depth > models.MaxWriteDepth {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":     "Maximum reply depth exceeded",
+				"max_depth": models.MaxWriteDepth,
+			})
+			return
+		}
 	}
 
 	comment := models.Comment{
@@ -325,29 +344,47 @@ func (app *App) GetComment(c *gin.Context) {
 		return
 	}
 
-	// Fetch all comments for this note and build a subtree rooted at target
-	var allComments []models.Comment
-	if err := app.DB.Where("note_id = ?", target.NoteID).
+	// FIX #1: Enforce note visibility — must be approved (same as GetNoteComments).
+	var note models.Note
+	if err := app.DB.Select("id, status").First(&note, target.NoteID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	if note.Status != models.StatusApproved {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Comments are not available for this note"})
+		return
+	}
+
+	// FIX #8: Only fetch the subtree rooted at target instead of all note comments.
+	// We fetch the target comment + all descendants (depth > target.depth whose
+	// ancestor chain leads here). Since we don't have a path column, we still
+	// need to fetch note-level comments but limit to the depth window we care about.
+	relativeMaxDepth := target.Depth + maxDepth
+	var subtreeComments []models.Comment
+	if err := app.DB.Where("note_id = ? AND depth >= ? AND depth <= ?",
+		target.NoteID, target.Depth, relativeMaxDepth).
 		Order("created_at ASC").
 		Limit(maxCommentsPerNote).
-		Find(&allComments).Error; err != nil {
+		Find(&subtreeComments).Error; err != nil {
 		commentLog.Log("GET", "db error", "comment_id", commentID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comments"})
 		return
 	}
 
-	userMap := app.fetchCommentUsernames(allComments)
+	userMap := app.fetchCommentUsernames(subtreeComments)
 
 	var userVotes map[uint]int8
 	if userID, authenticated := helpers.TryGetUserID(c); authenticated {
-		userVotes = app.fetchUserCommentVotes(userID, allComments)
+		userVotes = app.fetchUserCommentVotes(userID, subtreeComments)
 	}
 
-	// Build full tree, then extract the subtree rooted at target
-	responseMap := buildResponseMap(allComments, userMap, userVotes)
+	// Build tree from the depth-filtered set, then extract subtree rooted at target
+	responseMap := buildResponseMap(subtreeComments, userMap, userVotes)
 	wireChildren(responseMap)
-	// Adjust max depth relative to target's depth
-	relativeMaxDepth := target.Depth + maxDepth
 	truncateDepth(responseMap, relativeMaxDepth)
 
 	resp, exists := responseMap[uint(commentID)]
@@ -464,13 +501,32 @@ func (app *App) DeleteComment(c *gin.Context) {
 		return
 	}
 
-	// Ownership or admin check
+	// Ownership or admin check (with defensive type assertion)
 	isOwner := comment.UserID == userID
-	isAdmin := false
+	isGlobalAdmin := false
+	isSubnoteryAdmin := false
 	if adminType, exists := c.Get("admin_type"); exists {
-		isAdmin = adminType.(bool)
+		if v, ok := adminType.(bool); ok {
+			isGlobalAdmin = v
+		}
 	}
-	if !isOwner && !isAdmin {
+
+	// Subnotery admins may only delete comments on notes within their subnoteries.
+	if !isGlobalAdmin && !isOwner {
+		// Look up note to check subnotery scope
+		var note models.Note
+		if err := app.DB.Select("id, subnotery_id").First(&note, comment.NoteID).Error; err == nil {
+			var adminCount int64
+			app.DB.Table("user_admins").
+				Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).
+				Count(&adminCount)
+			if adminCount > 0 {
+				isSubnoteryAdmin = true
+			}
+		}
+	}
+
+	if !isOwner && !isGlobalAdmin && !isSubnoteryAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "You can only delete your own comments"})
 		return
 	}
@@ -485,7 +541,8 @@ func (app *App) DeleteComment(c *gin.Context) {
 		return
 	}
 
-	commentLog.Log("DELETE", "soft-deleted", "comment_id", commentID, "user_id", userID, "is_admin", isAdmin)
+	commentLog.Log("DELETE", "soft-deleted", "comment_id", commentID, "user_id", userID,
+		"is_global_admin", isGlobalAdmin, "is_subnotery_admin", isSubnoteryAdmin)
 	c.JSON(http.StatusOK, gin.H{"message": "Comment deleted"})
 }
 
@@ -853,8 +910,10 @@ func sortSlice(nodes []*CommentResponse, order models.CommentSortOrder) {
 
 // ===== BATCH DATA HELPERS =====
 
-// fetchCommentUsernames batch-fetches email addresses for all unique user IDs
-// in the comment set. Returns a map[userID] → email.
+// fetchCommentUsernames batch-fetches display names for all unique user IDs
+// in the comment set. Returns a map[userID] → display name.
+// FIX #4: Uses Username (public handle) instead of email to prevent identity leakage.
+// FIX #5: Logs DB errors instead of silently ignoring them.
 func (app *App) fetchCommentUsernames(comments []models.Comment) map[uint64]string {
 	// Collect unique user IDs
 	seen := make(map[uint64]struct{})
@@ -871,17 +930,22 @@ func (app *App) fetchCommentUsernames(comments []models.Comment) map[uint64]stri
 	}
 
 	var users []models.User
-	app.DB.Where("id IN ?", userIDs).Select("id, email").Find(&users)
+	if err := app.DB.Where("id IN ?", userIDs).Select("id, username").Find(&users).Error; err != nil {
+		commentLog.Log("HELPER", "failed to batch-fetch usernames", "error", err, "count", len(userIDs))
+		// Return empty map — caller will use fallback "User <id>"
+		return make(map[uint64]string)
+	}
 
 	m := make(map[uint64]string, len(users))
 	for _, u := range users {
-		m[uint64(u.ID)] = u.Email
+		m[uint64(u.ID)] = u.DisplayName()
 	}
 	return m
 }
 
 // fetchUserCommentVotes batch-fetches the current user's votes on all comments
 // in the given set. Returns map[commentID] → vote value (+1, -1).
+// FIX #5: Logs DB errors instead of silently ignoring them.
 func (app *App) fetchUserCommentVotes(userID uint64, comments []models.Comment) map[uint]int8 {
 	if len(comments) == 0 {
 		return nil
@@ -893,7 +957,11 @@ func (app *App) fetchUserCommentVotes(userID uint64, comments []models.Comment) 
 	}
 
 	var votes []models.CommentVote
-	app.DB.Where("user_id = ? AND comment_id IN ?", userID, commentIDs).Find(&votes)
+	if err := app.DB.Where("user_id = ? AND comment_id IN ?", userID, commentIDs).Find(&votes).Error; err != nil {
+		commentLog.Log("HELPER", "failed to batch-fetch user votes", "error", err,
+			"user_id", userID, "comments", len(commentIDs))
+		return make(map[uint]int8)
+	}
 
 	m := make(map[uint]int8, len(votes))
 	for _, v := range votes {
@@ -902,13 +970,14 @@ func (app *App) fetchUserCommentVotes(userID uint64, comments []models.Comment) 
 	return m
 }
 
-// lookupUsername fetches a single user's email for response population.
+// lookupUsername fetches a single user's public display name for response population.
+// FIX #4: Uses Username instead of email.
 func (app *App) lookupUsername(userID uint64) string {
 	var user models.User
-	if err := app.DB.Select("id, email").First(&user, userID).Error; err != nil {
+	if err := app.DB.Select("id, username").First(&user, userID).Error; err != nil {
 		return "User " + strconv.FormatUint(userID, 10)
 	}
-	return user.Email
+	return user.DisplayName()
 }
 
 // ===== URL PARAMETER HELPERS =====

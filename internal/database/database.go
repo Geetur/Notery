@@ -94,6 +94,18 @@ func migrate(db *gorm.DB) error {
 		log.Printf("Warning: Could not create unique index on comment_votes (may already exist): %v", err)
 	}
 
+	// Partial unique index on usernames — only enforced when username is non-empty.
+	// This allows multiple users to have no username (empty string default)
+	// while ensuring chosen usernames are globally unique.
+	// Drop any old full unique index left from earlier schema versions first.
+	db.Exec(`DROP INDEX IF EXISTS idx_users_username`)
+	if err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nonempty
+		ON users(username) WHERE username != ''
+	`).Error; err != nil {
+		log.Printf("Warning: Could not create partial unique index on users.username (may already exist): %v", err)
+	}
+
 	return nil
 }
 
