@@ -106,6 +106,11 @@ func migrate(db *gorm.DB) error {
 		log.Printf("Warning: Could not create partial unique index on users.username (may already exist): %v", err)
 	}
 
+	// Backfill materialized paths for comments that don't have one yet.
+	// This is idempotent — only touches rows with empty path.
+	// Uses iterative depth-first: set depth-0 paths first, then depth-1, etc.
+	backfillCommentPaths(db)
+
 	return nil
 }
 
@@ -125,4 +130,59 @@ func getenvInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// backfillCommentPaths iteratively sets materialized paths for comments that
+// don't have one yet. Processes depth-0 first, then depth-1, etc.
+// This is idempotent and safe to run on every startup — it only updates rows
+// with empty path fields and stops when no more rows need updating.
+func backfillCommentPaths(db *gorm.DB) {
+	// Check if there are any comments without paths
+	var count int64
+	db.Model(&models.Comment{}).Where("path = '' OR path IS NULL").Count(&count)
+	if count == 0 {
+		return
+	}
+	log.Printf("Backfilling materialized paths for %d comments...", count)
+
+	// Process by depth level: depth 0 first, then 1, 2, etc.
+	for depth := 0; depth <= 20; depth++ {
+		var comments []models.Comment
+		query := db.Where("depth = ? AND (path = '' OR path IS NULL)", depth)
+		if err := query.FindInBatches(&comments, 500, func(tx *gorm.DB, batch int) error {
+			for i := range comments {
+				c := &comments[i]
+				var newPath string
+				if c.ParentID == nil {
+					// Top-level comment: /<id>/
+					newPath = fmt.Sprintf("/%d/", c.ID)
+				} else {
+					// Reply: look up parent's path
+					var parent models.Comment
+					if err := db.Select("id, path").First(&parent, *c.ParentID).Error; err != nil {
+						log.Printf("Warning: backfill skip comment %d — parent %d not found: %v", c.ID, *c.ParentID, err)
+						continue
+					}
+					if parent.Path == "" {
+						log.Printf("Warning: backfill skip comment %d — parent %d has empty path", c.ID, *c.ParentID)
+						continue
+					}
+					newPath = fmt.Sprintf("%s%d/", parent.Path, c.ID)
+				}
+				if err := db.Model(c).Update("path", newPath).Error; err != nil {
+					log.Printf("Warning: backfill failed for comment %d: %v", c.ID, err)
+				}
+			}
+			return nil
+		}).Error; err != nil {
+			log.Printf("Warning: backfill error at depth %d: %v", depth, err)
+			break
+		}
+
+		if len(comments) == 0 {
+			break // No more comments at this depth or beyond
+		}
+	}
+
+	log.Println("Materialized path backfill complete.")
 }

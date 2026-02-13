@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -416,6 +417,21 @@ func TestDeleteComment_GlobalAdminCanDelete(t *testing.T) {
 	assertStatus(t, w, http.StatusOK)
 }
 
+func TestDeleteComment_GlobalAdminCanDeleteWithoutAdminContext(t *testing.T) {
+	app := testApp(t)
+	owner := seedUser(t, app.DB, "commentor2")
+	admin := seedUser(t, app.DB, "globaladm2")
+	app.DB.Model(&models.User{}).Where("id = ?", admin).Update("is_global_admin", true)
+
+	noteID := seedApprovedNote(t, app.DB, owner)
+	c := models.Comment{NoteID: noteID, UserID: owner, Body: "admin from DB lookup"}
+	app.DB.Create(&c)
+
+	w := serve("DELETE", "/comments/:comment_id",
+		fmt.Sprintf("/comments/%d", c.ID), nil, app.DeleteComment, authMW(admin))
+	assertStatus(t, w, http.StatusOK)
+}
+
 func TestDeleteComment_SubnoteryAdminCanDelete(t *testing.T) {
 	app := testApp(t)
 	owner := seedUser(t, app.DB, "poster")
@@ -643,4 +659,416 @@ func TestCreateComment_CrossNoteParentRejected(t *testing.T) {
 		jsonBody(map[string]interface{}{"body": "cross-note", "parent_id": parent.ID}),
 		app.CreateComment, authMW(uid))
 	assertStatus(t, w, http.StatusBadRequest)
+}
+
+// ===== MATERIALIZED PATH =====
+
+func TestCreateComment_PathSetCorrectly(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "pathtester")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Create top-level comment via handler
+	w := serve("POST", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments", noteID),
+		jsonBody(map[string]string{"body": "root"}), app.CreateComment, authMW(uid))
+	assertStatus(t, w, http.StatusCreated)
+	r := respJSON(t, w)
+	rootID := uint(r["id"].(float64))
+
+	// Check DB path for top-level
+	var root models.Comment
+	app.DB.First(&root, rootID)
+	expectedPath := fmt.Sprintf("/%d/", rootID)
+	if root.Path != expectedPath {
+		t.Fatalf("root path=%q, want %q", root.Path, expectedPath)
+	}
+
+	// Create reply via handler
+	w2 := serve("POST", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments", noteID),
+		jsonBody(map[string]interface{}{"body": "reply", "parent_id": rootID}),
+		app.CreateComment, authMW(uid))
+	assertStatus(t, w2, http.StatusCreated)
+	r2 := respJSON(t, w2)
+	replyID := uint(r2["id"].(float64))
+
+	var reply models.Comment
+	app.DB.First(&reply, replyID)
+	expectedReplyPath := fmt.Sprintf("/%d/%d/", rootID, replyID)
+	if reply.Path != expectedReplyPath {
+		t.Fatalf("reply path=%q, want %q", reply.Path, expectedReplyPath)
+	}
+
+	// Create nested reply (depth 2)
+	w3 := serve("POST", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments", noteID),
+		jsonBody(map[string]interface{}{"body": "nested", "parent_id": replyID}),
+		app.CreateComment, authMW(uid))
+	assertStatus(t, w3, http.StatusCreated)
+	r3 := respJSON(t, w3)
+	nestedID := uint(r3["id"].(float64))
+
+	var nested models.Comment
+	app.DB.First(&nested, nestedID)
+	expectedNestedPath := fmt.Sprintf("/%d/%d/%d/", rootID, replyID, nestedID)
+	if nested.Path != expectedNestedPath {
+		t.Fatalf("nested path=%q, want %q", nested.Path, expectedNestedPath)
+	}
+}
+
+// ===== TWO-PHASE LISTING =====
+
+func TestGetNoteComments_TwoPhaseOnlyPageRoots(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "twophase")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Create 3 top-level comments via handler so paths are set
+	var rootIDs []uint
+	for i := 0; i < 3; i++ {
+		w := serve("POST", "/notes/:id/comments",
+			fmt.Sprintf("/notes/%d/comments", noteID),
+			jsonBody(map[string]string{"body": fmt.Sprintf("root %d", i)}),
+			app.CreateComment, authMW(uid))
+		assertStatus(t, w, http.StatusCreated)
+		r := respJSON(t, w)
+		rootIDs = append(rootIDs, uint(r["id"].(float64)))
+	}
+
+	// Add a reply to root 0 and root 1
+	for _, rid := range rootIDs[:2] {
+		w := serve("POST", "/notes/:id/comments",
+			fmt.Sprintf("/notes/%d/comments", noteID),
+			jsonBody(map[string]interface{}{"body": "child", "parent_id": rid}),
+			app.CreateComment, authMW(uid))
+		assertStatus(t, w, http.StatusCreated)
+	}
+
+	// Fetch page 1, limit 2 — should see roots 0,1 and their children, NOT root 2's tree
+	w := serve("GET", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments?page=1&limit=2&sort=old", noteID),
+		nil, app.GetNoteComments)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+
+	assertFloat(t, "total=3", r, "total", 3)
+
+	comments := r["comments"].([]interface{})
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 roots on page 1, got %d", len(comments))
+	}
+
+	// Each of the 2 roots should have 1 child
+	for i, c := range comments {
+		cm := c.(map[string]interface{})
+		children := cm["children"].([]interface{})
+		if len(children) != 1 {
+			t.Fatalf("root %d: expected 1 child, got %d", i, len(children))
+		}
+	}
+
+	// Fetch page 2 — should see root 2 with no children
+	w2 := serve("GET", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments?page=2&limit=2&sort=old", noteID),
+		nil, app.GetNoteComments)
+	assertStatus(t, w2, http.StatusOK)
+	r2 := respJSON(t, w2)
+	comments2 := r2["comments"].([]interface{})
+	if len(comments2) != 1 {
+		t.Fatalf("expected 1 root on page 2, got %d", len(comments2))
+	}
+	cm2 := comments2[0].(map[string]interface{})
+	children2 := cm2["children"].([]interface{})
+	if len(children2) != 0 {
+		t.Fatalf("root 2 should have 0 children, got %d", len(children2))
+	}
+}
+
+func TestGetNoteComments_EmptyPage(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "emptypage")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// No comments — should return empty array
+	w := serve("GET", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments", noteID), nil, app.GetNoteComments)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	assertFloat(t, "total=0", r, "total", 0)
+	comments := r["comments"].([]interface{})
+	if len(comments) != 0 {
+		t.Fatalf("expected 0 comments, got %d", len(comments))
+	}
+}
+
+func TestGetNoteComments_PartialPathDataFallsBack(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "partialpath")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Root created through handler to get a materialized path.
+	w := serve("POST", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments", noteID),
+		jsonBody(map[string]string{"body": "root"}), app.CreateComment, authMW(uid))
+	assertStatus(t, w, http.StatusCreated)
+	rootResp := respJSON(t, w)
+	rootID := uint(rootResp["id"].(float64))
+
+	// Simulate legacy/unbackfilled data: child exists but path is empty.
+	pid := rootID
+	child := models.Comment{
+		NoteID:   noteID,
+		UserID:   uid,
+		ParentID: &pid,
+		Body:     "legacy child",
+		Depth:    1,
+		Path:     "",
+	}
+	app.DB.Create(&child)
+
+	list := serve("GET", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments?sort=old&limit=10&page=1", noteID),
+		nil, app.GetNoteComments)
+	assertStatus(t, list, http.StatusOK)
+	r := respJSON(t, list)
+
+	comments := r["comments"].([]interface{})
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(comments))
+	}
+	root := comments[0].(map[string]interface{})
+	children := root["children"].([]interface{})
+	if len(children) != 1 {
+		t.Fatalf("expected 1 child with partial path fallback, got %d", len(children))
+	}
+}
+
+func TestGetNoteComments_ControversialSortUsesControversyScore(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "controversial")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	app.DB.Create(&models.Comment{
+		NoteID: noteID, UserID: uid, Body: "low-controversy", Upvotes: 100, Downvotes: 0,
+	})
+	app.DB.Create(&models.Comment{
+		NoteID: noteID, UserID: uid, Body: "mid-controversy", Upvotes: 30, Downvotes: 20,
+	})
+	app.DB.Create(&models.Comment{
+		NoteID: noteID, UserID: uid, Body: "high-controversy", Upvotes: 10, Downvotes: 10,
+	})
+
+	w := serve("GET", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments?sort=controversial&limit=10&page=1", noteID),
+		nil, app.GetNoteComments)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	comments := r["comments"].([]interface{})
+	if len(comments) != 3 {
+		t.Fatalf("expected 3 comments, got %d", len(comments))
+	}
+
+	got0 := comments[0].(map[string]interface{})["body"]
+	got1 := comments[1].(map[string]interface{})["body"]
+	got2 := comments[2].(map[string]interface{})["body"]
+	if got0 != "high-controversy" || got1 != "mid-controversy" || got2 != "low-controversy" {
+		t.Fatalf("unexpected controversial order: [%v, %v, %v]", got0, got1, got2)
+	}
+}
+
+func TestGetNoteComments_TruncatedFalseWhenBudgetExactlyFilled(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "budgetfill")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	root := models.Comment{NoteID: noteID, UserID: uid, Body: "root"}
+	app.DB.Create(&root)
+
+	// One root consumes one slot from MaxNodesPerRequest.
+	budget := models.MaxNodesPerRequest - 1
+	for i := 0; i < budget; i++ {
+		pid := root.ID
+		app.DB.Create(&models.Comment{
+			NoteID: noteID, UserID: uid, ParentID: &pid, Body: fmt.Sprintf("child %d", i), Depth: 1,
+		})
+	}
+
+	w := serve("GET", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments?sort=old&limit=10&page=1", noteID),
+		nil, app.GetNoteComments)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	truncated, ok := r["truncated"].(bool)
+	if !ok {
+		t.Fatalf("expected boolean truncated flag, got %#v", r["truncated"])
+	}
+	if truncated {
+		t.Fatal("expected truncated=false when descendant budget is exactly filled")
+	}
+}
+
+// ===== SUBTREE FETCH (GetComment) =====
+
+func TestGetComment_ExactSubtree(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "subtreefetch")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Create a tree:
+	//   root1 → child1a
+	//   root2 → child2a → grandchild2a
+	createComment := func(body string, parentID *uint) uint {
+		payload := map[string]interface{}{"body": body}
+		if parentID != nil {
+			payload["parent_id"] = *parentID
+		}
+		w := serve("POST", "/notes/:id/comments",
+			fmt.Sprintf("/notes/%d/comments", noteID),
+			jsonBody(payload), app.CreateComment, authMW(uid))
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create %q: got %d: %s", body, w.Code, w.Body.String())
+		}
+		r := respJSON(t, w)
+		id := uint(r["id"].(float64))
+		return id
+	}
+
+	root1 := createComment("root1", nil)
+	createComment("child1a", &root1)
+
+	root2 := createComment("root2", nil)
+	child2a := createComment("child2a", &root2)
+	createComment("grandchild2a", &child2a)
+
+	// Fetch subtree of root2 — should include root2, child2a, grandchild2a
+	// but NOT root1 or child1a
+	w := serve("GET", "/comments/:comment_id",
+		fmt.Sprintf("/comments/%d", root2), nil, app.GetComment)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+
+	if uint(r["id"].(float64)) != root2 {
+		t.Fatalf("subtree root id=%v, want %d", r["id"], root2)
+	}
+	children := r["children"].([]interface{})
+	if len(children) != 1 {
+		t.Fatalf("expected 1 child of root2, got %d", len(children))
+	}
+	child := children[0].(map[string]interface{})
+	grandchildren := child["children"].([]interface{})
+	if len(grandchildren) != 1 {
+		t.Fatalf("expected 1 grandchild of child2a, got %d", len(grandchildren))
+	}
+}
+
+func TestGetComment_HasMoreWhenBudgetTruncated(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "subtreecap")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	root := models.Comment{NoteID: noteID, UserID: uid, Body: "root"}
+	app.DB.Create(&root)
+
+	// Target subtree size will be 1(root) + 500(children) = 501 > MaxNodesPerRequest(500).
+	for i := 0; i < models.MaxNodesPerRequest; i++ {
+		pid := root.ID
+		app.DB.Create(&models.Comment{
+			NoteID: noteID, UserID: uid, ParentID: &pid, Body: fmt.Sprintf("child %d", i), Depth: 1,
+		})
+	}
+
+	w := serve("GET", "/comments/:comment_id",
+		fmt.Sprintf("/comments/%d", root.ID), nil, app.GetComment)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+
+	hasMore, ok := r["has_more_replies"].(bool)
+	if !ok || !hasMore {
+		t.Fatalf("expected has_more_replies=true when subtree hits node budget, got %v", r["has_more_replies"])
+	}
+
+	children := r["children"].([]interface{})
+	if len(children) != models.MaxNodesPerRequest-1 {
+		t.Fatalf("expected %d children after budget trim, got %d", models.MaxNodesPerRequest-1, len(children))
+	}
+}
+
+// ===== FILTER HELPERS =====
+
+func TestFilterDescendantsOfRoots(t *testing.T) {
+	// Simulate: roots=[1,3], comments include 2(parent=1), 4(parent=3), 5(parent=2), 6(parent=nil)
+	pid1 := uint(1)
+	pid2 := uint(2)
+	pid3 := uint(3)
+	comments := []models.Comment{
+		{ID: 1},
+		{ID: 2, ParentID: &pid1},
+		{ID: 3},
+		{ID: 4, ParentID: &pid3},
+		{ID: 5, ParentID: &pid2},
+		{ID: 6},
+	}
+
+	result := filterDescendantsOfRoots(comments, []uint{1, 3})
+	ids := make(map[uint]bool)
+	for _, c := range result {
+		ids[c.ID] = true
+	}
+
+	// Should include 1, 2, 3, 4, 5 (descendants of roots 1 and 3) but NOT 6
+	for _, want := range []uint{1, 2, 3, 4, 5} {
+		if !ids[want] {
+			t.Fatalf("expected comment %d in result", want)
+		}
+	}
+	if ids[6] {
+		t.Fatal("comment 6 should not be included (not a descendant of any root)")
+	}
+}
+
+func TestFilterExactSubtree(t *testing.T) {
+	pid1 := uint(1)
+	pid2 := uint(2)
+	pid3 := uint(3)
+	comments := []models.Comment{
+		{ID: 1},
+		{ID: 2, ParentID: &pid1},
+		{ID: 3},
+		{ID: 4, ParentID: &pid3},
+		{ID: 5, ParentID: &pid2},
+	}
+
+	result := filterExactSubtree(comments, 1)
+	ids := make(map[uint]bool)
+	for _, c := range result {
+		ids[c.ID] = true
+	}
+
+	// Subtree of 1: 1, 2, 5 (5 is child of 2 which is child of 1)
+	for _, want := range []uint{1, 2, 5} {
+		if !ids[want] {
+			t.Fatalf("expected comment %d in subtree of 1", want)
+		}
+	}
+	// Exclude 3 and 4
+	for _, exclude := range []uint{3, 4} {
+		if ids[exclude] {
+			t.Fatalf("comment %d should not be in subtree of 1", exclude)
+		}
+	}
+}
+
+func TestSortSlice_BestTieBreaksDeterministically(t *testing.T) {
+	ts := time.Unix(1700000000, 0).UTC()
+	nodes := []*CommentResponse{
+		{ID: 2, Score: 1.0, CreatedAt: ts},
+		{ID: 1, Score: 1.0, CreatedAt: ts},
+	}
+
+	sortSlice(nodes, models.SortBest)
+
+	if nodes[0].ID != 1 || nodes[1].ID != 2 {
+		t.Fatalf("best sort tie-break should be deterministic by id for equal timestamp/score, got [%d, %d]", nodes[0].ID, nodes[1].ID)
+	}
 }

@@ -79,26 +79,44 @@ const MaxTreeDepth = 10
 // recursive tree assembly. Separate from MaxTreeDepth (a read-time display limit).
 const MaxWriteDepth = 15
 
+// MaxNodesPerRequest is the absolute per-request budget for comment nodes returned.
+// Even if depth and pagination would allow more, we cap total tree nodes to prevent
+// unbounded memory use. The response includes continuation metadata when truncated.
+const MaxNodesPerRequest = 500
+
 // Comment represents a user's comment on a note.
 //
 // TREE STRUCTURE:
 //   - ParentID == nil → top-level comment on the note
 //   - ParentID != nil → reply to another comment (must be on the same note)
 //   - Depth is precomputed: 0 for top-level, parent.Depth+1 for replies
+//   - Path is a materialized path string for efficient subtree queries:
+//     Top-level: "/42/"  Reply: "/42/51/63/"
 //
-// INDEXES:
-//   - idx_comment_note: note_id — fast lookup of all comments for a note
-//   - idx_comment_score: score — efficient ordering by Wilson score
-//   - idx_comment_parent: parent_id — fast child lookups
+// INDEXES (composite for query patterns):
+//   - idx_comment_note:            note_id — fast lookup of all comments
+//   - idx_comment_parent:          parent_id — fast child lookups
+//   - idx_comment_note_parent:     (note_id, parent_id) — root + child partitions
+//   - idx_comment_note_score:      (note_id, score) — paginated "best" sort on roots
+//   - idx_comment_note_created:    (note_id, created_at) — "new" / "old" sort
+//   - idx_comment_note_depth:      (note_id, depth) — bounded-depth traversals
+//   - idx_comment_path:            path — materialized-path subtree queries (LIKE prefix)
 //   - (user_id): find all comments by a user
 type Comment struct {
 	ID       uint   `json:"id" gorm:"primaryKey"`
-	NoteID   uint   `json:"note_id" gorm:"index:idx_comment_note;not null"`
+	NoteID   uint   `json:"note_id" gorm:"index:idx_comment_note;index:idx_comment_note_parent;index:idx_comment_note_score;index:idx_comment_note_created;index:idx_comment_note_depth;not null"`
 	UserID   uint64 `json:"user_id" gorm:"index;not null"`
-	ParentID *uint  `json:"parent_id" gorm:"index:idx_comment_parent"`
+	ParentID *uint  `json:"parent_id" gorm:"index:idx_comment_parent;index:idx_comment_note_parent"`
 
 	// Body is the comment text. Max MaxCommentBodyLength runes.
 	Body string `json:"body" gorm:"type:text;not null"`
+
+	// Path is the materialized path for this comment in the tree.
+	// Format: "/<root_id>/<child_id>/.../<this_id>/"
+	// Top-level example: "/42/"   Reply example: "/42/51/63/"
+	// Used for exact subtree queries: WHERE path LIKE '/42/%'
+	// Nullable for backwards compatibility — empty means not yet backfilled.
+	Path string `json:"path,omitempty" gorm:"type:text;default:'';index:idx_comment_path"`
 
 	// Cached vote counts — updated atomically via gorm.Expr.
 	// These are the DB-authoritative source of truth.
@@ -107,11 +125,11 @@ type Comment struct {
 
 	// Score is the Wilson score lower bound, precomputed for efficient sorting.
 	// Recalculated atomically alongside vote count updates inside a transaction.
-	Score float64 `json:"score" gorm:"not null;default:0;index:idx_comment_score"`
+	Score float64 `json:"score" gorm:"not null;default:0;index:idx_comment_note_score,sort:desc"`
 
 	// Depth tracks nesting level: 0 = top-level, parent.Depth+1 for replies.
 	// Stored (not computed on read) for efficient depth-limited queries.
-	Depth int `json:"depth" gorm:"not null;default:0"`
+	Depth int `json:"depth" gorm:"not null;default:0;index:idx_comment_note_depth"`
 
 	// IsDeleted marks a comment as soft-deleted.
 	// Soft-deleted comments display "[deleted]" but maintain tree structure.
@@ -121,7 +139,7 @@ type Comment struct {
 	// nil means never edited (or edited within EditGracePeriod of creation).
 	EditedAt *time.Time `json:"edited_at,omitempty"`
 
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `json:"created_at" gorm:"index:idx_comment_note_created"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 

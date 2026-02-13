@@ -12,9 +12,14 @@
 //
 // DESIGN:
 //
-//	Comments form a tree rooted at notes. The tree is fetched in one query per note
-//	and assembled in memory (O(n) time+space). Top-level roots are paginated; all
-//	descendants of the current page's roots are included up to MaxTreeDepth.
+//	Comments form a tree rooted at notes. Listing uses a two-phase read model:
+//	Phase 1 fetches only root comments (parent_id IS NULL) with DB-level pagination/sort.
+//	Phase 2 fetches descendants for those roots only, using materialized-path queries
+//	when available, with automatic fallback to parent-chain filtering.
+//	Total returned nodes are capped at MaxNodesPerRequest (500) per request.
+//
+//	Subtree fetches (GetComment) use materialized paths for exact descendant queries,
+//	eliminating false positives from the legacy depth-range approach.
 //
 //	Ranking uses Wilson score lower bound with NO time decay — quality always wins.
 //	Vote counts and Wilson scores are updated atomically inside a DB transaction
@@ -22,17 +27,18 @@
 //
 // TREE ALGORITHM:
 //
-//  1. Fetch all comments for the note (hard cap: maxCommentsPerNote).
-//  2. Batch-fetch the current user's votes and all commenters' usernames.
-//  3. Build a map[commentID] → *CommentResponse.
-//  4. Wire parent→children pointers.
-//  5. Sort each depth level by the requested sort order.
-//  6. Truncate beyond MaxTreeDepth, setting has_more_replies.
-//  7. Paginate top-level roots and return.
+//  1. Phase 1: Fetch paginated roots with DB-level sort (score/created_at).
+//  2. Phase 2: Fetch descendants for those roots (path LIKE or parent-chain filter).
+//  3. Batch-fetch the current user's votes and all commenters' usernames.
+//  4. Build a map[commentID] → *CommentResponse.
+//  5. Wire parent→children pointers.
+//  6. Sort children recursively by the requested sort order.
+//  7. Truncate beyond MaxTreeDepth, setting has_more_replies.
 package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -82,7 +88,15 @@ type CommentResponse struct {
 // ----- GET /notes/:id/comments -----
 
 // GetNoteComments returns the threaded comment tree for a note.
-// Top-level comments are paginated; all descendants (up to MaxTreeDepth) are included.
+// Top-level comments are paginated; descendants are fetched only for the
+// current page's roots, keeping cost proportional to what the user actually views.
+//
+// Two-phase read model:
+//  1. Query only root comments (parent_id IS NULL) with DB-level pagination + sort.
+//  2. Fetch descendants for exactly those root IDs within the depth window.
+//  3. Assemble trees in memory only for the current page.
+//
+// Node budget: total returned nodes capped at MaxNodesPerRequest (500).
 //
 // Query params:
 //
@@ -136,57 +150,101 @@ func (app *App) GetNoteComments(c *gin.Context) {
 		return
 	}
 
-	// Count total comments to detect truncation
-	var totalComments int64
-	if err := app.DB.Model(&models.Comment{}).
-		Where("note_id = ?", noteID).
-		Count(&totalComments).Error; err != nil {
-		commentLog.Log("LIST", "count total error", "note_id", noteID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count comments"})
-		return
+	// ----- PHASE 1: Fetch only roots for this page with DB-level sort + pagination -----
+	rootQuery := app.DB.Where("note_id = ? AND parent_id IS NULL", noteID)
+	switch sortOrder {
+	case models.SortBest:
+		rootQuery = rootQuery.Order("score DESC, created_at ASC, id ASC")
+	case models.SortNew:
+		rootQuery = rootQuery.Order("created_at DESC, id DESC")
+	case models.SortOld:
+		rootQuery = rootQuery.Order("created_at ASC, id ASC")
+	case models.SortTop:
+		rootQuery = rootQuery.Order("(upvotes - downvotes) DESC, created_at ASC, id ASC")
+	case models.SortControversial:
+		// Keep root ordering consistent with models.ControversyScore used for children.
+		rootQuery = rootQuery.Order(
+			"(upvotes + downvotes) * 1.0 / CASE WHEN ABS(upvotes - downvotes) < 1 THEN 1 ELSE ABS(upvotes - downvotes) END DESC, created_at ASC, id ASC",
+		)
+	default:
+		rootQuery = rootQuery.Order("score DESC, created_at ASC, id ASC")
 	}
-
-	// Fetch all comments for this note (hard cap for safety)
-	var comments []models.Comment
-	if err := app.DB.Where("note_id = ?", noteID).
-		Order("created_at ASC").
-		Limit(maxCommentsPerNote).
-		Find(&comments).Error; err != nil {
-		commentLog.Log("LIST", "db error", "note_id", noteID, "error", err)
+	var roots []models.Comment
+	if err := rootQuery.Offset(pag.Offset).Limit(pag.Limit).Find(&roots).Error; err != nil {
+		commentLog.Log("LIST", "fetch roots error", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comments"})
 		return
 	}
 
+	if len(roots) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"comments":  []*CommentResponse{},
+			"total":     totalTopLevel,
+			"page":      pag.Page,
+			"limit":     pag.Limit,
+			"sort":      sortOrder,
+			"truncated": false,
+		})
+		return
+	}
+
+	// ----- PHASE 2: Fetch descendants for this page's root IDs -----
+	rootIDs := make([]uint, len(roots))
+	for i, r := range roots {
+		rootIDs[i] = r.ID
+	}
+
+	// Budget: MaxNodesPerRequest minus the roots we already have
+	descendantBudget := models.MaxNodesPerRequest - len(roots)
+	if descendantBudget < 0 {
+		descendantBudget = 0
+	}
+
+	descendants, truncated, err := app.fetchDescendantsForRoots(noteID, rootIDs, maxDepth, descendantBudget)
+	if err != nil {
+		commentLog.Log("LIST", "fetch descendants error", "note_id", noteID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comments"})
+		return
+	}
+
+	// Merge roots + descendants
+	allComments := make([]models.Comment, 0, len(roots)+len(descendants))
+	allComments = append(allComments, roots...)
+	allComments = append(allComments, descendants...)
+
 	// Batch-fetch usernames for all commenters
-	userMap := app.fetchCommentUsernames(comments)
+	userMap := app.fetchCommentUsernames(allComments)
 
 	// Batch-fetch current user's votes (if authenticated)
 	var userVotes map[uint]int8
 	if userID, authenticated := helpers.TryGetUserID(c); authenticated {
-		userVotes = app.fetchUserCommentVotes(userID, comments)
+		userVotes = app.fetchUserCommentVotes(userID, allComments)
 	}
 
-	// Build tree, sort, and truncate at max depth
-	roots := buildCommentTree(comments, userMap, userVotes, sortOrder, maxDepth)
+	// Build response map + wire children + sort + truncate
+	responseMap := buildResponseMap(allComments, userMap, userVotes)
+	wireChildren(responseMap)
+	truncateDepth(responseMap, maxDepth)
 
-	// Paginate top-level
-	start := pag.Offset
-	end := start + pag.Limit
-	if start > len(roots) {
-		start = len(roots)
-	}
-	if end > len(roots) {
-		end = len(roots)
+	// Collect root responses in DB-sorted order (already sorted by phase 1 query)
+	rootResponses := make([]*CommentResponse, 0, len(roots))
+	for _, r := range roots {
+		if resp, ok := responseMap[r.ID]; ok {
+			rootResponses = append(rootResponses, resp)
+		}
 	}
 
-	// Detect truncation: total comments in DB exceed the hard cap we fetched
-	truncated := totalComments > int64(maxCommentsPerNote)
+	// Sort children recursively (roots are already in DB sort order)
+	for _, root := range rootResponses {
+		sortTree(root.Children, sortOrder)
+	}
 
 	commentLog.Log("LIST", "served", "note_id", noteID, "total_top", totalTopLevel,
-		"page", pag.Page, "sort", string(sortOrder), "tree_nodes", len(comments), "truncated", truncated)
+		"page", pag.Page, "sort", string(sortOrder),
+		"roots", len(roots), "descendants", len(descendants), "truncated", truncated)
 
 	c.JSON(http.StatusOK, gin.H{
-		"comments":  roots[start:end],
+		"comments":  rootResponses,
 		"total":     totalTopLevel,
 		"page":      pag.Page,
 		"limit":     pag.Limit,
@@ -253,8 +311,9 @@ func (app *App) CreateComment(c *gin.Context) {
 		return
 	}
 
-	// Determine depth from parent (if replying)
+	// Determine depth and parent path (if replying)
 	depth := 0
+	parentPath := "" // materialized path of parent, empty for top-level
 	if req.ParentID != nil {
 		var parent models.Comment
 		if err := app.DB.First(&parent, *req.ParentID).Error; err != nil {
@@ -276,6 +335,7 @@ func (app *App) CreateComment(c *gin.Context) {
 			return
 		}
 		depth = parent.Depth + 1
+		parentPath = parent.Path
 
 		// Enforce maximum write depth to prevent pathologically deep chains (DoS)
 		if depth > models.MaxWriteDepth {
@@ -295,7 +355,20 @@ func (app *App) CreateComment(c *gin.Context) {
 		Depth:    depth,
 	}
 
-	if err := app.DB.Create(&comment).Error; err != nil {
+	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&comment).Error; err != nil {
+			return err
+		}
+
+		// Compute and persist the materialized path now that we have the auto-generated ID.
+		// Top-level: "/<id>/", reply: "<parentPath><id>/"
+		if parentPath != "" {
+			comment.Path = fmt.Sprintf("%s%d/", parentPath, comment.ID)
+		} else {
+			comment.Path = fmt.Sprintf("/%d/", comment.ID)
+		}
+		return tx.Model(&comment).Update("path", comment.Path).Error
+	}); err != nil {
 		commentLog.Log("CREATE", "db error", "note_id", noteID, "user_id", userID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create comment"})
 		return
@@ -328,8 +401,11 @@ func (app *App) CreateComment(c *gin.Context) {
 
 // ----- GET /comments/:comment_id -----
 
-// GetComment returns a single comment with its reply subtree.
+// GetComment returns a single comment with its exact reply subtree.
 // Used for "Continue this thread →" deep-linking.
+//
+// Uses materialized path for exact descendant queries when available,
+// with automatic fallback to legacy depth-range queries for unbackfilled data.
 //
 // Query params: max_depth (default 10, max 20), sort (default best)
 //
@@ -360,7 +436,7 @@ func (app *App) GetComment(c *gin.Context) {
 		return
 	}
 
-	// FIX #1: Enforce note visibility — must be approved (same as GetNoteComments).
+	// Enforce note visibility — must be approved (same as GetNoteComments).
 	var note models.Note
 	if err := app.DB.Select("id, status").First(&note, target.NoteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -375,18 +451,12 @@ func (app *App) GetComment(c *gin.Context) {
 		return
 	}
 
-	// FIX #8: Only fetch the subtree rooted at target instead of all note comments.
-	// We fetch the target comment + all descendants (depth > target.depth whose
-	// ancestor chain leads here). Since we don't have a path column, we still
-	// need to fetch note-level comments but limit to the depth window we care about.
 	relativeMaxDepth := target.Depth + maxDepth
-	var subtreeComments []models.Comment
-	if err := app.DB.Where("note_id = ? AND depth >= ? AND depth <= ?",
-		target.NoteID, target.Depth, relativeMaxDepth).
-		Order("created_at ASC").
-		Limit(maxCommentsPerNote).
-		Find(&subtreeComments).Error; err != nil {
-		commentLog.Log("GET", "db error", "comment_id", commentID, "error", err)
+	budget := models.MaxNodesPerRequest
+
+	subtreeComments, truncatedByBudget, usedPathQuery, err := app.fetchCommentSubtree(target, relativeMaxDepth, budget)
+	if err != nil {
+		commentLog.Log("GET", "subtree fetch error", "comment_id", commentID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comments"})
 		return
 	}
@@ -398,7 +468,7 @@ func (app *App) GetComment(c *gin.Context) {
 		userVotes = app.fetchUserCommentVotes(userID, subtreeComments)
 	}
 
-	// Build tree from the depth-filtered set, then extract subtree rooted at target
+	// Build tree from the subtree set
 	responseMap := buildResponseMap(subtreeComments, userMap, userVotes)
 	wireChildren(responseMap)
 	truncateDepth(responseMap, relativeMaxDepth)
@@ -408,10 +478,14 @@ func (app *App) GetComment(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Comment not found"})
 		return
 	}
+	if truncatedByBudget {
+		resp.HasMore = true
+	}
 
 	sortTree([]*CommentResponse{resp}, sortOrder)
 
-	commentLog.Log("GET", "served", "comment_id", commentID, "note_id", target.NoteID)
+	commentLog.Log("GET", "served", "comment_id", commentID, "note_id", target.NoteID,
+		"nodes", len(subtreeComments), "path_query", usedPathQuery, "truncated", truncatedByBudget)
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -524,33 +598,22 @@ func (app *App) DeleteComment(c *gin.Context) {
 		return
 	}
 
-	// Ownership or admin check (with defensive type assertion)
+	// Ownership or admin check
 	isOwner := comment.UserID == userID
 	isGlobalAdmin := false
 	isSubnoteryAdmin := false
-	if adminType, exists := c.Get("admin_type"); exists {
-		if v, ok := adminType.(bool); ok {
-			isGlobalAdmin = v
-		}
-	}
-
-	// Subnotery admins may only delete comments on notes within their subnoteries.
-	if !isGlobalAdmin && !isOwner {
-		// Look up note to check subnotery scope
-		var note models.Note
-		if err := app.DB.Select("id, subnotery_id").First(&note, comment.NoteID).Error; err == nil {
-			var adminCount int64
-			app.DB.Table("user_admins").
-				Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).
-				Count(&adminCount)
-			if adminCount > 0 {
-				isSubnoteryAdmin = true
-			}
+	if !isOwner {
+		var err error
+		isGlobalAdmin, isSubnoteryAdmin, err = app.resolveCommentDeletePrivileges(userID, comment.NoteID)
+		if err != nil {
+			commentLog.Log("DELETE", "role resolution error", "comment_id", commentID, "user_id", userID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authorize delete"})
+			return
 		}
 	}
 
 	if !isOwner && !isGlobalAdmin && !isSubnoteryAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You can only delete your own comments"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to delete this comment"})
 		return
 	}
 
@@ -906,29 +969,52 @@ func sortSlice(nodes []*CommentResponse, order models.CommentSortOrder) {
 	switch order {
 	case models.SortBest:
 		sort.SliceStable(nodes, func(i, j int) bool {
+			if nodes[i].Score == nodes[j].Score {
+				return olderFirst(nodes[i], nodes[j])
+			}
 			return nodes[i].Score > nodes[j].Score
 		})
 	case models.SortNew:
 		sort.SliceStable(nodes, func(i, j int) bool {
-			return nodes[i].CreatedAt.After(nodes[j].CreatedAt)
+			return newerFirst(nodes[i], nodes[j])
 		})
 	case models.SortOld:
 		sort.SliceStable(nodes, func(i, j int) bool {
-			return nodes[i].CreatedAt.Before(nodes[j].CreatedAt)
+			return olderFirst(nodes[i], nodes[j])
 		})
 	case models.SortTop:
 		sort.SliceStable(nodes, func(i, j int) bool {
 			netI := nodes[i].Upvotes - nodes[i].Downvotes
 			netJ := nodes[j].Upvotes - nodes[j].Downvotes
+			if netI == netJ {
+				return olderFirst(nodes[i], nodes[j])
+			}
 			return netI > netJ
 		})
 	case models.SortControversial:
 		sort.SliceStable(nodes, func(i, j int) bool {
 			cI := models.ControversyScore(nodes[i].Upvotes, nodes[i].Downvotes)
 			cJ := models.ControversyScore(nodes[j].Upvotes, nodes[j].Downvotes)
+			if cI == cJ {
+				return olderFirst(nodes[i], nodes[j])
+			}
 			return cI > cJ
 		})
 	}
+}
+
+func olderFirst(a, b *CommentResponse) bool {
+	if a.CreatedAt.Equal(b.CreatedAt) {
+		return a.ID < b.ID
+	}
+	return a.CreatedAt.Before(b.CreatedAt)
+}
+
+func newerFirst(a, b *CommentResponse) bool {
+	if a.CreatedAt.Equal(b.CreatedAt) {
+		return a.ID > b.ID
+	}
+	return a.CreatedAt.After(b.CreatedAt)
 }
 
 // ===== BATCH DATA HELPERS =====
@@ -1013,4 +1099,223 @@ func parseCommentID(c *gin.Context) (uint64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// ===== TWO-PHASE READ HELPERS =====
+
+// hasCompletePathData checks whether all comments for a note have materialized paths.
+// Path queries are only used when coverage is complete to avoid missing descendants.
+func (app *App) hasCompletePathData(noteID uint64) (bool, error) {
+	var missing int64
+	err := app.DB.Model(&models.Comment{}).
+		Where("note_id = ? AND (path = '' OR path IS NULL)", noteID).
+		Count(&missing).Error
+	if err != nil {
+		return false, err
+	}
+	return missing == 0, nil
+}
+
+// fetchDescendantsForRoots fetches descendants for the selected root IDs with a hard budget.
+// Returns a truncation flag if the response had to be clipped.
+func (app *App) fetchDescendantsForRoots(
+	noteID uint64,
+	rootIDs []uint,
+	maxDepth int,
+	budget int,
+) ([]models.Comment, bool, error) {
+	if budget <= 0 || len(rootIDs) == 0 {
+		return []models.Comment{}, false, nil
+	}
+
+	canUsePath, err := app.hasCompletePathData(noteID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if canUsePath {
+		pathQuery := app.DB.Where("note_id = ? AND parent_id IS NOT NULL AND depth <= ?", noteID, maxDepth)
+		pathConditions := app.DB.Where("1 = 0")
+		for _, rid := range rootIDs {
+			prefix := fmt.Sprintf("/%d/", rid)
+			pathConditions = pathConditions.Or("path LIKE ?", prefix+"%")
+		}
+
+		var descendants []models.Comment
+		if err := pathQuery.Where(pathConditions).
+			Order("created_at ASC, id ASC").
+			Limit(budget + 1).
+			Find(&descendants).Error; err != nil {
+			return nil, false, err
+		}
+
+		truncated := len(descendants) > budget
+		if truncated {
+			descendants = descendants[:budget]
+		}
+		return descendants, truncated, nil
+	}
+
+	// Legacy fallback for notes with partial/empty materialized paths.
+	var allDescendants []models.Comment
+	if err := app.DB.Where("note_id = ? AND parent_id IS NOT NULL AND depth <= ?", noteID, maxDepth).
+		Order("created_at ASC, id ASC").
+		Limit(maxCommentsPerNote + 1).
+		Find(&allDescendants).Error; err != nil {
+		return nil, false, err
+	}
+
+	hitHardCap := len(allDescendants) > maxCommentsPerNote
+	if hitHardCap {
+		allDescendants = allDescendants[:maxCommentsPerNote]
+	}
+
+	descendants := filterDescendantsOfRoots(allDescendants, rootIDs)
+	truncated := hitHardCap
+	if len(descendants) > budget {
+		descendants = descendants[:budget]
+		truncated = true
+	}
+
+	return descendants, truncated, nil
+}
+
+// fetchCommentSubtree fetches a target comment and its descendants within the depth window.
+// Returns whether the result was truncated and whether path-based querying was used.
+func (app *App) fetchCommentSubtree(
+	target models.Comment,
+	relativeMaxDepth int,
+	budget int,
+) ([]models.Comment, bool, bool, error) {
+	canUsePath, err := app.hasCompletePathData(uint64(target.NoteID))
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if canUsePath && target.Path != "" {
+		var subtree []models.Comment
+		if err := app.DB.Where(
+			"note_id = ? AND (id = ? OR (path LIKE ? AND depth <= ?))",
+			target.NoteID, target.ID, target.Path+"%", relativeMaxDepth,
+		).Order("created_at ASC, id ASC").Limit(budget + 1).Find(&subtree).Error; err != nil {
+			return nil, false, false, err
+		}
+
+		truncated := len(subtree) > budget
+		if truncated {
+			subtree = subtree[:budget]
+		}
+		return subtree, truncated, true, nil
+	}
+
+	var depthComments []models.Comment
+	if err := app.DB.Where("note_id = ? AND depth >= ? AND depth <= ?",
+		target.NoteID, target.Depth, relativeMaxDepth).
+		Order("created_at ASC, id ASC").
+		Limit(maxCommentsPerNote + 1).
+		Find(&depthComments).Error; err != nil {
+		return nil, false, false, err
+	}
+
+	hitHardCap := len(depthComments) > maxCommentsPerNote
+	if hitHardCap {
+		depthComments = depthComments[:maxCommentsPerNote]
+	}
+
+	subtree := filterExactSubtree(depthComments, target.ID)
+	truncated := hitHardCap
+	if len(subtree) > budget {
+		subtree = subtree[:budget]
+		truncated = true
+	}
+
+	return subtree, truncated, false, nil
+}
+
+// resolveCommentDeletePrivileges determines global and scoped admin privileges for comment deletion.
+func (app *App) resolveCommentDeletePrivileges(userID uint64, noteID uint) (bool, bool, error) {
+	var user struct {
+		IsGlobalAdmin bool
+	}
+	if err := app.DB.Model(&models.User{}).
+		Select("is_global_admin").
+		Where("id = ?", userID).
+		Take(&user).Error; err != nil {
+		return false, false, err
+	}
+	if user.IsGlobalAdmin {
+		return true, false, nil
+	}
+
+	var note struct {
+		SubnoteryID uint
+	}
+	if err := app.DB.Model(&models.Note{}).
+		Select("subnotery_id").
+		Where("id = ?", noteID).
+		Take(&note).Error; err != nil {
+		return false, false, err
+	}
+
+	var adminCount int64
+	if err := app.DB.Table("user_admins").
+		Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).
+		Count(&adminCount).Error; err != nil {
+		return false, false, err
+	}
+
+	return false, adminCount > 0, nil
+}
+
+// filterDescendantsOfRoots filters a flat list of comments to only those that are
+// descendants of the given root IDs. It walks parent chains in memory.
+// Used as a fallback when materialized paths are not available.
+func filterDescendantsOfRoots(comments []models.Comment, rootIDs []uint) []models.Comment {
+	rootSet := make(map[uint]struct{}, len(rootIDs))
+	for _, id := range rootIDs {
+		rootSet[id] = struct{}{}
+	}
+
+	// Build parent lookup
+	parentOf := make(map[uint]*uint, len(comments))
+	for i := range comments {
+		parentOf[comments[i].ID] = comments[i].ParentID
+	}
+
+	// Cache: tracks whether a comment is a descendant of one of the roots.
+	cache := make(map[uint]bool, len(comments))
+
+	var isDescendant func(id uint) bool
+	isDescendant = func(id uint) bool {
+		if v, ok := cache[id]; ok {
+			return v
+		}
+		if _, isRoot := rootSet[id]; isRoot {
+			cache[id] = true
+			return true
+		}
+		pid, exists := parentOf[id]
+		if !exists || pid == nil {
+			cache[id] = false
+			return false
+		}
+		result := isDescendant(*pid)
+		cache[id] = result
+		return result
+	}
+
+	var result []models.Comment
+	for _, c := range comments {
+		if isDescendant(c.ID) {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// filterExactSubtree filters a flat list of comments to only the target comment
+// and its exact descendants. Used as a legacy fallback in GetComment when
+// materialized paths are not available.
+func filterExactSubtree(comments []models.Comment, targetID uint) []models.Comment {
+	return filterDescendantsOfRoots(comments, []uint{targetID})
 }
