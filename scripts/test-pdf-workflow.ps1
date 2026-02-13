@@ -4,6 +4,8 @@
 # Tests the complete PDF upload, approval, purchase, and viewing workflow.
 # Updated to include username on signup.
 
+# need to add {"error":"Title, SubnoteryName, Author, and Price are required"}
+
 $BaseUrl = "http://localhost:8080/api/v1"
 
 Write-Host "====================================" -ForegroundColor Cyan

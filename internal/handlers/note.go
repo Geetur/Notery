@@ -51,6 +51,14 @@ func (app *App) CreateNote(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 	noteLog.Log("CREATE", "User identified", "userID", userID)
 
+	// Basic validation
+	if req.Title == "" || req.SubnoteryName == "" || req.Author == "" || req.Price < 0 {
+		noteLog.Log("CREATE", "Validation failed: missing required fields")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title, SubnoteryName, Author, and Price are required"})
+		return
+	}
+
+
 	// Execute note creation in transaction
 	var note models.Note
 	if err := app.DB.Transaction(func(tx *gorm.DB) error {
@@ -281,6 +289,13 @@ func (app *App) GetNoteByID(c *gin.Context) {
 	note, ok := helpers.MustFetchNote(c, app.DB)
 	if !ok {
 		noteLog.Log("GET", "Note not found")
+		return
+	}
+
+	// only return approved note
+	if note.Status != models.StatusApproved {
+		noteLog.Log("GET", "Note not approved", "noteID", note.ID, "status", note.Status)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
 		return
 	}
 
