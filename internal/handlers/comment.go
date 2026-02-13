@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -127,15 +128,23 @@ func (app *App) GetNoteComments(c *gin.Context) {
 
 	// Count total top-level comments (for pagination metadata)
 	var totalTopLevel int64
-	app.DB.Model(&models.Comment{}).
+	if err := app.DB.Model(&models.Comment{}).
 		Where("note_id = ? AND parent_id IS NULL", noteID).
-		Count(&totalTopLevel)
+		Count(&totalTopLevel).Error; err != nil {
+		commentLog.Log("LIST", "count top-level error", "note_id", noteID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count comments"})
+		return
+	}
 
 	// Count total comments to detect truncation
 	var totalComments int64
-	app.DB.Model(&models.Comment{}).
+	if err := app.DB.Model(&models.Comment{}).
 		Where("note_id = ?", noteID).
-		Count(&totalComments)
+		Count(&totalComments).Error; err != nil {
+		commentLog.Log("LIST", "count total error", "note_id", noteID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count comments"})
+		return
+	}
 
 	// Fetch all comments for this note (hard cap for safety)
 	var comments []models.Comment
@@ -210,6 +219,13 @@ func (app *App) CreateComment(c *gin.Context) {
 		ParentID *uint  `json:"parent_id"`
 	}
 	if !helpers.BindJSON(c, &req) {
+		return
+	}
+
+	// Normalize: trim leading/trailing whitespace; reject whitespace-only bodies
+	req.Body = strings.TrimSpace(req.Body)
+	if req.Body == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Comment body must not be empty or whitespace-only"})
 		return
 	}
 
@@ -421,6 +437,13 @@ func (app *App) EditComment(c *gin.Context) {
 		return
 	}
 
+	// Normalize: trim leading/trailing whitespace; reject whitespace-only bodies
+	req.Body = strings.TrimSpace(req.Body)
+	if req.Body == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Comment body must not be empty or whitespace-only"})
+		return
+	}
+
 	if utf8.RuneCountInString(req.Body) > models.MaxCommentBodyLength {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Comment body exceeds maximum length",
@@ -605,11 +628,11 @@ func (app *App) VoteComment(c *gin.Context) {
 					return err
 				}
 				if req.Value == 1 {
-					if err := tx.Model(&comment).Update("upvotes", gorm.Expr("GREATEST(upvotes - 1, 0)")).Error; err != nil {
+					if err := tx.Model(&comment).Update("upvotes", gorm.Expr("CASE WHEN upvotes > 0 THEN upvotes - 1 ELSE 0 END")).Error; err != nil {
 						return err
 					}
 				} else {
-					if err := tx.Model(&comment).Update("downvotes", gorm.Expr("GREATEST(downvotes - 1, 0)")).Error; err != nil {
+					if err := tx.Model(&comment).Update("downvotes", gorm.Expr("CASE WHEN downvotes > 0 THEN downvotes - 1 ELSE 0 END")).Error; err != nil {
 						return err
 					}
 				}
@@ -624,14 +647,14 @@ func (app *App) VoteComment(c *gin.Context) {
 					// Switching from -1 to +1
 					if err := tx.Model(&comment).Updates(map[string]interface{}{
 						"upvotes":   gorm.Expr("upvotes + 1"),
-						"downvotes": gorm.Expr("GREATEST(downvotes - 1, 0)"),
+						"downvotes": gorm.Expr("CASE WHEN downvotes > 0 THEN downvotes - 1 ELSE 0 END"),
 					}).Error; err != nil {
 						return err
 					}
 				} else {
 					// Switching from +1 to -1
 					if err := tx.Model(&comment).Updates(map[string]interface{}{
-						"upvotes":   gorm.Expr("GREATEST(upvotes - 1, 0)"),
+						"upvotes":   gorm.Expr("CASE WHEN upvotes > 0 THEN upvotes - 1 ELSE 0 END"),
 						"downvotes": gorm.Expr("downvotes + 1"),
 					}).Error; err != nil {
 						return err
@@ -738,11 +761,11 @@ func (app *App) RemoveCommentVote(c *gin.Context) {
 			return err
 		}
 		if existing.Value == 1 {
-			if err := tx.Model(&comment).Update("upvotes", gorm.Expr("GREATEST(upvotes - 1, 0)")).Error; err != nil {
+			if err := tx.Model(&comment).Update("upvotes", gorm.Expr("CASE WHEN upvotes > 0 THEN upvotes - 1 ELSE 0 END")).Error; err != nil {
 				return err
 			}
 		} else {
-			if err := tx.Model(&comment).Update("downvotes", gorm.Expr("GREATEST(downvotes - 1, 0)")).Error; err != nil {
+			if err := tx.Model(&comment).Update("downvotes", gorm.Expr("CASE WHEN downvotes > 0 THEN downvotes - 1 ELSE 0 END")).Error; err != nil {
 				return err
 			}
 		}
