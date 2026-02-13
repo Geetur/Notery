@@ -911,9 +911,11 @@ func buildResponseMap(
 		}
 
 		// Redact deleted comments (Reddit shows "[deleted]")
+		// Zero out UserID so the author's identity is fully hidden.
 		if c.IsDeleted {
 			resp.Body = "[deleted]"
 			resp.Username = "[deleted]"
+			resp.UserID = 0
 		} else {
 			resp.Body = c.Body
 			if name, ok := userMap[c.UserID]; ok {

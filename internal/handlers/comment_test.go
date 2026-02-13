@@ -368,9 +368,14 @@ func TestDeleteComment_DisplaysDeletedInTree(t *testing.T) {
 	c := models.Comment{UserID: uid, Body: "", IsDeleted: true}
 	userMap := map[uint64]string{uid: "treechecker"}
 	responseMap := buildResponseMap([]models.Comment{c}, userMap, nil)
-	if resp := responseMap[c.ID]; resp.Body != "[deleted]" || resp.Username != "[deleted]" {
+	resp := responseMap[c.ID]
+	if resp.Body != "[deleted]" || resp.Username != "[deleted]" {
 		t.Fatalf("expected [deleted] in body and username, got body=%q user=%q", resp.Body, resp.Username)
 	}
+	if resp.UserID != 0 {
+		t.Fatalf("expected user_id=0 for deleted comment, got %d", resp.UserID)
+	}
+	_ = app // ensure testApp is used
 }
 
 // ===== PERMISSION CHECKS =====
