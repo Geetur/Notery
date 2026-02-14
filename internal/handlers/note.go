@@ -337,19 +337,97 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 	c.JSON(http.StatusOK, notes)
 }
 
-// GetApprovedNotes retrieves all notes with status "Approved"
+// GetApprovedNotes retrieves approved notes with pagination.
+// Query params: page (default 1), limit (default 25, max 100).
 func (app *App) GetApprovedNotes(c *gin.Context) {
 	noteLog.Log("APPROVED", "Processing get approved notes request")
 
+	pg := helpers.ParsePagination(c)
+
 	var notes []models.Note
-	if err := app.DB.Where("status = ?", models.StatusApproved).Find(&notes).Error; err != nil {
+	var total int64
+
+	// Count total approved notes for pagination metadata
+	if err := app.DB.Model(&models.Note{}).Where("status = ?", models.StatusApproved).Count(&total).Error; err != nil {
+		noteLog.Log("APPROVED", "Failed to count approved notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
+		return
+	}
+
+	if err := app.DB.Where("status = ?", models.StatusApproved).
+		Order("created_at DESC").
+		Offset(pg.Offset).Limit(pg.Limit).
+		Find(&notes).Error; err != nil {
 		noteLog.Log("APPROVED", "Failed to fetch approved notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
 		return
 	}
 
-	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes))
-	c.JSON(http.StatusOK, notes)
+	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes), "total", total, "page", pg.Page)
+	c.JSON(http.StatusOK, gin.H{
+		"notes": notes,
+		"total": total,
+		"page":  pg.Page,
+		"limit": pg.Limit,
+	})
+}
+
+// GetMyNotes retrieves all notes created by the authenticated user.
+// Supports filtering by status via ?status= query param (pending, approved, rejected, or all).
+// Returns paginated results.
+//
+// Route: GET /api/v1/me/notes
+func (app *App) GetMyNotes(c *gin.Context) {
+	userID := helpers.GetUserID(c)
+	noteLog.Log("MY_NOTES", "Processing get my notes request", "userID", userID)
+
+	pg := helpers.ParsePagination(c)
+	statusFilter := c.DefaultQuery("status", "all")
+
+	query := app.DB.Model(&models.Note{}).Where("creator_id = ?", userID)
+
+	// Apply optional status filter
+	switch statusFilter {
+	case "pending":
+		query = query.Where("status = ?", models.StatusPending)
+	case "approved":
+		query = query.Where("status = ?", models.StatusApproved)
+	case "rejected":
+		query = query.Where("status = ?", models.StatusRejected)
+	case "all":
+		// No additional filter
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":         "Invalid status filter",
+			"valid_options": []string{"all", "pending", "approved", "rejected"},
+		})
+		return
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		noteLog.Log("MY_NOTES", "Failed to count notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch notes"})
+		return
+	}
+
+	var notes []models.Note
+	if err := query.Order("created_at DESC").
+		Offset(pg.Offset).Limit(pg.Limit).
+		Find(&notes).Error; err != nil {
+		noteLog.Log("MY_NOTES", "Failed to fetch notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch notes"})
+		return
+	}
+
+	noteLog.Log("MY_NOTES", "Notes retrieved", "userID", userID, "count", len(notes), "total", total, "status", statusFilter)
+	c.JSON(http.StatusOK, gin.H{
+		"notes":  notes,
+		"total":  total,
+		"page":   pg.Page,
+		"limit":  pg.Limit,
+		"status": statusFilter,
+	})
 }
 
 // indexNote adds or updates a note in the Meilisearch index.

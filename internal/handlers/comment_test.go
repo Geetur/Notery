@@ -18,7 +18,10 @@ import (
 
 // ===== TEST INFRASTRUCTURE =====
 
-func init() { gin.SetMode(gin.TestMode) }
+func init() {
+	gin.SetMode(gin.TestMode)
+	models.BcryptCost = 4 // bcrypt.MinCost — fast hashing for tests
+}
 
 // testApp creates an App backed by an in-memory SQLite database with all tables migrated.
 func testApp(t *testing.T) *App {
@@ -43,12 +46,22 @@ func testApp(t *testing.T) *App {
 		&models.Order{},
 		&models.OrderItem{},
 		&models.Purchase{},
+		&models.RefreshToken{},
+		&models.EmailVerification{},
+		&models.PasswordReset{},
+		&models.Bookmark{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// Create join tables for subnotery admins and memberships
 	db.Exec("CREATE TABLE IF NOT EXISTS user_admins (user_id INTEGER, subnotery_id INTEGER)")
 	db.Exec("CREATE TABLE IF NOT EXISTS user_memberships (user_id INTEGER, subnotery_id INTEGER)")
+	// Close DB on test cleanup to prevent goroutine leaks from connection opener.
+	t.Cleanup(func() {
+		if sqlDB, err := db.DB(); err == nil {
+			sqlDB.Close()
+		}
+	})
 	return &App{DB: db}
 }
 

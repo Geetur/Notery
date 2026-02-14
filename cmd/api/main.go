@@ -14,6 +14,7 @@ import (
 
 	"github.com/Geetur/Notery/internal/config"
 	"github.com/Geetur/Notery/internal/database"
+	"github.com/Geetur/Notery/internal/email"
 	"github.com/Geetur/Notery/internal/handlers"
 	"github.com/Geetur/Notery/internal/middleware"
 	"github.com/Geetur/Notery/internal/payment"
@@ -74,20 +75,27 @@ func main() {
 	}
 	// ------ initializing payment service ---------------------------------------------------
 
+	// ------ initializing email service -----------------------------------------------------
+	mailer := email.NewMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+	// ------ initializing email service -----------------------------------------------------
+
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
-	// CORS middleware — allow frontend origins during development and production.
-	// Tighten AllowOrigins before production deploy.
+	// CORS middleware — origins configurable via CORS_ORIGINS env var.
+	// Defaults to localhost:3000,localhost:5173 for development.
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5173"},
+		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	// Global security headers (X-Content-Type-Options, X-Frame-Options, etc.)
+	router.Use(middleware.SecurityHeaders())
 
 	// Initialize the unified App handler with all dependencies
 	app := handlers.NewApp(handlers.AppConfig{
@@ -98,6 +106,8 @@ func main() {
 		SearchIndex: meiliIndex,
 		JWTSecret:   cfg.JWTSecret,
 		Payment:     paymentService,
+		Mailer:      mailer,
+		Config:      cfg,
 	})
 
 	// health check endpoint
@@ -109,28 +119,60 @@ func main() {
 	})
 
 	api := router.Group("/api/v1")
-	// auth endpoints (public)
-	api.POST("/signup", app.Signup)
-	api.POST("/login", app.Login)
+
+	// ===== AUTH RATE LIMITING =====
+	// Auth endpoints get strict rate limiting (5 req/min per IP) to prevent brute-force.
+	authRateLimit := middleware.RateLimitConfig{MaxRequests: 5, Window: 1 * time.Minute}
+
+	// Public read endpoints get moderate rate limiting (120 req/min per IP).
+	publicReadRateLimit := middleware.RateLimitConfig{MaxRequests: 120, Window: 1 * time.Minute}
+
+	// auth endpoints (public, rate-limited)
+	authGroup := api.Group("")
+	if redisClient != nil {
+		authGroup.Use(middleware.RateLimit(redisClient, authRateLimit, "auth:"))
+	}
+	authGroup.POST("/signup", app.Signup)
+	authGroup.POST("/login", app.Login)
+	authGroup.POST("/auth/refresh", app.RefreshToken)
+	authGroup.POST("/auth/logout", app.Logout)
+	authGroup.GET("/auth/verify-email", app.VerifyEmail)
+	authGroup.POST("/auth/forgot-password", app.ForgotPassword)
+	authGroup.POST("/auth/reset-password", app.ResetPassword)
 
 	// Stripe webhook (public — secured via Stripe signature verification, not JWT)
 	api.POST("/webhooks/stripe", app.HandleStripeWebhook)
 
-	// feed endpoint (public with optional auth for personalization)
-	api.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
+	// ===== PUBLIC READ ENDPOINTS (rate-limited) =====
+	publicRead := api.Group("")
+	if redisClient != nil {
+		publicRead.Use(middleware.RateLimit(redisClient, publicReadRateLimit, "pub:"))
+	}
 
-	// ----- Comment Read Endpoints (public, optional auth for user_vote field) -----
-	// FIX #6: Comment listing is publicly readable. Auth is optional so logged-in
-	// users get their vote state attached to each comment.
-	api.GET("/notes/:id/comments",
+	// feed endpoint (public with optional auth for personalization)
+	publicRead.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
+
+	// Comment Read Endpoints (public, optional auth for user_vote field)
+	publicRead.GET("/notes/:id/comments",
 		middleware.OptionalAuth(cfg.JWTSecret),
 		app.GetNoteComments)
-	api.GET("/comments/:comment_id",
+	publicRead.GET("/comments/:comment_id",
 		middleware.OptionalAuth(cfg.JWTSecret),
 		app.GetComment)
 
-	// ----- Public User Profile Read -----
-	api.GET("/users/:id/profile", app.GetUserProfile)
+	// Public User Profile Read
+	publicRead.GET("/users/:id/profile", app.GetUserProfile)
+	// Public avatar proxy
+	publicRead.GET("/avatars/:user_id", app.GetAvatar)
+
+	// Search notes (Meilisearch-backed full-text search)
+	publicRead.GET("/search", app.SearchNotes)
+	// List all subnoteries (public browsing)
+	publicRead.GET("/subnoteries", app.ListSubnoteries)
+	// Get single subnotery details (optional auth for is_member flag)
+	publicRead.GET("/subnoteries/:subnotery_id",
+		middleware.OptionalAuth(cfg.JWTSecret),
+		app.GetSubnotery)
 
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
@@ -178,6 +220,38 @@ func main() {
 		protected.GET("/me/profile", app.GetMyProfile)
 		// Update own profile (partial updates)
 		protected.PATCH("/me/profile", app.UpdateMyProfile)
+		// Upload avatar (multipart/form-data, max 5MB, JPEG/PNG/WebP/GIF)
+		protected.POST("/me/avatar", app.UploadAvatar)
+		// Delete avatar
+		protected.DELETE("/me/avatar", app.DeleteAvatar)
+
+		// ----- Session Management Endpoints -----
+		// Revoke all refresh tokens (logout everywhere)
+		protected.POST("/auth/logout-all", app.LogoutAll)
+		// Resend email verification
+		protected.POST("/auth/resend-verification", app.ResendVerification)
+		// Change password (requires current password)
+		protected.POST("/auth/change-password", app.ChangePassword)
+
+		// ----- User Notes Endpoints -----
+		// Get own notes with status filter (pending/approved/rejected/all)
+		protected.GET("/me/notes", app.GetMyNotes)
+
+		// ----- Bookmark Endpoints -----
+		// Get all bookmarked notes (paginated)
+		protected.GET("/me/bookmarks", app.GetMyBookmarks)
+		// Bookmark a note
+		protected.POST("/notes/:id/bookmark", app.BookmarkNote)
+		// Remove bookmark from a note
+		protected.DELETE("/notes/:id/bookmark", app.RemoveBookmark)
+		// Check if a note is bookmarked
+		protected.GET("/notes/:id/bookmarked", app.CheckBookmarkStatus)
+
+		// ----- Karma Endpoints -----
+		// Get own karma breakdown (cached values)
+		protected.GET("/me/karma", app.GetMyKarma)
+		// Force recalculate karma from DB
+		protected.POST("/me/karma/refresh", app.RecalculateMyKarma)
 
 		// ----- Comment Write Endpoints -----
 		// Create a new comment or reply on a note
@@ -198,6 +272,8 @@ func main() {
 
 		//subnotery endpoints
 		protected.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
+		// Leave a subnotery (cannot leave if admin)
+		protected.DELETE("/subnoteries/:subnotery_id/membership", app.LeaveSubnotery)
 	}
 
 	// applying the RequireAdmin middleware to admin-only routes
