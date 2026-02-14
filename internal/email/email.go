@@ -113,3 +113,22 @@ func VerificationEmail(baseURL, token string) (subject, body string) {
 </html>`, verifyURL, verifyURL)
 	return
 }
+
+// PasswordResetEmail builds the HTML email body for password reset.
+func PasswordResetEmail(baseURL, token string) (subject, body string) {
+	subject = "Reset your Notery password"
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", baseURL, token)
+	body = fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2>Password Reset</h2>
+  <p>We received a request to reset your Notery account password.</p>
+  <p><a href="%s" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 6px;">Reset Password</a></p>
+  <p>Or copy this URL: <code>%s</code></p>
+  <p>This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+  <p style="color: #666; font-size: 12px;">Your password won't change until you create a new one using this link.</p>
+</body>
+</html>`, resetURL, resetURL)
+	return
+}

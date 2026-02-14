@@ -398,3 +398,217 @@ func (app *App) sendVerificationEmail(user *models.User) {
 		authLog.Log("VERIFY", "Verification email sent", "email", user.Email)
 	}
 }
+
+// ===== PASSWORD RESET FLOW =====
+
+// ForgotPassword initiates the password reset flow by sending a reset email.
+// Always returns 200 to prevent email enumeration (even if user doesn't exist).
+func (app *App) ForgotPassword(c *gin.Context) {
+	authLog.Log("FORGOT_PASSWORD", "Processing forgot password request")
+
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+	if !helpers.BindJSON(c, &req) {
+		return
+	}
+
+	// Always return success to prevent email enumeration
+	successResponse := gin.H{"message": "If an account with that email exists, a password reset link has been sent."}
+
+	user, found := helpers.FetchUserByEmail(app.DB, req.Email)
+	if !found {
+		authLog.Log("FORGOT_PASSWORD", "Email not found (returning success to prevent enumeration)", "email", req.Email)
+		c.JSON(http.StatusOK, successResponse)
+		return
+	}
+
+	if app.Mailer == nil {
+		authLog.Log("FORGOT_PASSWORD", "Mailer not configured")
+		c.JSON(http.StatusOK, successResponse)
+		return
+	}
+
+	// Delete any existing reset tokens for this user (only one active at a time)
+	app.DB.Where("user_id = ?", user.ID).Delete(&models.PasswordReset{})
+
+	// Generate reset token
+	rawToken, err := models.GenerateSecureToken(models.PasswordResetTokenBytes)
+	if err != nil {
+		authLog.Log("FORGOT_PASSWORD", "Failed to generate reset token", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
+		return
+	}
+
+	pr := models.PasswordReset{
+		UserID:    uint64(user.ID),
+		TokenHash: models.HashToken(rawToken),
+		ExpiresAt: time.Now().Add(models.PasswordResetTTL),
+	}
+	if err := app.DB.Create(&pr).Error; err != nil {
+		authLog.Log("FORGOT_PASSWORD", "Failed to store reset token", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
+		return
+	}
+
+	baseURL := "http://localhost:8080"
+	if app.Config != nil {
+		baseURL = app.Config.BaseURL
+	}
+
+	subject, body := emailpkg.PasswordResetEmail(baseURL, rawToken)
+	if err := app.Mailer.Send(user.Email, subject, body); err != nil {
+		authLog.Log("FORGOT_PASSWORD", "Failed to send reset email", "error", err)
+	} else {
+		authLog.Log("FORGOT_PASSWORD", "Reset email sent", "email", user.Email)
+	}
+
+	c.JSON(http.StatusOK, successResponse)
+}
+
+// ResetPassword validates a reset token and sets a new password.
+// Also revokes all refresh tokens for the user (force re-login everywhere).
+func (app *App) ResetPassword(c *gin.Context) {
+	authLog.Log("RESET_PASSWORD", "Processing password reset")
+
+	var req struct {
+		Token       string `json:"token" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required"`
+	}
+	if !helpers.BindJSON(c, &req) {
+		return
+	}
+
+	// Password strength validation
+	if len(req.NewPassword) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters"})
+		return
+	}
+
+	tokenHash := models.HashToken(req.Token)
+
+	var pr models.PasswordReset
+	if err := app.DB.Where("token_hash = ?", tokenHash).First(&pr).Error; err != nil {
+		authLog.Log("RESET_PASSWORD", "Token not found")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired reset token"})
+		return
+	}
+
+	if pr.Used {
+		authLog.Log("RESET_PASSWORD", "Token already used", "userID", pr.UserID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "This reset token has already been used"})
+		return
+	}
+
+	if pr.IsExpired() {
+		app.DB.Delete(&pr)
+		authLog.Log("RESET_PASSWORD", "Token expired", "userID", pr.UserID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Reset token has expired. Please request a new one."})
+		return
+	}
+
+	// Fetch user and update password in a transaction
+	err := app.DB.Transaction(func(tx *gorm.DB) error {
+		var user models.User
+		if err := tx.First(&user, pr.UserID).Error; err != nil {
+			return err
+		}
+
+		if err := user.SetPassword(req.NewPassword); err != nil {
+			return err
+		}
+
+		if err := tx.Model(&user).Update("hash", user.Hash).Error; err != nil {
+			return err
+		}
+
+		// Mark token as used
+		if err := tx.Model(&pr).Update("used", true).Error; err != nil {
+			return err
+		}
+
+		// Delete all reset tokens for this user
+		if err := tx.Where("user_id = ?", pr.UserID).Delete(&models.PasswordReset{}).Error; err != nil {
+			return err
+		}
+
+		// Revoke all refresh tokens (force re-login everywhere)
+		if err := tx.Model(&models.RefreshToken{}).
+			Where("user_id = ? AND revoked = ?", pr.UserID, false).
+			Update("revoked", true).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		authLog.Log("RESET_PASSWORD", "Failed to reset password", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
+		return
+	}
+
+	authLog.Log("RESET_PASSWORD", "Password reset successfully", "userID", pr.UserID)
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully. Please log in with your new password."})
+}
+
+// ChangePassword allows an authenticated user to change their password.
+// Requires the current password for verification.
+func (app *App) ChangePassword(c *gin.Context) {
+	userID := c.GetUint64("user_id")
+	authLog.Log("CHANGE_PASSWORD", "Processing password change", "userID", userID)
+
+	var req struct {
+		CurrentPassword string `json:"current_password" binding:"required"`
+		NewPassword     string `json:"new_password" binding:"required"`
+	}
+	if !helpers.BindJSON(c, &req) {
+		return
+	}
+
+	// New password strength validation
+	if len(req.NewPassword) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "New password must be at least 8 characters"})
+		return
+	}
+
+	var user models.User
+	if err := app.DB.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Verify current password
+	if !user.CheckPassword(req.CurrentPassword) {
+		authLog.Log("CHANGE_PASSWORD", "Current password incorrect", "userID", userID)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
+		return
+	}
+
+	// Prevent setting the same password
+	if user.CheckPassword(req.NewPassword) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "New password must be different from current password"})
+		return
+	}
+
+	// Update password
+	if err := user.SetPassword(req.NewPassword); err != nil {
+		authLog.Log("CHANGE_PASSWORD", "Failed to hash new password", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to change password"})
+		return
+	}
+
+	if err := app.DB.Model(&user).Update("hash", user.Hash).Error; err != nil {
+		authLog.Log("CHANGE_PASSWORD", "Failed to update password", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to change password"})
+		return
+	}
+
+	// Revoke all refresh tokens except current session (force re-login on other devices)
+	app.DB.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND revoked = ?", userID, false).
+		Update("revoked", true)
+
+	authLog.Log("CHANGE_PASSWORD", "Password changed successfully", "userID", userID)
+	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully. All other sessions have been revoked."})
+}

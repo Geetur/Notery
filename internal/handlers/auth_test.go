@@ -659,3 +659,220 @@ func extractTokenFromEmailBody(t *testing.T, body string) string {
 func isHexChar(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
+
+// ===== FORGOT PASSWORD TESTS =====
+
+func TestForgotPassword_ExistingUser(t *testing.T) {
+	app := testApp(t)
+	mock := &email.MockMailer{}
+	app.Mailer = mock
+	seedUser(t, app.DB, "forgotuser")
+
+	w := serve("POST", "/auth/forgot-password", "/auth/forgot-password",
+		jsonBody(map[string]string{"email": "forgotuser@test.com"}),
+		app.ForgotPassword)
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	if r["message"] == nil {
+		t.Fatal("expected message in response")
+	}
+	if len(mock.Sent) != 1 {
+		t.Fatalf("expected 1 email sent, got %d", len(mock.Sent))
+	}
+}
+
+func TestForgotPassword_NonExistentEmail(t *testing.T) {
+	app := testApp(t)
+	mock := &email.MockMailer{}
+	app.Mailer = mock
+
+	w := serve("POST", "/auth/forgot-password", "/auth/forgot-password",
+		jsonBody(map[string]string{"email": "nobody@test.com"}),
+		app.ForgotPassword)
+	// Should still return 200 to prevent enumeration
+	assertStatus(t, w, http.StatusOK)
+
+	if len(mock.Sent) != 0 {
+		t.Fatalf("should not send email for non-existent user, got %d", len(mock.Sent))
+	}
+}
+
+func TestForgotPassword_MissingEmail(t *testing.T) {
+	app := testApp(t)
+	app.Mailer = &email.MockMailer{}
+
+	w := serve("POST", "/auth/forgot-password", "/auth/forgot-password",
+		jsonBody(map[string]string{}),
+		app.ForgotPassword)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestForgotPassword_CreatesResetToken(t *testing.T) {
+	app := testApp(t)
+	mock := &email.MockMailer{}
+	app.Mailer = mock
+	seedUser(t, app.DB, "forgottoken")
+
+	serve("POST", "/auth/forgot-password", "/auth/forgot-password",
+		jsonBody(map[string]string{"email": "forgottoken@test.com"}),
+		app.ForgotPassword)
+
+	var count int64
+	app.DB.Model(&models.PasswordReset{}).Count(&count)
+	if count != 1 {
+		t.Fatalf("expected 1 password reset token, got %d", count)
+	}
+}
+
+// ===== RESET PASSWORD TESTS =====
+
+func TestResetPassword_Success(t *testing.T) {
+	app := testApp(t)
+	mock := &email.MockMailer{}
+	app.Mailer = mock
+	seedUser(t, app.DB, "resetuser")
+
+	// Request password reset
+	serve("POST", "/auth/forgot-password", "/auth/forgot-password",
+		jsonBody(map[string]string{"email": "resetuser@test.com"}),
+		app.ForgotPassword)
+
+	// Extract token from sent email
+	token := extractTokenFromEmailBody(t, mock.Sent[0].Body)
+
+	// Reset password
+	w := serve("POST", "/auth/reset-password", "/auth/reset-password",
+		jsonBody(map[string]string{
+			"token":        token,
+			"new_password": "newpassword123",
+		}),
+		app.ResetPassword)
+	assertStatus(t, w, http.StatusOK)
+}
+
+func TestResetPassword_InvalidToken(t *testing.T) {
+	app := testApp(t)
+
+	w := serve("POST", "/auth/reset-password", "/auth/reset-password",
+		jsonBody(map[string]string{
+			"token":        "invalidtoken",
+			"new_password": "newpassword123",
+		}),
+		app.ResetPassword)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestResetPassword_ShortPassword(t *testing.T) {
+	app := testApp(t)
+
+	w := serve("POST", "/auth/reset-password", "/auth/reset-password",
+		jsonBody(map[string]string{
+			"token":        "sometoken",
+			"new_password": "short",
+		}),
+		app.ResetPassword)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestResetPassword_TokenUsedOnce(t *testing.T) {
+	app := testApp(t)
+	mock := &email.MockMailer{}
+	app.Mailer = mock
+	seedUser(t, app.DB, "onceuser")
+
+	serve("POST", "/auth/forgot-password", "/auth/forgot-password",
+		jsonBody(map[string]string{"email": "onceuser@test.com"}),
+		app.ForgotPassword)
+
+	token := extractTokenFromEmailBody(t, mock.Sent[0].Body)
+
+	// First reset should succeed
+	w := serve("POST", "/auth/reset-password", "/auth/reset-password",
+		jsonBody(map[string]string{
+			"token":        token,
+			"new_password": "newpassword123",
+		}),
+		app.ResetPassword)
+	assertStatus(t, w, http.StatusOK)
+
+	// Second reset should fail (token used/deleted)
+	w2 := serve("POST", "/auth/reset-password", "/auth/reset-password",
+		jsonBody(map[string]string{
+			"token":        token,
+			"new_password": "anotherpassword",
+		}),
+		app.ResetPassword)
+	assertStatus(t, w2, http.StatusBadRequest)
+}
+
+// ===== CHANGE PASSWORD TESTS =====
+
+func TestChangePassword_Success(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "chgpass")
+
+	w := serve("POST", "/auth/change-password", "/auth/change-password",
+		jsonBody(map[string]string{
+			"current_password": "test123",
+			"new_password":     "newsecurepass123",
+		}),
+		app.ChangePassword, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify new password works
+	var user models.User
+	app.DB.First(&user, uid)
+	if !user.CheckPassword("newsecurepass123") {
+		t.Fatal("new password should be valid after change")
+	}
+}
+
+func TestChangePassword_WrongCurrentPassword(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "chgwrong")
+
+	w := serve("POST", "/auth/change-password", "/auth/change-password",
+		jsonBody(map[string]string{
+			"current_password": "wrongpassword",
+			"new_password":     "newsecurepass123",
+		}),
+		app.ChangePassword, authMW(uid))
+	assertStatus(t, w, http.StatusUnauthorized)
+}
+
+func TestChangePassword_ShortNewPassword(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "chgshort")
+
+	w := serve("POST", "/auth/change-password", "/auth/change-password",
+		jsonBody(map[string]string{
+			"current_password": "test123",
+			"new_password":     "short",
+		}),
+		app.ChangePassword, authMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestChangePassword_SamePassword(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "chgsame")
+
+	w := serve("POST", "/auth/change-password", "/auth/change-password",
+		jsonBody(map[string]string{
+			"current_password": "test123",
+			"new_password":     "test123",
+		}),
+		app.ChangePassword, authMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestChangePassword_MissingFields(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "chgmissing")
+
+	w := serve("POST", "/auth/change-password", "/auth/change-password",
+		jsonBody(map[string]string{}),
+		app.ChangePassword, authMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}

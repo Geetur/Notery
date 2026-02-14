@@ -199,7 +199,7 @@ func (app *App) UploadNotePDF(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// Validate file type (basic check - production should be more thorough)
+	// Validate file type (Content-Type header check)
 	contentType := header.Header.Get("Content-Type")
 	if contentType != "application/pdf" && contentType != "" {
 		contentLog.Log("UPLOAD", "invalid content type", "note_id", noteID, "content_type", contentType)
@@ -212,6 +212,27 @@ func (app *App) UploadNotePDF(c *gin.Context) {
 	if header.Size > maxSize {
 		contentLog.Log("UPLOAD", "file too large", "note_id", noteID, "size_bytes", header.Size, "max_bytes", maxSize)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "PDF file too large (max 50MB)"})
+		return
+	}
+
+	// Validate PDF magic bytes (%PDF- header)
+	// This prevents disguised files from being uploaded as PDFs.
+	magicBuf := make([]byte, 5)
+	n, err := io.ReadFull(file, magicBuf)
+	if err != nil || n < 5 {
+		contentLog.Log("UPLOAD", "failed to read file header for magic-byte check", "note_id", noteID, "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read file or file too small"})
+		return
+	}
+	if string(magicBuf) != "%PDF-" {
+		contentLog.Log("UPLOAD", "PDF magic-byte mismatch — not a real PDF", "note_id", noteID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File content is not a valid PDF (magic bytes mismatch)"})
+		return
+	}
+	// Seek back to beginning for the full upload
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		contentLog.Log("UPLOAD", "failed to seek file after magic-byte check", "note_id", noteID, "error", seekErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process file"})
 		return
 	}
 

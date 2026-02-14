@@ -120,4 +120,37 @@ func TestSessionConstants(t *testing.T) {
 	if EmailVerificationTokenBytes != 32 {
 		t.Fatalf("unexpected EmailVerificationTokenBytes: %d", EmailVerificationTokenBytes)
 	}
+	if PasswordResetTTL != 1*time.Hour {
+		t.Fatalf("unexpected PasswordResetTTL: %v", PasswordResetTTL)
+	}
+	if PasswordResetTokenBytes != 32 {
+		t.Fatalf("unexpected PasswordResetTokenBytes: %d", PasswordResetTokenBytes)
+	}
+}
+
+// ===== PASSWORD RESET MODEL =====
+
+func TestPasswordReset_IsExpired_NotExpired(t *testing.T) {
+	pr := PasswordReset{
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+	if pr.IsExpired() {
+		t.Fatal("password reset should NOT be expired")
+	}
+}
+
+func TestPasswordReset_IsExpired_Expired(t *testing.T) {
+	pr := PasswordReset{
+		ExpiresAt: time.Now().Add(-1 * time.Hour),
+	}
+	if !pr.IsExpired() {
+		t.Fatal("password reset SHOULD be expired")
+	}
+}
+
+func TestPasswordReset_TableName(t *testing.T) {
+	pr := PasswordReset{}
+	if pr.TableName() != "password_resets" {
+		t.Fatalf("unexpected table name: %s", pr.TableName())
+	}
 }

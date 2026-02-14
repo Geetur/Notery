@@ -125,3 +125,57 @@ func TestSelfProfile_IncludesAllFields(t *testing.T) {
 		t.Errorf("self profile visibility=%v", self["profile_visibility"])
 	}
 }
+
+func TestTotalKarma(t *testing.T) {
+	tests := []struct {
+		name         string
+		noteKarma    int64
+		commentKarma int64
+		want         int64
+	}{
+		{"both positive", 10, 5, 15},
+		{"both zero", 0, 0, 0},
+		{"negative note", -3, 5, 2},
+		{"both negative", -3, -7, -10},
+		{"mixed", 100, -20, 80},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := User{NoteKarma: tt.noteKarma, CommentKarma: tt.commentKarma}
+			got := u.TotalKarma()
+			if got != tt.want {
+				t.Errorf("TotalKarma()=%d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKarmaInPublicProfile(t *testing.T) {
+	u := User{NoteKarma: 10, CommentKarma: 5}
+	u.ID = 1
+	profile := u.PublicProfile()
+	if profile["note_karma"] != int64(10) {
+		t.Errorf("public profile note_karma=%v", profile["note_karma"])
+	}
+	if profile["comment_karma"] != int64(5) {
+		t.Errorf("public profile comment_karma=%v", profile["comment_karma"])
+	}
+	if profile["total_karma"] != int64(15) {
+		t.Errorf("public profile total_karma=%v", profile["total_karma"])
+	}
+}
+
+func TestKarmaInSelfProfile(t *testing.T) {
+	u := User{
+		Email:    "karma@test.com",
+		NoteKarma: 10, CommentKarma: 5,
+	}
+	u.ID = 1
+	profile := u.SelfProfile()
+	if profile["note_karma"] != int64(10) {
+		t.Errorf("self profile note_karma=%v", profile["note_karma"])
+	}
+	if profile["total_karma"] != int64(15) {
+		t.Errorf("self profile total_karma=%v", profile["total_karma"])
+	}
+}

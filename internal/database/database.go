@@ -64,7 +64,7 @@ func connect() (*gorm.DB, error) {
 // It does NOT delete unused columns to protect data.
 func migrate(db *gorm.DB) error {
 	// First, migrate all models
-	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}, &models.RefreshToken{}, &models.EmailVerification{}); err != nil {
+	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}, &models.RefreshToken{}, &models.EmailVerification{}, &models.PasswordReset{}, &models.Bookmark{}); err != nil {
 		return err
 	}
 

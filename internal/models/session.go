@@ -64,6 +64,27 @@ func (ev *EmailVerification) IsExpired() bool {
 	return time.Now().After(ev.ExpiresAt)
 }
 
+// PasswordReset represents a pending password reset token.
+// Tokens are single-use and expire after PasswordResetTTL.
+type PasswordReset struct {
+	ID        uint      `json:"-" gorm:"primaryKey"`
+	UserID    uint64    `json:"-" gorm:"index;not null"`
+	TokenHash string    `json:"-" gorm:"uniqueIndex;not null"` // SHA-256 hash
+	Used      bool      `json:"-" gorm:"default:false"`
+	ExpiresAt time.Time `json:"-" gorm:"not null"`
+	CreatedAt time.Time `json:"-"`
+}
+
+// TableName overrides GORM's default table name.
+func (PasswordReset) TableName() string {
+	return "password_resets"
+}
+
+// IsExpired returns true if the reset token has passed its expiry time.
+func (pr *PasswordReset) IsExpired() bool {
+	return time.Now().After(pr.ExpiresAt)
+}
+
 // Session lifecycle constants.
 const (
 	// AccessTokenTTL is the lifetime of a JWT access token.
@@ -80,6 +101,12 @@ const (
 
 	// EmailVerificationTokenBytes is the number of random bytes for a verification token.
 	EmailVerificationTokenBytes = 32
+
+	// PasswordResetTTL is the lifetime of a password reset token.
+	PasswordResetTTL = 1 * time.Hour
+
+	// PasswordResetTokenBytes is the number of random bytes for a password reset token.
+	PasswordResetTokenBytes = 32
 )
 
 // GenerateSecureToken creates a cryptographically random hex-encoded token.

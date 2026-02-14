@@ -24,7 +24,11 @@ type User struct {
 
 	// ----- Account Security Fields -----
 	EmailVerified bool `json:"-" gorm:"default:false"` // true after email verification flow
-
+	// ----- Karma Fields -----
+	// NoteKarma is the total net upvotes received on the user's notes.
+	NoteKarma int64 `json:"note_karma" gorm:"default:0"`
+	// CommentKarma is the total net upvotes received on the user's comments.
+	CommentKarma int64 `json:"comment_karma" gorm:"default:0"`
 	// ----- Profile Fields -----
 	DisplayNameField string          `json:"display_name" gorm:"column:display_name;default:''"`
 	Bio              string          `json:"bio" gorm:"type:text;default:''"`
@@ -74,12 +78,22 @@ func (u *User) DisplayName() string {
 
 // PublicProfile returns a safe-to-expose profile DTO.
 // Sensitive fields (email, hash, admin status) are excluded.
+// TotalKarma returns the sum of note and comment karma.
+func (u *User) TotalKarma() int64 {
+	return u.NoteKarma + u.CommentKarma
+}
+
+// PublicProfile returns a safe-to-expose profile DTO.
+// Sensitive fields (email, hash, admin status) are excluded.
 func (u *User) PublicProfile() map[string]interface{} {
 	profile := map[string]interface{}{
-		"id":           u.ID,
-		"username":     u.Username,
-		"display_name": u.DisplayNameField,
-		"created_at":   u.CreatedAt,
+		"id":            u.ID,
+		"username":      u.Username,
+		"display_name":  u.DisplayNameField,
+		"note_karma":    u.NoteKarma,
+		"comment_karma": u.CommentKarma,
+		"total_karma":   u.TotalKarma(),
+		"created_at":    u.CreatedAt,
 	}
 	if u.ProfileVisibility == ProfilePublic {
 		profile["bio"] = u.Bio
@@ -100,6 +114,9 @@ func (u *User) SelfProfile() map[string]interface{} {
 		"bio":                u.Bio,
 		"avatar_url":         u.AvatarURL,
 		"profile_visibility": u.ProfileVisibility,
+		"note_karma":         u.NoteKarma,
+		"comment_karma":      u.CommentKarma,
+		"total_karma":        u.TotalKarma(),
 		"profile_updated_at": u.ProfileUpdatedAt,
 		"created_at":         u.CreatedAt,
 		"updated_at":         u.UpdatedAt,

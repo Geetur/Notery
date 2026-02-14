@@ -6,18 +6,22 @@ Notery is a marketplace for notes — a RESTful API built with Go that allows us
 
 ## Features
 
-- **User Authentication** — Short-lived JWT access tokens (15 min) + opaque refresh token rotation (30 days) with family-based theft detection; email verification; token revocation (single + all sessions)
+- **User Authentication** — Short-lived JWT access tokens (15 min) + opaque refresh token rotation (30 days) with family-based theft detection; email verification; token revocation (single + all sessions); password reset via email; authenticated password change
 - **User Profiles** — Display name, bio, avatar URL, public/private visibility; PATCH-based partial updates with validation
 - **Avatar Upload** — Multipart upload to Cloudflare R2 with MIME + magic-byte validation (JPEG/PNG/WebP/GIF), 5 MB size limit, public proxy serving with 24 h cache
-- **Note Management** — Create, view, approve, reject, and delete notes with typed status constants
-- **PDF Content** — Secure upload, proxy-only viewing, and access-controlled streaming via Cloudflare R2
-- **Subnoteries** — Community-based note organisation with scoped admin controls
+- **Note Management** — Create, view, approve, reject, and delete notes with typed status constants; paginated listing; "My Notes" with status filter
+- **PDF Content** — Secure upload with magic-byte validation (`%PDF-` header), proxy-only viewing, and access-controlled streaming via Cloudflare R2
+- **Subnoteries** — Community-based note organisation with scoped admin controls; list/detail/join/leave endpoints with member and note counts
 - **Shopping Cart** — Redis-backed cart system for purchasing notes
 - **Purchases & Orders** — Order state machine (pending → paid → fulfilled), idempotency-key support, int64 cent-based prices
 - **Voting & Hot Feed** — Reddit-style hotness algorithm; DB-authoritative votes table with Redis cache
 - **Comment System** — Threaded Reddit-style comments with Wilson score ranking, soft-delete, write-depth limits, and per-comment voting
+- **Bookmarks** — Save/unsave approved notes for quick access; paginated saved list; idempotent add/remove
+- **Karma System** — Note karma (upvotes − downvotes on approved notes) + comment karma; cached on user record with on-demand recalculation
 - **Rate Limiting** — Redis-backed sliding-window rate limiting with endpoint-class tiers: auth (5 req/min), public read (120 req/min), write (60 req/min)
-- **Full-Text Search** — Meilisearch integration for approved notes
+- **Full-Text Search** — Meilisearch-backed search with pagination, sorting, and price/subnotery filters
+- **Security Headers** — Global middleware: X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy
+- **Configurable CORS** — Origins loaded from `CORS_ORIGINS` env var with sensible defaults
 - **Role-Based Access** — Global admins, subnotery-scoped admins, creators, and purchasers
 
 ## Tech Stack
@@ -102,18 +106,22 @@ Notery/
 │   │   ├── meilisearch.go       # Meilisearch init
 │   │   └── r2.go                # Cloudflare R2 client
 │   ├── email/
-│   │   └── email.go             # Mailer interface (SMTP / Log / Mock) + verification template
+│   │   └── email.go             # Mailer interface (SMTP / Log / Mock) + verification + password reset templates
 │   ├── handlers/
 │   │   ├── app.go               # Unified App struct (DB, Redis, R2, Meili, JWT, Payment, Mailer)
-│   │   ├── auth.go              # Signup, Login, Refresh, Logout, Verify Email, Resend
+│   │   ├── auth.go              # Signup, Login, Refresh, Logout, Verify Email, Resend, Password Reset/Change
 │   │   ├── avatar.go            # Avatar upload/delete/serve with magic-byte validation
+│   │   ├── bookmark.go          # Save/unsave notes, list bookmarks, check status
 │   │   ├── cart.go              # Cart CRUD (Redis set)
 │   │   ├── comment.go           # Threaded comments, voting, tree assembly
-│   │   ├── content.go           # PDF upload / view / delete + access control
+│   │   ├── content.go           # PDF upload / view / delete + access control + magic-byte validation
 │   │   ├── feed.go              # Hot feed, voting (DB tx + Redis cache)
-│   │   ├── note.go              # Note CRUD, approve/reject
+│   │   ├── karma.go             # Karma display + on-demand recalculation
+│   │   ├── note.go              # Note CRUD, approve/reject, my notes, paginated listing
+│   │   ├── profile.go           # User profile CRUD
 │   │   ├── purchase.go          # Checkout, single purchase, order status, reconciliation
-│   │   ├── subnotery.go         # Join subnotery, add admin
+│   │   ├── search.go            # Meilisearch-backed full-text note search
+│   │   ├── subnotery.go         # List/detail/join/leave/admin management
 │   │   └── webhook.go           # Stripe webhook handler (signature-verified)
 │   ├── helpers/
 │   │   ├── helpers.go           # Pagination, logging, binding, auth context
@@ -124,14 +132,16 @@ Notery/
 │   ├── middleware/
 │   │   ├── auth.go              # RequireAuth / OptionalAuth (JWT factory fns)
 │   │   ├── admin.go             # RequireAdmin (global or subnotery-scoped)
-│   │   └── ratelimit.go         # Redis sliding-window rate limiter
+│   │   ├── ratelimit.go         # Redis sliding-window rate limiter
+│   │   └── security.go          # Global security headers (nosniff, frame deny, etc.)
 │   ├── models/
+│   │   ├── bookmark.go          # Bookmark (saved note) with composite unique index
 │   │   ├── note.go              # Note + NoteStatus enum
 │   │   ├── order.go             # Order + OrderItem + OrderStatus enum + state machine
 │   │   ├── purchase.go          # Purchase record (linked to Order via OrderID)
-│   │   ├── session.go           # RefreshToken + EmailVerification + secure token utils
+│   │   ├── session.go           # RefreshToken + EmailVerification + PasswordReset + token utils
 │   │   ├── subnotery.go         # Subnotery (community)
-│   │   ├── user.go              # User + bcrypt auth + EmailVerified flag
+│   │   ├── user.go              # User + bcrypt auth + EmailVerified + karma fields
 │   │   └── vote.go              # Vote + VoteDirection enum
 │   └── payment/
 │       ├── payment.go           # Service interface, types, constants
@@ -204,6 +214,9 @@ SMTP_FROM=noreply@notery.app
 # App
 BASE_URL=http://localhost:8080
 
+# CORS (optional — comma-separated origins, defaults to localhost:3000,localhost:5173)
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+
 # Stripe (optional — omit for auto-fulfil dev mode)
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
@@ -240,7 +253,9 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | POST   | `/api/v1/login`  | Returns access token (15 min) + refresh token (30 days) |
 | POST   | `/api/v1/auth/refresh` | Rotate refresh token + get new access token |
 | POST   | `/api/v1/auth/logout`  | Revoke a single refresh token |
-| POST   | `/api/v1/auth/verify-email` | Verify email via token |
+| GET    | `/api/v1/auth/verify-email` | Verify email via token |
+| POST   | `/api/v1/auth/forgot-password` | Request password reset email (anti-enumeration: always 200) |
+| POST   | `/api/v1/auth/reset-password` | Reset password via token |
 | POST   | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
 
 ### Public (Optional Auth, 120 req/min)
@@ -252,6 +267,9 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | GET    | `/api/v1/comments/:comment_id`     | Single comment subtree ("Continue this thread")              |
 | GET    | `/api/v1/users/:id/profile`        | Public user profile                                          |
 | GET    | `/api/v1/avatars/:user_id`         | Public avatar image (proxied from R2, 24 h cache)            |
+| GET    | `/api/v1/search`                   | Full-text search (q, page, limit, sort, price/subnotery filters) |
+| GET    | `/api/v1/subnoteries`              | List all subnoteries with member/note counts                 |
+| GET    | `/api/v1/subnoteries/:id`          | Subnotery detail (member/note counts, is_member if logged in)|
 
 ### Protected (Requires JWT)
 
@@ -275,12 +293,21 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | GET    | `/api/v1/me/purchases`              | List purchased notes               |
 | GET    | `/api/v1/me/purchases/history`      | Paginated purchase history         |
 | POST   | `/api/v1/subnoteries/:id/join`      | Join a subnotery                   |
+| DELETE | `/api/v1/subnoteries/:id/membership`| Leave a subnotery (admins blocked) |
 | GET    | `/api/v1/me/profile`                | Get own profile (full details)     |
 | PATCH  | `/api/v1/me/profile`                | Update own profile (partial)       |
 | POST   | `/api/v1/me/avatar`                 | Upload avatar (JPEG/PNG/WebP/GIF, ≤ 5 MB) |
 | DELETE | `/api/v1/me/avatar`                 | Delete avatar                      |
+| GET    | `/api/v1/me/notes`                  | List own notes (filter by status)  |
+| GET    | `/api/v1/me/bookmarks`              | List saved notes (paginated)       |
+| GET    | `/api/v1/me/karma`                  | Get karma breakdown (cached)       |
+| POST   | `/api/v1/me/karma/refresh`          | Recalculate karma from DB          |
+| POST   | `/api/v1/notes/:id/bookmark`        | Save a note                        |
+| DELETE | `/api/v1/notes/:id/bookmark`        | Unsave a note                      |
+| GET    | `/api/v1/notes/:id/bookmarked`      | Check bookmark status              |
 | POST   | `/api/v1/auth/logout-all`           | Revoke all refresh tokens          |
 | POST   | `/api/v1/auth/resend-verification`  | Resend verification email          |
+| POST   | `/api/v1/auth/change-password`      | Change password (requires current) |
 
 ### Comment Write Endpoints (Requires JWT + Rate Limited)
 
@@ -311,9 +338,11 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | Model       | Key Fields                                                         |
 | ----------- | ------------------------------------------------------------------ |
 | `Note`      | `ID`, `CreatorID`, `Title`, `Author`, `Status` (enum), `Price` (int64 cents), `SubnoteryID`, `HasPDF`, `Upvotes`, `Downvotes`, `Hotness` |
-| `User`      | `ID`, `Email`, `Username`, `DisplayName`, `Bio`, `AvatarURL`, `ProfileVisibility`, `Hash` (bcrypt), `EmailVerified`, `IsGlobalAdmin`, `AdminOf` (m2m)  |
+| `User`      | `ID`, `Email`, `Username`, `DisplayName`, `Bio`, `AvatarURL`, `ProfileVisibility`, `Hash` (bcrypt), `EmailVerified`, `IsGlobalAdmin`, `NoteKarma`, `CommentKarma`, `AdminOf` (m2m)  |
 | `RefreshToken` | `ID`, `TokenHash` (SHA-256), `UserID`, `FamilyID` (rotation chain), `Revoked`, `ExpiresAt` |
 | `EmailVerification` | `ID`, `UserID`, `TokenHash` (SHA-256), `ExpiresAt` |
+| `PasswordReset` | `ID`, `UserID`, `TokenHash` (SHA-256), `Used`, `ExpiresAt` (1 h) |
+| `Bookmark`  | `ID`, `UserID`, `NoteID` (composite unique), `CreatedAt` |
 | `Comment`   | `ID`, `NoteID`, `UserID`, `ParentID`, `Body`, `Upvotes`, `Downvotes`, `Score` (Wilson), `Depth`, `IsDeleted`, `EditedAt` |
 | `CommentVote` | `ID`, `CommentID`, `UserID` (composite unique), `Value` (+1/-1) |
 | `Purchase`  | `ID`, `UserID`, `NoteID`, `PricePaid` (int64 cents), `PurchasedAt`, `OrderID` |
@@ -376,7 +405,7 @@ Endpoints are rate-limited via a Redis-backed sliding-window counter with three 
 
 | Tier | Limit | Applies to |
 | ---- | ----- | ---------- |
-| Auth | 5 req/min | `/signup`, `/login`, `/auth/refresh`, `/auth/logout`, `/auth/verify-email` |
+| Auth | 5 req/min | `/signup`, `/login`, `/auth/refresh`, `/auth/logout`, `/auth/verify-email`, `/auth/forgot-password`, `/auth/reset-password` |
 | Public read | 120 req/min | `/feed/hot`, comments, profiles, avatars |
 | Write | 60 req/min | All protected mutation endpoints |
 
@@ -384,7 +413,34 @@ Keyed by authenticated user ID (or IP for anonymous). The middleware sets `X-Rat
 
 ### PDF Upload Authorization
 
-Only the note's creator or an admin (subnotery or global) can upload PDF content to a pending note. This prevents content hijacking where a malicious user could replace someone else's pending upload.
+Only the note's creator or an admin (subnotery or global) can upload PDF content to a pending note. This prevents content hijacking where a malicious user could replace someone else's pending upload. Uploaded PDFs are validated for magic bytes (`%PDF-` header) in addition to Content-Type to prevent file type spoofing.
+
+### Security Headers
+
+All responses include hardened security headers via `middleware.SecurityHeaders()`:
+- `X-Content-Type-Options: nosniff` — prevent MIME type sniffing
+- `X-Frame-Options: DENY` — prevent clickjacking
+- `Referrer-Policy: strict-origin-when-cross-origin` — limit referrer leakage
+- `X-XSS-Protection: 0` — disable legacy XSS filter (CSP preferred)
+- `Permissions-Policy` — restrictive feature policy
+
+HSTS is intentionally omitted — it should be set at the reverse proxy (Nginx/Cloudflare) level.
+
+### Configurable CORS
+
+CORS origins are loaded from the `CORS_ORIGINS` environment variable (comma-separated). Defaults to `http://localhost:3000,http://localhost:5173` for development. In production, set to your actual frontend origin(s).
+
+### Karma System
+
+Karma is an eventually-consistent reputation metric:
+- **Note karma** = sum of (upvotes − downvotes) across all of a user's approved notes
+- **Comment karma** = sum of (upvotes − downvotes) across all of a user's comments
+- Cached on the `User` record for fast reads; recalculated on-demand via `POST /me/karma/refresh`
+- Pending/rejected notes do not contribute to karma
+
+### Bookmarks
+
+Users can save approved notes for quick access. The `bookmarks` table uses a composite unique index on `(user_id, note_id)`. Add/remove operations are idempotent. The "My Bookmarks" endpoint only returns notes that are still approved.
 
 ## Testing
 

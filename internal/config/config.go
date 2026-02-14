@@ -5,6 +5,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -22,6 +23,10 @@ type Config struct {
 
 	// BaseURL is the public-facing API URL used for email verification links.
 	BaseURL string
+
+	// CORSOrigins is a comma-separated list of allowed CORS origins.
+	// Defaults to "http://localhost:3000,http://localhost:5173" for development.
+	CORSOrigins []string
 
 	// SMTPHost is the SMTP server host for sending emails.
 	SMTPHost string
@@ -51,6 +56,7 @@ func Load() *Config {
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
 		BaseURL:             getenv("BASE_URL", "http://localhost:8080"),
+		CORSOrigins:         parseCORSOrigins(getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173")),
 		SMTPHost:            os.Getenv("SMTP_HOST"),
 		SMTPPort:            getenv("SMTP_PORT", "587"),
 		SMTPUser:            os.Getenv("SMTP_USER"),
@@ -74,4 +80,18 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseCORSOrigins splits a comma-separated origin string into a slice,
+// trimming whitespace from each entry and discarding empty values.
+func parseCORSOrigins(raw string) []string {
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			origins = append(origins, p)
+		}
+	}
+	return origins
 }

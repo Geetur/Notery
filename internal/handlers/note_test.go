@@ -196,10 +196,14 @@ func TestGetApprovedNotes_HappyPath(t *testing.T) {
 		nil, app.GetApprovedNotes, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
 
-	var notes []models.Note
-	parseJSONArray(t, w, &notes)
-	if len(notes) != 2 {
-		t.Fatalf("expected 2 approved notes, got %d", len(notes))
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 2 {
+		t.Fatalf("expected total=2 approved notes, got %v", total)
+	}
+	notes, ok := r["notes"].([]interface{})
+	if !ok || len(notes) != 2 {
+		t.Fatalf("expected 2 approved notes in response")
 	}
 }
 
@@ -210,6 +214,12 @@ func TestGetApprovedNotes_Empty(t *testing.T) {
 	w := serve("GET", "/notes/approved", "/notes/approved",
 		nil, app.GetApprovedNotes, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 0 {
+		t.Fatalf("expected total=0, got %v", total)
+	}
 }
 
 // ===== GET PENDING NOTES (ADMIN) =====
@@ -292,5 +302,151 @@ func parseJSONArray(t *testing.T, w *httptest.ResponseRecorder, dest interface{}
 	t.Helper()
 	if err := json.Unmarshal(w.Body.Bytes(), dest); err != nil {
 		t.Fatalf("failed to parse json array: %v | body: %s", err, w.Body.String())
+	}
+}
+
+// ===== GET APPROVED NOTES (PAGINATED) =====
+
+func TestGetApprovedNotes_Paginated(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "apprvpg")
+
+	// Create 5 approved notes
+	for i := 0; i < 5; i++ {
+		seedApprovedNote(t, app.DB, uid)
+	}
+
+	w := serve("GET", "/notes/approved", "/notes/approved?page=1&limit=2", nil,
+		app.GetApprovedNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 5 {
+		t.Fatalf("total=%v, want 5", total)
+	}
+	notes, ok := r["notes"].([]interface{})
+	if !ok {
+		t.Fatal("expected notes array")
+	}
+	if len(notes) != 2 {
+		t.Fatalf("got %d notes, want 2 (limit=2)", len(notes))
+	}
+	if r["page"].(float64) != 1 {
+		t.Fatalf("page=%v, want 1", r["page"])
+	}
+}
+
+func TestGetApprovedNotes_EmptyPaginated(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "apprvempty")
+
+	w := serve("GET", "/notes/approved", "/notes/approved", nil,
+		app.GetApprovedNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 0 {
+		t.Fatalf("total=%v, want 0", total)
+	}
+}
+
+// ===== GET MY NOTES =====
+
+func TestGetMyNotes_All(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "mynotes")
+	seedApprovedNote(t, app.DB, uid)
+	seedPendingNote(t, app.DB, uid)
+
+	w := serve("GET", "/me/notes", "/me/notes", nil,
+		app.GetMyNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 2 {
+		t.Fatalf("total=%v, want 2", total)
+	}
+	if r["status"] != "all" {
+		t.Fatalf("status=%v, want 'all'", r["status"])
+	}
+}
+
+func TestGetMyNotes_FilterByStatus(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "mynotefilter")
+	seedApprovedNote(t, app.DB, uid)
+	seedApprovedNote(t, app.DB, uid)
+	seedPendingNote(t, app.DB, uid)
+
+	w := serve("GET", "/me/notes", "/me/notes?status=approved", nil,
+		app.GetMyNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 2 {
+		t.Fatalf("total=%v, want 2 approved", total)
+	}
+}
+
+func TestGetMyNotes_FilterPending(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "mynotefp")
+	seedApprovedNote(t, app.DB, uid)
+	seedPendingNote(t, app.DB, uid)
+
+	w := serve("GET", "/me/notes", "/me/notes?status=pending", nil,
+		app.GetMyNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 1 {
+		t.Fatalf("total=%v, want 1 pending", total)
+	}
+}
+
+func TestGetMyNotes_InvalidStatus(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "mynoteinv")
+
+	w := serve("GET", "/me/notes", "/me/notes?status=invalid", nil,
+		app.GetMyNotes, authMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestGetMyNotes_Empty(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "mynoteempty")
+
+	w := serve("GET", "/me/notes", "/me/notes", nil,
+		app.GetMyNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 0 {
+		t.Fatalf("total=%v, want 0", total)
+	}
+}
+
+func TestGetMyNotes_OtherUsersExcluded(t *testing.T) {
+	app := testApp(t)
+	uid1 := seedUser(t, app.DB, "mynote1")
+	uid2 := seedUser(t, app.DB, "mynote2")
+	seedApprovedNote(t, app.DB, uid1)
+	seedApprovedNote(t, app.DB, uid2)
+
+	w := serve("GET", "/me/notes", "/me/notes", nil,
+		app.GetMyNotes, authMW(uid1))
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	total, _ := r["total"].(float64)
+	if total != 1 {
+		t.Fatalf("total=%v, want 1 (only own notes)", total)
 	}
 }
