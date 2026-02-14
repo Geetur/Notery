@@ -34,14 +34,26 @@ type Order struct {
 	// TotalCents is the sum of all item prices at time of checkout, in cents.
 	TotalCents int64 `json:"total_cents"`
 
+	// Currency is the ISO 4217 currency code used for this order (e.g., "usd").
+	// Stored at order creation to allow webhook/reconciliation verification.
+	Currency string `json:"currency" gorm:"size:3;not null;default:'usd'"`
+
 	// IdempotencyKey prevents duplicate orders from retried requests.
 	// Clients should generate a UUID and include it with checkout requests.
 	// Scoped per-user so two different users can never collide.
 	IdempotencyKey string `json:"idempotency_key" gorm:"uniqueIndex:idx_order_user_idempotency;size:64"`
 
-	// ----- Future Payment Integration -----
 	// PaymentIntentID stores the external payment processor reference (e.g. Stripe pi_xxx).
 	PaymentIntentID string `json:"payment_intent_id,omitempty" gorm:"index"`
+
+	// PaidAt records when payment was confirmed by the payment provider.
+	PaidAt *time.Time `json:"paid_at,omitempty"`
+
+	// FailedAt records when payment processing failed.
+	FailedAt *time.Time `json:"failed_at,omitempty"`
+
+	// FailureReason describes why payment failed (from payment provider or internal error).
+	FailureReason string `json:"failure_reason,omitempty" gorm:"size:512"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -57,4 +69,25 @@ type OrderItem struct {
 	NoteID  uint   `json:"note_id" gorm:"index;not null"`
 	// PriceCents records the note price at time of order creation.
 	PriceCents int64 `json:"price_cents"`
+}
+
+// IsValidTransition returns true if the given order state transition is allowed.
+// The valid state machine is:
+//
+//	pending   → paid | failed
+//	paid      → fulfilled | refunded
+//	fulfilled → refunded
+//	failed    → (terminal)
+//	refunded  → (terminal)
+func IsValidTransition(from, to OrderStatus) bool {
+	switch from {
+	case OrderPending:
+		return to == OrderPaid || to == OrderFailed
+	case OrderPaid:
+		return to == OrderFulfilled || to == OrderRefunded
+	case OrderFulfilled:
+		return to == OrderRefunded
+	default:
+		return false
+	}
 }

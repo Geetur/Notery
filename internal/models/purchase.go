@@ -38,6 +38,10 @@ type Purchase struct {
 	// NoteID is the note that was purchased
 	NoteID uint `json:"note_id" gorm:"index;not null"`
 
+	// OrderID links this purchase to the order that created it.
+	// Enables audit trails and refund processing.
+	OrderID uint `json:"order_id" gorm:"index"`
+
 	// PricePaid records what the user paid at time of purchase, in cents.
 	// This is important because note prices can change over time.
 	// e.g., 499 = $4.99
@@ -45,18 +49,6 @@ type Purchase struct {
 
 	// PurchasedAt records when the purchase was made
 	PurchasedAt time.Time `json:"purchased_at"`
-
-	// ----- Optional: Future Enhancement Fields -----
-	// These are commented out but show potential expansion:
-
-	// TransactionID could link to a payment processor transaction
-	// TransactionID string `json:"transaction_id" gorm:"index"`
-
-	// ExpiresAt could enable time-limited access (subscription model)
-	// ExpiresAt *time.Time `json:"expires_at"`
-
-	// Refunded could track if this purchase was refunded
-	// Refunded bool `json:"refunded" gorm:"default:false"`
 }
 
 // UserNotePurchase is a unique constraint helper.

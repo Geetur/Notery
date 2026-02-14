@@ -15,6 +15,7 @@ import (
 	"github.com/Geetur/Notery/internal/database"
 	"github.com/Geetur/Notery/internal/handlers"
 	"github.com/Geetur/Notery/internal/middleware"
+	"github.com/Geetur/Notery/internal/payment"
 )
 
 func main() {
@@ -61,6 +62,17 @@ func main() {
 	log.Println("Cloudflare R2 initialized.")
 	// ------ initializing Cloudflare R2 connection ------------------------------------------
 
+	// ------ initializing payment service ---------------------------------------------------
+	var paymentService payment.Service
+	if cfg.StripeSecretKey != "" {
+		log.Println("initializing Stripe payment service...")
+		paymentService = payment.NewStripeService(cfg.StripeSecretKey, cfg.StripeWebhookSecret)
+		log.Println("Stripe payment service initialized.")
+	} else {
+		log.Println("Stripe not configured — purchases will auto-fulfil (development mode).")
+	}
+	// ------ initializing payment service ---------------------------------------------------
+
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
@@ -73,6 +85,7 @@ func main() {
 		Meilisearch: meiliClient,
 		SearchIndex: meiliIndex,
 		JWTSecret:   cfg.JWTSecret,
+		Payment:     paymentService,
 	})
 
 	// health check endpoint
@@ -87,6 +100,9 @@ func main() {
 	// auth endpoints (public)
 	api.POST("/signup", app.Signup)
 	api.POST("/login", app.Login)
+
+	// Stripe webhook (public — secured via Stripe signature verification, not JWT)
+	api.POST("/webhooks/stripe", app.HandleStripeWebhook)
 
 	// feed endpoint (public with optional auth for personalization)
 	api.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
@@ -153,6 +169,11 @@ func main() {
 		protected.POST("/comments/:comment_id/vote", app.VoteComment)
 		// Remove vote from a comment
 		protected.DELETE("/comments/:comment_id/vote", app.RemoveCommentVote)
+		// ----- Order Endpoints -----
+		// Check order status (frontend polls after payment)
+		protected.GET("/orders/:order_id", app.GetOrderStatus)
+		// Manually confirm/reconcile order (checks Stripe if webhook was delayed)
+		protected.POST("/orders/:order_id/confirm", app.ConfirmOrder)
 
 		//subnotery endpoints
 		protected.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)

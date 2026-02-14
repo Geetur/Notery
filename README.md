@@ -28,6 +28,7 @@ Notery is a marketplace for notes — a RESTful API built with Go that allows us
 | Cache      | Redis 7                                              |
 | Search     | [Meilisearch](https://www.meilisearch.com/)          |
 | Storage    | Cloudflare R2 (S3-compatible)                        |
+| Payments   | [Stripe](https://stripe.com/) (PaymentIntent API)   |
 | Auth       | JWT (HS256)                                          |
 
 ## Architecture Overview
@@ -38,11 +39,16 @@ graph LR
     Client -->|HTTP| GIN[Gin Router]
 
     subgraph API["Notery API (Go)"]
-        GIN --> MW["Middleware<br/>RequireAuth · OptionalAuth · RequireAdmin · RateLimit"]
-        MW --> H["Handlers<br/>auth · note · content · feed<br/>cart · purchase · comment · subnotery"]
+        GIN --> MW["Middleware<br/>RequireAuth · OptionalAuth · RequireAdmin"]
+        MW --> H["Handlers<br/>auth · note · content · feed<br/>cart · purchase · subnotery · webhook"]
         H --> HELPERS[helpers]
+        H --> PAY[payment.Service]
     end
 
+    PAY -->|Stripe API| STRIPE[(Stripe)]
+    end
+
+    STRIPE -->|Webhook| H
     H -->|GORM| PG[(PostgreSQL)]
     H -->|go-redis| RD[(Redis)]
     H -->|meilisearch-go| MS[(Meilisearch)]
@@ -93,15 +99,16 @@ Notery/
 │   │   ├── meilisearch.go       # Meilisearch init
 │   │   └── r2.go                # Cloudflare R2 client
 │   ├── handlers/
-│   │   ├── app.go               # Unified App struct (DB, Redis, R2, Meili, JWT)
+│   │   ├── app.go               # Unified App struct (DB, Redis, R2, Meili, JWT, Payment)
 │   │   ├── auth.go              # Signup / Login
 │   │   ├── cart.go              # Cart CRUD (Redis set)
 │   │   ├── comment.go           # Threaded comments, voting, tree assembly
 │   │   ├── content.go           # PDF upload / view / delete + access control
 │   │   ├── feed.go              # Hot feed, voting (DB tx + Redis cache)
 │   │   ├── note.go              # Note CRUD, approve/reject
-│   │   ├── purchase.go          # Checkout, single purchase, history
-│   │   └── subnotery.go         # Join subnotery, add admin
+│   │   ├── purchase.go          # Checkout, single purchase, order status, reconciliation
+│   │   ├── subnotery.go         # Join subnotery, add admin
+│   │   └── webhook.go           # Stripe webhook handler (signature-verified)
 │   ├── helpers/
 │   │   ├── helpers.go           # Pagination, logging, binding, auth context
 │   │   ├── cart.go              # Cart Redis key builder
@@ -110,17 +117,20 @@ Notery/
 │   │   └── user.go              # User fetch helpers
 │   ├── middleware/
 │   │   ├── auth.go              # RequireAuth / OptionalAuth (JWT factory fns)
-│   │   ├── admin.go             # RequireAdmin (global or subnotery-scoped)
-│   │   └── ratelimit.go         # Per-user sliding-window rate limiter (Redis)
-│   └── models/
-│       ├── comment.go           # Comment + CommentVote + Wilson score
-│       ├── note.go              # Note + NoteStatus enum
-│       ├── order.go             # Order + OrderItem + OrderStatus enum
-│       ├── purchase.go          # Purchase record
-│       ├── subnotery.go         # Subnotery (community)
-│       ├── user.go              # User + bcrypt auth + DisplayName
-│       └── vote.go              # Vote + VoteDirection enum
+│   │   └── admin.go             # RequireAdmin (global or subnotery-scoped)
+│   ├── models/
+│   │   ├── note.go              # Note + NoteStatus enum
+│   │   ├── order.go             # Order + OrderItem + OrderStatus enum + state machine
+│   │   ├── purchase.go          # Purchase record (linked to Order via OrderID)
+│   │   ├── subnotery.go         # Subnotery (community)
+│   │   ├── user.go              # User + bcrypt auth
+│   │   └── vote.go              # Vote + VoteDirection enum
+│   └── payment/
+│       ├── payment.go           # Service interface, types, constants
+│       ├── stripe.go            # Stripe implementation
+│       └── mock.go              # Test double with call tracking
 ├── docs/
+│   ├── PAYMENT_SYSTEM.md        # Detailed payment architecture docs
 │   └── PDF_CONTENT_SYSTEM.md    # Detailed PDF architecture docs
 ├── scripts/
 │   ├── test-hot-feed.ps1        # Hot feed end-to-end test
@@ -170,6 +180,10 @@ R2_BUCKET_NAME=notery-pdfs
 
 # JWT
 JWT_SECRET=your-super-secret-key
+
+# Stripe (optional — omit for auto-fulfil dev mode)
+STRIPE_SECRET_KEY=sk_test_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
 ```
 
 ### Running Locally
@@ -201,6 +215,7 @@ JWT_SECRET=your-super-secret-key
 | GET    | `/health`        | Health check       |
 | POST   | `/api/v1/signup` | Register (`email`, `password`, optional `username`) |
 | POST   | `/api/v1/login`  | Authenticate user  |
+| POST   | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
 
 ### Public (Optional Auth)
 
@@ -224,9 +239,11 @@ JWT_SECRET=your-super-secret-key
 | GET    | `/api/v1/cart`                      | View cart                          |
 | POST   | `/api/v1/cart`                      | Add note to cart                   |
 | DELETE | `/api/v1/cart/:item_id`             | Remove item from cart              |
-| POST   | `/api/v1/checkout`                  | Checkout cart → create order       |
-| POST   | `/api/v1/notes/:id/purchase`        | Direct "Buy Now" purchase          |
-| GET    | `/api/v1/notes/:id/purchased`       | Check purchase status              |
+| POST   | `/api/v1/checkout`                  | Checkout cart → Order + PaymentIntent |
+| POST   | `/api/v1/notes/:id/purchase`        | Direct "Buy Now" purchase            |
+| GET    | `/api/v1/orders/:order_id`          | Poll order status                    |
+| POST   | `/api/v1/orders/:order_id/confirm`  | Manual reconciliation (checks Stripe)|
+| GET    | `/api/v1/notes/:id/purchased`       | Check purchase status                |
 | GET    | `/api/v1/me/purchases`              | List purchased notes               |
 | GET    | `/api/v1/me/purchases/history`      | Paginated purchase history         |
 | POST   | `/api/v1/subnoteries/:id/join`      | Join a subnotery                   |
@@ -263,8 +280,8 @@ JWT_SECRET=your-super-secret-key
 | `User`      | `ID`, `Email`, `Username`, `Hash` (bcrypt), `IsGlobalAdmin`, `AdminOf` (m2m)  |
 | `Comment`   | `ID`, `NoteID`, `UserID`, `ParentID`, `Body`, `Upvotes`, `Downvotes`, `Score` (Wilson), `Depth`, `IsDeleted`, `EditedAt` |
 | `CommentVote` | `ID`, `CommentID`, `UserID` (composite unique), `Value` (+1/-1) |
-| `Purchase`  | `ID`, `UserID`, `NoteID`, `PricePaid` (int64 cents), `PurchasedAt`|
-| `Order`     | `ID`, `UserID`, `Status` (enum), `TotalCents`, `IdempotencyKey` (per-user unique), `Items[]` |
+| `Purchase`  | `ID`, `UserID`, `NoteID`, `PricePaid` (int64 cents), `PurchasedAt`, `OrderID` |
+| `Order`     | `ID`, `UserID`, `Status` (enum), `TotalCents`, `IdempotencyKey` (per-user unique), `PaymentIntentID`, `PaidAt`, `FailedAt`, `FailureReason`, `Items[]` |
 | `OrderItem` | `ID`, `OrderID`, `NoteID`, `PriceCents`                           |
 | `Vote`      | `ID`, `UserID`, `NoteID` (composite unique), `Direction` (enum)   |
 | `Subnotery` | `ID`, `Name`, `Admins` (m2m), `Members` (m2m)                     |
@@ -292,9 +309,13 @@ Environment variables are loaded **once** at startup via `internal/config/config
 
 The `votes` table is the source of truth for vote state. Each vote operation runs inside a single DB transaction that atomically updates both the `votes` row and the `notes` counter columns. Redis vote hashes are updated as a best-effort cache afterwards.
 
+### Payment Integration (Stripe)
+
+Payment processing uses a `payment.Service` interface backed by Stripe in production and a configurable mock for tests. Checkout creates a Stripe PaymentIntent and returns a `client_secret` for frontend confirmation. Fulfilment is webhook-authoritative — purchases are only created when Stripe confirms payment via a signature-verified webhook. When Stripe is not configured, orders auto-fulfil for local development. See [docs/PAYMENT_SYSTEM.md](docs/PAYMENT_SYSTEM.md) for the full architecture.
+
 ### Order State Machine
 
-Purchases are backed by an `orders` table with a clear lifecycle (`pending → paid → fulfilled`). The `idempotency_key` is scoped per-user via a composite unique index to prevent duplicate orders from retried requests without causing cross-user collisions.
+Purchases are backed by an `orders` table with a formal state machine (`pending → paid → fulfilled`) enforced by `models.IsValidTransition()`. The `idempotency_key` is scoped per-user via a composite unique index to prevent duplicate orders from retried requests without causing cross-user collisions. A reconciliation endpoint (`POST /orders/:order_id/confirm`) allows the frontend to recover from late webhooks by checking Stripe directly.
 
 ### Subnotery-Scoped Admin Checks
 
