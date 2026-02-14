@@ -5,16 +5,13 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/joho/godotenv"
 	"github.com/meilisearch/meilisearch-go"
 )
 
 // InitMeilisearch initializes the Meilisearch client and ensures the index exists.
 // It returns the client, index name, or an error if initialization fails.
 func InitMeilisearch() (meilisearch.ServiceManager, string, error) {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found (ok):", err)
-	}
+	// NOTE: godotenv.Load() is called once in config.Load() at startup.
 
 	host := getenv("MEILISEARCH_HOST", "http://localhost:7700")
 	apiKey := getenv("MEILISEARCH_API_KEY", "")

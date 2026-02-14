@@ -35,6 +35,13 @@ func (app *App) Signup(c *gin.Context) {
 	}
 	authLog.Log("SIGNUP", "Request validated", "email", authReq.Email)
 
+	// H2: Password strength validation
+	if len(authReq.Password) < 8 {
+		authLog.Log("SIGNUP", "Password too short")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters"})
+		return
+	}
+
 	// Build the user model and hash password
 	user := &models.User{Email: authReq.Email, Username: authReq.Username}
 	if err := user.SetPassword(authReq.Password); err != nil {

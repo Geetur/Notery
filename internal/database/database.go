@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -40,14 +39,9 @@ func InitDatabase() (*gorm.DB, error) {
 // create returns the database connection pool
 
 func connect() (*gorm.DB, error) {
-	// get our data source name (DSN), with credentials matching that within
-	// the docker compose file. Load environment variables from .env file if it exists
-
-	// disallowing silent failure here. ok in prod; helpful in dev
-
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found (ok):", err)
-	}
+	// Build DSN from environment variables.
+	// NOTE: godotenv.Load() is called once in config.Load() at startup.
+	// No need to reload here.
 
 	// format the DSN string, fetch local environment variables or use defaults
 	// make sure to replace ssl mode to required in production

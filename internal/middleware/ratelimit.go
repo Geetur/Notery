@@ -56,10 +56,12 @@ func RateLimit(rdb *redis.Client, cfg RateLimitConfig, keyPrefix string) gin.Han
 		key := "ratelimit:" + keyPrefix + identifier
 		ctx := context.Background()
 
-		// Atomic increment + TTL set via pipeline for efficiency.
+		// Atomic increment + conditional TTL set via pipeline for efficiency.
+		// ExpireNX only sets TTL if the key has no existing expiry,
+		// preventing window reset on every request (true sliding window).
 		pipe := rdb.Pipeline()
 		incrCmd := pipe.Incr(ctx, key)
-		pipe.Expire(ctx, key, cfg.Window) // reset TTL on each request (sliding window)
+		pipe.ExpireNX(ctx, key, cfg.Window)
 
 		if _, err := pipe.Exec(ctx); err != nil {
 			// Redis down: fail open — don't block the user, just log.

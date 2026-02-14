@@ -33,11 +33,16 @@ func testApp(t *testing.T) *App {
 		&models.Subnotery{},
 		&models.Comment{},
 		&models.CommentVote{},
+		&models.Vote{},
+		&models.Order{},
+		&models.OrderItem{},
+		&models.Purchase{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// Create the join table for subnotery admins (user_admins)
+	// Create join tables for subnotery admins and memberships
 	db.Exec("CREATE TABLE IF NOT EXISTS user_admins (user_id INTEGER, subnotery_id INTEGER)")
+	db.Exec("CREATE TABLE IF NOT EXISTS user_memberships (user_id INTEGER, subnotery_id INTEGER)")
 	return &App{DB: db}
 }
 
