@@ -100,6 +100,15 @@ func migrate(db *gorm.DB) error {
 		log.Printf("Warning: Could not create partial unique index on users.username (may already exist): %v", err)
 	}
 
+	// Partial unique index on display_name — only enforced when non-empty.
+	// Chosen display names must be globally unique (case-sensitive for now).
+	if err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_display_name_nonempty
+		ON users(display_name) WHERE display_name != ''
+	`).Error; err != nil {
+		log.Printf("Warning: Could not create partial unique index on users.display_name (may already exist): %v", err)
+	}
+
 	// Backfill materialized paths for comments that don't have one yet.
 	// This is idempotent — only touches rows with empty path.
 	// Uses iterative depth-first: set depth-0 paths first, then depth-1, etc.

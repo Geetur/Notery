@@ -7,6 +7,7 @@ Notery is a marketplace for notes — a RESTful API built with Go that allows us
 ## Features
 
 - **User Authentication** — JWT-based signup/login; secret loaded once at startup; optional public `username` display name
+- **User Profiles** — Display name, bio, avatar URL, public/private visibility; PATCH-based partial updates with validation
 - **Note Management** — Create, view, approve, reject, and delete notes with typed status constants
 - **PDF Content** — Secure upload, proxy-only viewing, and access-controlled streaming via Cloudflare R2
 - **Subnoteries** — Community-based note organisation with scoped admin controls
@@ -247,6 +248,9 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | GET    | `/api/v1/me/purchases`              | List purchased notes               |
 | GET    | `/api/v1/me/purchases/history`      | Paginated purchase history         |
 | POST   | `/api/v1/subnoteries/:id/join`      | Join a subnotery                   |
+| GET    | `/api/v1/me/profile`                | Get own profile (full details)     |
+| PATCH  | `/api/v1/me/profile`                | Update own profile (partial)       |
+| GET    | `/api/v1/users/:id/profile`         | Get public profile                 |
 
 ### Comment Write Endpoints (Requires JWT + Rate Limited)
 
@@ -277,7 +281,7 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | Model       | Key Fields                                                         |
 | ----------- | ------------------------------------------------------------------ |
 | `Note`      | `ID`, `CreatorID`, `Title`, `Author`, `Status` (enum), `Price` (int64 cents), `SubnoteryID`, `HasPDF`, `Upvotes`, `Downvotes`, `Hotness` |
-| `User`      | `ID`, `Email`, `Username`, `Hash` (bcrypt), `IsGlobalAdmin`, `AdminOf` (m2m)  |
+| `User`      | `ID`, `Email`, `Username`, `DisplayName`, `Bio`, `AvatarURL`, `ProfileVisibility`, `Hash` (bcrypt), `IsGlobalAdmin`, `AdminOf` (m2m)  |
 | `Comment`   | `ID`, `NoteID`, `UserID`, `ParentID`, `Body`, `Upvotes`, `Downvotes`, `Score` (Wilson), `Depth`, `IsDeleted`, `EditedAt` |
 | `CommentVote` | `ID`, `CommentID`, `UserID` (composite unique), `Value` (+1/-1) |
 | `Purchase`  | `ID`, `UserID`, `NoteID`, `PricePaid` (int64 cents), `PurchasedAt`, `OrderID` |

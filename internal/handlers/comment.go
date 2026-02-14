@@ -355,7 +355,7 @@ func (app *App) CreateComment(c *gin.Context) {
 		Depth:    depth,
 	}
 
-	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+	if err := app.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&comment).Error; err != nil {
 			return err
 		}
@@ -667,7 +667,7 @@ func (app *App) VoteComment(c *gin.Context) {
 	var resultComment models.Comment
 	var resultVote int8
 
-	err := app.DB.Transaction(func(tx *gorm.DB) error {
+	err := app.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		// Lock the comment row to prevent concurrent vote races on Wilson score
 		var comment models.Comment
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -803,7 +803,7 @@ func (app *App) RemoveCommentVote(c *gin.Context) {
 	}
 	userID := helpers.GetUserID(c)
 
-	err := app.DB.Transaction(func(tx *gorm.DB) error {
+	err := app.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		// Lock comment for atomic score update
 		var comment models.Comment
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).

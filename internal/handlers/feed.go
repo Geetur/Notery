@@ -65,6 +65,11 @@ func (app *App) UpdateNoteHotness(ctx context.Context, note *models.Note) error 
 		return nil
 	}
 
+	// Redis feed update is best-effort; skip if Redis is not configured
+	if app.RDB == nil {
+		return nil
+	}
+
 	noteID := strconv.FormatUint(uint64(note.ID), 10)
 
 	// Update global hot feed
@@ -102,6 +107,9 @@ func (app *App) AddNoteToFeed(ctx context.Context, note *models.Note) error {
 // RemoveNoteFromFeed removes a note from all hot feeds.
 // Call this when a note is rejected or deleted.
 func (app *App) RemoveNoteFromFeed(ctx context.Context, note *models.Note) error {
+	if app.RDB == nil {
+		return nil
+	}
 	feedLog.Log("REMOVE", "removing from feeds", "note_id", note.ID, "subnotery_id", note.SubnoteryID)
 	noteID := strconv.FormatUint(uint64(note.ID), 10)
 
@@ -277,7 +285,7 @@ func (app *App) Upvote(c *gin.Context) {
 
 	noteIDUint := uint64(note.ID)
 
-	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+	if err := app.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Read existing vote (row-level locking handled by DB serializable isolation)
 		var existing models.Vote
 		err := tx.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&existing).Error
@@ -328,16 +336,18 @@ func (app *App) Upvote(c *gin.Context) {
 		return
 	}
 
-	// Update Redis vote cache (best-effort)
-	voteKey := fmt.Sprintf("votes:%s", noteID)
-	userVoteKey := fmt.Sprintf("%d", userID)
-	// Re-read the current vote state from DB to set cache correctly
-	var currentVote models.Vote
-	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
-		// Vote was removed (toggle-off)
-		app.RDB.HDel(ctx, voteKey, userVoteKey)
-	} else {
-		app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
+	// Update Redis vote cache (best-effort, skip if Redis unavailable)
+	if app.RDB != nil {
+		voteKey := fmt.Sprintf("votes:%s", noteID)
+		userVoteKey := fmt.Sprintf("%d", userID)
+		// Re-read the current vote state from DB to set cache correctly
+		var currentVote models.Vote
+		if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
+			// Vote was removed (toggle-off)
+			app.RDB.HDel(ctx, voteKey, userVoteKey)
+		} else {
+			app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
+		}
 	}
 
 	// Re-read note from DB for accurate vote counts (H5: avoid stale in-memory counts)
@@ -376,7 +386,7 @@ func (app *App) Downvote(c *gin.Context) {
 
 	noteIDUint := uint64(note.ID)
 
-	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+	if err := app.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing models.Vote
 		err := tx.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&existing).Error
 
@@ -425,14 +435,16 @@ func (app *App) Downvote(c *gin.Context) {
 		return
 	}
 
-	// Update Redis vote cache (best-effort)
-	voteKey := fmt.Sprintf("votes:%s", noteID)
-	userVoteKey := fmt.Sprintf("%d", userID)
-	var currentVote models.Vote
-	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
-		app.RDB.HDel(ctx, voteKey, userVoteKey)
-	} else {
-		app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
+	// Update Redis vote cache (best-effort, skip if Redis unavailable)
+	if app.RDB != nil {
+		voteKey := fmt.Sprintf("votes:%s", noteID)
+		userVoteKey := fmt.Sprintf("%d", userID)
+		var currentVote models.Vote
+		if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
+			app.RDB.HDel(ctx, voteKey, userVoteKey)
+		} else {
+			app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
+		}
 	}
 
 	// Re-read note from DB for accurate vote counts (H5: avoid stale in-memory counts)
