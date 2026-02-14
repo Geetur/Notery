@@ -20,6 +20,7 @@ var authLog = helpers.AuthLog
 type AuthRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
+	Username string `json:"username"` // optional on signup, ignored on login
 }
 
 // Signup handles user registration and account creation.
@@ -34,8 +35,15 @@ func (app *App) Signup(c *gin.Context) {
 	}
 	authLog.Log("SIGNUP", "Request validated", "email", authReq.Email)
 
+	// H2: Password strength validation
+	if len(authReq.Password) < 8 {
+		authLog.Log("SIGNUP", "Password too short")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters"})
+		return
+	}
+
 	// Build the user model and hash password
-	user := &models.User{Email: authReq.Email}
+	user := &models.User{Email: authReq.Email, Username: authReq.Username}
 	if err := user.SetPassword(authReq.Password); err != nil {
 		authLog.Log("SIGNUP", "Failed to hash password", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})

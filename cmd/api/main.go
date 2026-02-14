@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -102,9 +107,22 @@ func main() {
 	// feed endpoint (public with optional auth for personalization)
 	api.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
 
+	// ----- Comment Read Endpoints (public, optional auth for user_vote field) -----
+	// FIX #6: Comment listing is publicly readable. Auth is optional so logged-in
+	// users get their vote state attached to each comment.
+	api.GET("/notes/:id/comments",
+		middleware.OptionalAuth(cfg.JWTSecret),
+		app.GetNoteComments)
+	api.GET("/comments/:comment_id",
+		middleware.OptionalAuth(cfg.JWTSecret),
+		app.GetComment)
+
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
 	protected.Use(middleware.RequireAuth(cfg.JWTSecret))
+
+	// Apply per-user write rate limiting to all protected (mutating) routes.
+	protected.Use(middleware.RateLimit(redisClient, middleware.DefaultWriteRateLimit, "write:"))
 	{
 		// note endpoints
 		protected.GET("/notes/:id", app.GetNoteByID)
@@ -140,6 +158,17 @@ func main() {
 		// Get detailed purchase history with pagination
 		protected.GET("/me/purchases/history", app.GetPurchaseHistory)
 
+		// ----- Comment Write Endpoints -----
+		// Create a new comment or reply on a note
+		protected.POST("/notes/:id/comments", app.CreateComment)
+		// Edit own comment
+		protected.PUT("/comments/:comment_id", app.EditComment)
+		// Soft-delete own comment (also allows subnotery admin delete below)
+		protected.DELETE("/comments/:comment_id", app.DeleteComment)
+		// Vote on a comment (+1 upvote, -1 downvote, toggle)
+		protected.POST("/comments/:comment_id/vote", app.VoteComment)
+		// Remove vote from a comment
+		protected.DELETE("/comments/:comment_id/vote", app.RemoveCommentVote)
 		// ----- Order Endpoints -----
 		// Check order status (frontend polls after payment)
 		protected.GET("/orders/:order_id", app.GetOrderStatus)
@@ -170,10 +199,35 @@ func main() {
 		adminProtected.POST("/subnoteries/:subnotery_id/admins", app.AddAdminToSubnotery)
 	}
 
-	// starting the API server
-	log.Println("Server starting on port 8080...")
-	if err := router.Run(":8080"); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// H6/H7: HTTP server with timeouts and graceful shutdown
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
+
+	// Start server in a goroutine so graceful shutdown can proceed
+	go func() {
+		log.Println("Server starting on port 8080...")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal to trigger graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	// Give outstanding requests up to 10 seconds to complete
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
 	log.Println("Server stopped.")
 }

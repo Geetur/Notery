@@ -6,16 +6,13 @@ import (
 	"context"
 	"log"
 
-	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
 // InitRedis initializes a Redis client with configuration from environment variables.
 // It returns the client or an error if the connection test fails.
 func InitRedis() (*redis.Client, error) {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found (ok):", err)
-	}
+	// NOTE: godotenv.Load() is called once in config.Load() at startup.
 
 	client := redis.NewClient(&redis.Options{
 		Addr:     getenv("REDIS_ADDR", "localhost:6379"),

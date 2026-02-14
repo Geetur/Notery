@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -32,6 +33,13 @@ func (app *App) AddToCart(c *gin.Context) {
 	// Extract authenticated user ID
 	userID := helpers.GetUserID(c)
 	cartLog.Log("ADD", "User identified", "userID", userID, "itemID", cartReq.ItemID)
+
+	// Validate item_id is a valid positive integer (M2: prevent injection/invalid data)
+	if _, err := strconv.ParseUint(cartReq.ItemID, 10, 64); err != nil {
+		cartLog.Log("ADD", "Invalid item_id format", "itemID", cartReq.ItemID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid item_id: must be a positive integer"})
+		return
+	}
 
 	// Verify note exists and is approved before adding to cart
 	var note models.Note

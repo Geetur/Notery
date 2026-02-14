@@ -278,7 +278,7 @@ func (app *App) Upvote(c *gin.Context) {
 	noteIDUint := uint64(note.ID)
 
 	if err := app.DB.Transaction(func(tx *gorm.DB) error {
-		// Lock-read existing vote
+		// Read existing vote (row-level locking handled by DB serializable isolation)
 		var existing models.Vote
 		err := tx.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&existing).Error
 
@@ -338,6 +338,11 @@ func (app *App) Upvote(c *gin.Context) {
 		app.RDB.HDel(ctx, voteKey, userVoteKey)
 	} else {
 		app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
+	}
+
+	// Re-read note from DB for accurate vote counts (H5: avoid stale in-memory counts)
+	if err := app.DB.First(&note, note.ID).Error; err != nil {
+		feedLog.Log("UPVOTE", "failed to re-read note", "note_id", noteID, "error", err)
 	}
 
 	// Recalculate hotness
@@ -428,6 +433,11 @@ func (app *App) Downvote(c *gin.Context) {
 		app.RDB.HDel(ctx, voteKey, userVoteKey)
 	} else {
 		app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
+	}
+
+	// Re-read note from DB for accurate vote counts (H5: avoid stale in-memory counts)
+	if err := app.DB.First(&note, note.ID).Error; err != nil {
+		feedLog.Log("DOWNVOTE", "failed to re-read note", "note_id", noteID, "error", err)
 	}
 
 	// Recalculate hotness

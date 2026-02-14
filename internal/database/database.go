@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -40,14 +39,9 @@ func InitDatabase() (*gorm.DB, error) {
 // create returns the database connection pool
 
 func connect() (*gorm.DB, error) {
-	// get our data source name (DSN), with credentials matching that within
-	// the docker compose file. Load environment variables from .env file if it exists
-
-	// disallowing silent failure here. ok in prod; helpful in dev
-
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found (ok):", err)
-	}
+	// Build DSN from environment variables.
+	// NOTE: godotenv.Load() is called once in config.Load() at startup.
+	// No need to reload here.
 
 	// format the DSN string, fetch local environment variables or use defaults
 	// make sure to replace ssl mode to required in production
@@ -70,7 +64,7 @@ func connect() (*gorm.DB, error) {
 // It does NOT delete unused columns to protect data.
 func migrate(db *gorm.DB) error {
 	// First, migrate all models
-	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}); err != nil {
+	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}); err != nil {
 		return err
 	}
 
@@ -84,6 +78,32 @@ func migrate(db *gorm.DB) error {
 		log.Printf("Warning: Could not create unique index on purchases (may already exist): %v", err)
 		// Don't return error - index might already exist
 	}
+
+	// Composite unique index on comment votes to prevent double-voting.
+	// One vote per user per comment, enforced at the DB level.
+	if err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_comment_votes_user_comment
+		ON comment_votes(comment_id, user_id)
+	`).Error; err != nil {
+		log.Printf("Warning: Could not create unique index on comment_votes (may already exist): %v", err)
+	}
+
+	// Partial unique index on usernames — only enforced when username is non-empty.
+	// This allows multiple users to have no username (empty string default)
+	// while ensuring chosen usernames are globally unique.
+	// Drop any old full unique index left from earlier schema versions first.
+	db.Exec(`DROP INDEX IF EXISTS idx_users_username`)
+	if err := db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nonempty
+		ON users(username) WHERE username != ''
+	`).Error; err != nil {
+		log.Printf("Warning: Could not create partial unique index on users.username (may already exist): %v", err)
+	}
+
+	// Backfill materialized paths for comments that don't have one yet.
+	// This is idempotent — only touches rows with empty path.
+	// Uses iterative depth-first: set depth-0 paths first, then depth-1, etc.
+	backfillCommentPaths(db)
 
 	return nil
 }
@@ -104,4 +124,59 @@ func getenvInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// backfillCommentPaths iteratively sets materialized paths for comments that
+// don't have one yet. Processes depth-0 first, then depth-1, etc.
+// This is idempotent and safe to run on every startup — it only updates rows
+// with empty path fields and stops when no more rows need updating.
+func backfillCommentPaths(db *gorm.DB) {
+	// Check if there are any comments without paths
+	var count int64
+	db.Model(&models.Comment{}).Where("path = '' OR path IS NULL").Count(&count)
+	if count == 0 {
+		return
+	}
+	log.Printf("Backfilling materialized paths for %d comments...", count)
+
+	// Process by depth level: depth 0 first, then 1, 2, etc.
+	for depth := 0; depth <= 20; depth++ {
+		var comments []models.Comment
+		query := db.Where("depth = ? AND (path = '' OR path IS NULL)", depth)
+		if err := query.FindInBatches(&comments, 500, func(tx *gorm.DB, batch int) error {
+			for i := range comments {
+				c := &comments[i]
+				var newPath string
+				if c.ParentID == nil {
+					// Top-level comment: /<id>/
+					newPath = fmt.Sprintf("/%d/", c.ID)
+				} else {
+					// Reply: look up parent's path
+					var parent models.Comment
+					if err := db.Select("id, path").First(&parent, *c.ParentID).Error; err != nil {
+						log.Printf("Warning: backfill skip comment %d — parent %d not found: %v", c.ID, *c.ParentID, err)
+						continue
+					}
+					if parent.Path == "" {
+						log.Printf("Warning: backfill skip comment %d — parent %d has empty path", c.ID, *c.ParentID)
+						continue
+					}
+					newPath = fmt.Sprintf("%s%d/", parent.Path, c.ID)
+				}
+				if err := db.Model(c).Update("path", newPath).Error; err != nil {
+					log.Printf("Warning: backfill failed for comment %d: %v", c.ID, err)
+				}
+			}
+			return nil
+		}).Error; err != nil {
+			log.Printf("Warning: backfill error at depth %d: %v", depth, err)
+			break
+		}
+
+		if len(comments) == 0 {
+			break // No more comments at this depth or beyond
+		}
+	}
+
+	log.Println("Materialized path backfill complete.")
 }

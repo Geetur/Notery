@@ -1,5 +1,10 @@
-# test-pdf-workflow.ps1
-# Tests the complete PDF upload, approval, purchase, and viewing workflow
+# PDF Content Workflow Test Script
+# Run: .\scripts\test-pdf-workflow.ps1
+#
+# Tests the complete PDF upload, approval, purchase, and viewing workflow.
+# Updated to include username on signup.
+
+# need to add {"error":"Title, SubnoteryName, Author, and Price are required"}
 
 $BaseUrl = "http://localhost:8080/api/v1"
 
@@ -16,21 +21,21 @@ function Test-Endpoint {
         [object]$Body = $null,
         [string]$Description
     )
-    
+
     Write-Host "`n>> $Description" -ForegroundColor Yellow
     Write-Host "   $Method $Url" -ForegroundColor Gray
-    
+
     try {
         $params = @{
-            Method = $Method
-            Uri = $Url
-            Headers = $Headers
+            Method      = $Method
+            Uri         = $Url
+            Headers     = $Headers
             ContentType = "application/json"
         }
         if ($Body) {
             $params.Body = ($Body | ConvertTo-Json)
         }
-        
+
         $response = Invoke-RestMethod @params
         Write-Host "   SUCCESS" -ForegroundColor Green
         return $response
@@ -44,19 +49,19 @@ function Test-Endpoint {
     }
 }
 
-# Generate unique emails
+# Generate unique identifiers
 $timestamp = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
 $creatorEmail = "creator_$timestamp@test.com"
-$buyerEmail = "buyer_$timestamp@test.com"
+$buyerEmail   = "buyer_$timestamp@test.com"
 
 # ============================================
 # STEP 1: Create test users
 # ============================================
 Write-Host "`n`n=== STEP 1: Create Test Users ===" -ForegroundColor Cyan
 
-# Create note creator
 $creatorSignup = Test-Endpoint -Method "POST" -Url "$BaseUrl/signup" -Body @{
-    email = $creatorEmail
+    email    = $creatorEmail
+    username = "creator$timestamp"
     password = "Test123!"
 } -Description "Creating note creator user"
 
@@ -65,22 +70,21 @@ if (-not $creatorSignup) {
     exit 1
 }
 
-# Login as creator to get token
 $creatorLogin = Test-Endpoint -Method "POST" -Url "$BaseUrl/login" -Body @{
-    email = $creatorEmail
+    email    = $creatorEmail
     password = "Test123!"
 } -Description "Logging in as creator"
 
 if (-not $creatorLogin) {
-    Write-Host "Failed to login creator user. Exiting." -ForegroundColor Red
+    Write-Host "Failed to login creator. Exiting." -ForegroundColor Red
     exit 1
 }
 $creatorToken = $creatorLogin.token
 Write-Host "   Creator token: $($creatorToken.Substring(0,20))..." -ForegroundColor Gray
 
-# Create buyer
 $buyerSignup = Test-Endpoint -Method "POST" -Url "$BaseUrl/signup" -Body @{
-    email = $buyerEmail
+    email    = $buyerEmail
+    username = "buyer$timestamp"
     password = "Test123!"
 } -Description "Creating buyer user"
 
@@ -89,14 +93,13 @@ if (-not $buyerSignup) {
     exit 1
 }
 
-# Login as buyer to get token
 $buyerLogin = Test-Endpoint -Method "POST" -Url "$BaseUrl/login" -Body @{
-    email = $buyerEmail
+    email    = $buyerEmail
     password = "Test123!"
 } -Description "Logging in as buyer"
 
 if (-not $buyerLogin) {
-    Write-Host "Failed to login buyer user. Exiting." -ForegroundColor Red
+    Write-Host "Failed to login buyer. Exiting." -ForegroundColor Red
     exit 1
 }
 $buyerToken = $buyerLogin.token
@@ -110,9 +113,8 @@ Write-Host "`n`n=== STEP 2: Create Note ===" -ForegroundColor Cyan
 $noteResponse = Test-Endpoint -Method "POST" -Url "$BaseUrl/notes" -Headers @{
     Authorization = "Bearer $creatorToken"
 } -Body @{
-    title = "Test Note with PDF"
-    description = "A test note for PDF workflow"
-    price = 9.99
+    title          = "Test Note with PDF"
+    price          = 999
     subnotery_name = "TestSubnotery_$timestamp"
 } -Description "Creating a new note"
 
@@ -129,7 +131,6 @@ Write-Host "   Status: $($noteResponse.Status)" -ForegroundColor Gray
 # ============================================
 Write-Host "`n`n=== STEP 3: Upload PDF ===" -ForegroundColor Cyan
 
-# Create a test PDF file
 $testPdfPath = "$env:TEMP\test-note-$timestamp.pdf"
 $pdfContent = @"
 %PDF-1.4
@@ -168,7 +169,6 @@ startxref
 [System.IO.File]::WriteAllText($testPdfPath, $pdfContent)
 Write-Host "   Created test PDF at: $testPdfPath" -ForegroundColor Gray
 
-# Upload the PDF using curl (more reliable for multipart)
 Write-Host "`n>> Uploading PDF to note" -ForegroundColor Yellow
 Write-Host "   POST $BaseUrl/notes/$noteId/content" -ForegroundColor Gray
 
@@ -176,9 +176,9 @@ try {
     $curlOutput = curl.exe -s -X POST "$BaseUrl/notes/$noteId/content" `
         -H "Authorization: Bearer $creatorToken" `
         -F "pdf=@$testPdfPath;type=application/pdf"
-    
+
     $uploadResponse = $curlOutput | ConvertFrom-Json
-    
+
     if ($uploadResponse.error) {
         Write-Host "   FAILED: $($uploadResponse.error)" -ForegroundColor Red
     } else {
@@ -191,7 +191,6 @@ catch {
     Write-Host "   curl output: $curlOutput" -ForegroundColor Red
 }
 
-# Clean up temp file
 Remove-Item $testPdfPath -ErrorAction SilentlyContinue
 
 # ============================================
@@ -209,7 +208,7 @@ if ($noteCheck) {
 }
 
 # ============================================
-# STEP 5: Try to view PDF as buyer (should fail - not purchased)
+# STEP 5: Buyer tries to view PDF (should fail — not purchased)
 # ============================================
 Write-Host "`n`n=== STEP 5: Buyer Tries to View (Should Fail) ===" -ForegroundColor Cyan
 
@@ -217,10 +216,10 @@ Write-Host "`n>> Buyer attempting to view PDF without purchase" -ForegroundColor
 Write-Host "   GET $BaseUrl/notes/$noteId/content" -ForegroundColor Gray
 
 try {
-    $pdfContent = Invoke-RestMethod -Uri "$BaseUrl/notes/$noteId/content" `
+    Invoke-RestMethod -Uri "$BaseUrl/notes/$noteId/content" `
         -Method GET `
         -Headers @{ Authorization = "Bearer $buyerToken" }
-    Write-Host "   UNEXPECTED SUCCESS - This should have failed!" -ForegroundColor Red
+    Write-Host "   UNEXPECTED SUCCESS - Should have failed!" -ForegroundColor Red
 }
 catch {
     if ($_.Exception.Response.StatusCode.value__ -eq 403) {
@@ -235,9 +234,6 @@ catch {
 # ============================================
 Write-Host "`n`n=== STEP 6: Admin Approves Note ===" -ForegroundColor Cyan
 
-# The creator is automatically made admin of a new subnotery, so they can approve
-# (In production, you might want to prevent self-approval)
-
 $approveResponse = Test-Endpoint -Method "PATCH" -Url "$BaseUrl/notes/$noteId/approve" -Headers @{
     Authorization = "Bearer $creatorToken"
 } -Description "Creator (as subnotery admin) approving the note"
@@ -246,7 +242,6 @@ if ($approveResponse) {
     Write-Host "   Note approved successfully!" -ForegroundColor Gray
 }
 
-# Verify note is now approved
 $noteAfterApproval = Test-Endpoint -Method "GET" -Url "$BaseUrl/notes/$noteId" -Headers @{
     Authorization = "Bearer $creatorToken"
 } -Description "Checking note status after approval"
@@ -294,15 +289,15 @@ try {
     $webRequest = [System.Net.WebRequest]::Create("$BaseUrl/notes/$noteId/content")
     $webRequest.Method = "GET"
     $webRequest.Headers.Add("Authorization", "Bearer $buyerToken")
-    
+
     $response = $webRequest.GetResponse()
     $contentType = $response.ContentType
     $contentLength = $response.ContentLength
-    
+
     Write-Host "   SUCCESS" -ForegroundColor Green
     Write-Host "   Content-Type: $contentType" -ForegroundColor Gray
     Write-Host "   Content-Length: $contentLength bytes" -ForegroundColor Gray
-    
+
     $response.Close()
 }
 catch {
@@ -334,7 +329,7 @@ try {
     $webRequest = [System.Net.WebRequest]::Create("$BaseUrl/notes/$noteId/content")
     $webRequest.Method = "GET"
     $webRequest.Headers.Add("Authorization", "Bearer $creatorToken")
-    
+
     $response = $webRequest.GetResponse()
     Write-Host "   SUCCESS - Creator can view their own PDF" -ForegroundColor Green
     $response.Close()
@@ -352,12 +347,11 @@ Write-Host "====================================" -ForegroundColor Cyan
 Write-Host @"
 
 Summary:
-- Created note creator and buyer accounts
+- Created note creator and buyer accounts (with usernames)
 - Created a note with PDF upload
 - Verified access control (buyer blocked without purchase)
+- Admin approved note (requires PDF)
 - Purchased note
 - Verified buyer can view PDF after purchase
 - Creator can always view their own PDF
-
-Note: Admin approval tests require manual admin setup.
 "@ -ForegroundColor Gray

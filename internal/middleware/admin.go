@@ -94,24 +94,12 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 			}
 		}
 
-		// If no subnotery context, check if user is admin of any subnotery
+		// If no subnotery context could be resolved, deny access.
+		// Subnotery admins must always operate within a resolved subnotery scope.
+		// Without a specific subnotery to check against, we cannot verify authorization.
 		if subnoteryID == 0 {
-			var count int64
-			err := db.Table("user_admins").
-				Where("user_id = ?", user.ID).
-				Count(&count).Error
-			if err != nil {
-				mwLog.Log("ADMIN", "Failed to verify admin status", "error", err)
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify admin status"})
-				return
-			}
-			if count == 0 {
-				mwLog.Log("ADMIN", "User is not admin of any subnotery", "userID", user.ID)
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
-				return
-			}
-			mwLog.Log("ADMIN", "Admin privileges verified (any subnotery)", "userID", user.ID)
-			c.Next()
+			mwLog.Log("ADMIN", "No subnotery context resolved, denying access", "userID", user.ID)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Forbidden: could not determine subnotery scope"})
 			return
 		}
 
@@ -132,6 +120,7 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		mwLog.Log("ADMIN", "Subnotery admin verified", "userID", user.ID, "subnoteryID", subnoteryID)
+		c.Set("admin_subnotery_id", subnoteryID)
 		c.Next()
 	}
 }

@@ -6,13 +6,15 @@ Notery is a marketplace for notes — a RESTful API built with Go that allows us
 
 ## Features
 
-- **User Authentication** — JWT-based signup/login; secret loaded once at startup
+- **User Authentication** — JWT-based signup/login; secret loaded once at startup; optional public `username` display name
 - **Note Management** — Create, view, approve, reject, and delete notes with typed status constants
 - **PDF Content** — Secure upload, proxy-only viewing, and access-controlled streaming via Cloudflare R2
 - **Subnoteries** — Community-based note organisation with scoped admin controls
 - **Shopping Cart** — Redis-backed cart system for purchasing notes
 - **Purchases & Orders** — Order state machine (pending → paid → fulfilled), idempotency-key support, int64 cent-based prices
 - **Voting & Hot Feed** — Reddit-style hotness algorithm; DB-authoritative votes table with Redis cache
+- **Comment System** — Threaded Reddit-style comments with Wilson score ranking, soft-delete, write-depth limits, and per-comment voting
+- **Rate Limiting** — Redis-backed sliding-window per-user rate limiting on all write endpoints (60 req/min)
 - **Full-Text Search** — Meilisearch integration for approved notes
 - **Role-Based Access** — Global admins, subnotery-scoped admins, creators, and purchasers
 
@@ -57,28 +59,28 @@ graph LR
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant R as Router
-    participant A as Auth Middleware
+    participant CL as Client
+    participant RT as Router
+    participant AU as Auth Middleware
     participant AD as Admin Middleware
-    participant H as Handler
+    participant HL as Handler
     participant DB as PostgreSQL
     participant RD as Redis
-    participant S as Meilisearch
-    participant R2 as Cloudflare R2
+    participant MS as Meilisearch
+    participant CF as Cloudflare R2
 
-    C->>R: HTTP Request
-    R->>A: RequireAuth (JWT validated once via pre-loaded secret)
-    A->>H: user_id set in context
+    CL->>RT: HTTP Request
+    RT->>AU: RequireAuth (JWT validated once via pre-loaded secret)
+    AU->>HL: user_id set in context
     alt Admin Route
-        A->>AD: RequireAdmin (scope resolved from :subnotery_id or :id)
-        AD->>H: admin_type set in context
+        AU->>AD: RequireAdmin (scope resolved from :subnotery_id or :id)
+        AD->>HL: admin_type set in context
     end
-    H->>DB: Query / Transact
-    H->>RD: Cache read/write (votes, cart, feed)
-    H->>S: Index / Search (approved notes)
-    H->>R2: Upload / Stream PDF
-    H->>C: JSON or PDF stream
+    HL->>DB: Query / Transact
+    HL->>RD: Cache read/write (votes, cart, feed)
+    HL->>MS: Index / Search (approved notes)
+    HL->>CF: Upload / Stream PDF
+    HL->>CL: JSON or PDF stream
 ```
 
 ## Project Structure
@@ -100,6 +102,7 @@ Notery/
 │   │   ├── app.go               # Unified App struct (DB, Redis, R2, Meili, JWT, Payment)
 │   │   ├── auth.go              # Signup / Login
 │   │   ├── cart.go              # Cart CRUD (Redis set)
+│   │   ├── comment.go           # Threaded comments, voting, tree assembly
 │   │   ├── content.go           # PDF upload / view / delete + access control
 │   │   ├── feed.go              # Hot feed, voting (DB tx + Redis cache)
 │   │   ├── note.go              # Note CRUD, approve/reject
@@ -129,7 +132,10 @@ Notery/
 ├── docs/
 │   ├── PAYMENT_SYSTEM.md        # Detailed payment architecture docs
 │   └── PDF_CONTENT_SYSTEM.md    # Detailed PDF architecture docs
-├── scripts/                     # Dev/test scripts
+├── scripts/
+│   ├── test-hot-feed.ps1        # Hot feed end-to-end test
+│   ├── test-pdf-workflow.ps1    # PDF upload/purchase workflow test
+│   └── test-comments.ps1        # Comment system end-to-end test
 ├── docker-compose.yml
 ├── go.mod
 └── README.md
@@ -207,15 +213,17 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | Method | Endpoint         | Description        |
 | ------ | ---------------- | ------------------ |
 | GET    | `/health`        | Health check       |
-| POST   | `/api/v1/signup` | Register new user  |
+| POST   | `/api/v1/signup` | Register (`email`, `password`, optional `username`) |
 | POST   | `/api/v1/login`  | Authenticate user  |
 | POST   | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
 
 ### Public (Optional Auth)
 
-| Method | Endpoint             | Description                              |
-| ------ | -------------------- | ---------------------------------------- |
-| GET    | `/api/v1/feed/hot`   | Hot feed (personalised if authenticated) |
+| Method | Endpoint                           | Description                                                  |
+| ------ | ---------------------------------- | ------------------------------------------------------------ |
+| GET    | `/api/v1/feed/hot`                 | Hot feed (personalised if authenticated)                     |
+| GET    | `/api/v1/notes/:id/comments`       | Threaded comment tree (Wilson ranked; user_vote if logged in) |
+| GET    | `/api/v1/comments/:comment_id`     | Single comment subtree ("Continue this thread")              |
 
 ### Protected (Requires JWT)
 
@@ -240,6 +248,16 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | GET    | `/api/v1/me/purchases/history`      | Paginated purchase history         |
 | POST   | `/api/v1/subnoteries/:id/join`      | Join a subnotery                   |
 
+### Comment Write Endpoints (Requires JWT + Rate Limited)
+
+| Method | Endpoint                                | Description                                   |
+| ------ | --------------------------------------- | --------------------------------------------- |
+| POST   | `/api/v1/notes/:id/comments`            | Create top-level comment or reply              |
+| PUT    | `/api/v1/comments/:comment_id`          | Edit own comment                               |
+| DELETE | `/api/v1/comments/:comment_id`          | Soft-delete own comment (admin: any in scope)  |
+| POST   | `/api/v1/comments/:comment_id/vote`     | Vote on comment (+1/-1, toggle, switch)        |
+| DELETE | `/api/v1/comments/:comment_id/vote`     | Remove vote from comment                       |
+
 ### Admin Only (Global or Subnotery-Scoped)
 
 | Method | Endpoint                                   | Description              |
@@ -259,7 +277,9 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 | Model       | Key Fields                                                         |
 | ----------- | ------------------------------------------------------------------ |
 | `Note`      | `ID`, `CreatorID`, `Title`, `Author`, `Status` (enum), `Price` (int64 cents), `SubnoteryID`, `HasPDF`, `Upvotes`, `Downvotes`, `Hotness` |
-| `User`      | `ID`, `Email`, `Hash` (bcrypt), `IsGlobalAdmin`, `AdminOf` (m2m)  |
+| `User`      | `ID`, `Email`, `Username`, `Hash` (bcrypt), `IsGlobalAdmin`, `AdminOf` (m2m)  |
+| `Comment`   | `ID`, `NoteID`, `UserID`, `ParentID`, `Body`, `Upvotes`, `Downvotes`, `Score` (Wilson), `Depth`, `IsDeleted`, `EditedAt` |
+| `CommentVote` | `ID`, `CommentID`, `UserID` (composite unique), `Value` (+1/-1) |
 | `Purchase`  | `ID`, `UserID`, `NoteID`, `PricePaid` (int64 cents), `PurchasedAt`, `OrderID` |
 | `Order`     | `ID`, `UserID`, `Status` (enum), `TotalCents`, `IdempotencyKey` (per-user unique), `PaymentIntentID`, `PaidAt`, `FailedAt`, `FailureReason`, `Items[]` |
 | `OrderItem` | `ID`, `OrderID`, `NoteID`, `PriceCents`                           |
@@ -269,9 +289,10 @@ STRIPE_WEBHOOK_SECRET=whsec_xxx
 ### Status Enums
 
 ```
-NoteStatus:   StatusPending | StatusApproved | StatusRejected
-OrderStatus:  OrderPending  | OrderPaid      | OrderFulfilled | OrderFailed | OrderRefunded
-VoteDirection: VoteUp       | VoteDown
+NoteStatus:       StatusPending  | StatusApproved   | StatusRejected
+OrderStatus:      OrderPending   | OrderPaid        | OrderFulfilled | OrderFailed | OrderRefunded
+VoteDirection:    VoteUp         | VoteDown
+CommentSortOrder: best           | new              | top            | controversial | old
 ```
 
 ## Design Decisions
@@ -298,7 +319,24 @@ Purchases are backed by an `orders` table with a formal state machine (`pending 
 
 ### Subnotery-Scoped Admin Checks
 
-The admin middleware resolves a subnotery ID from either `:subnotery_id` or by looking up the note's `subnotery_id` from `:id`. The scoped check ensures a subnotery admin of community A cannot perform admin actions on community B.
+The admin middleware resolves a subnotery ID from either `:subnotery_id` or by looking up the note's `subnotery_id` from `:id`. The scoped check ensures a subnotery admin of community A cannot perform admin actions on community B. When no subnotery context can be resolved, non-global admins are denied rather than granted fallback access.
+
+### Comment System
+
+Comments form a tree rooted at notes, assembled in O(n) time+space per request.
+
+- **Ranking:** Wilson score lower bound (Reddit's "Best") — no time decay, quality always wins.
+- **Voting:** Atomic vote updates with `SELECT … FOR UPDATE` to prevent counter drift during concurrent votes.
+- **Soft-delete:** Deleted comments display `[deleted]` while preserving the tree so child replies remain visible.
+- **Write depth cap:** `MaxWriteDepth = 15` prevents DoS via pathologically deep chains.
+- **Read depth cap:** `MaxTreeDepth = 10` with `has_more_replies` flag for "Continue this thread →".
+- **Privacy:** Comments display `username` (public handle), never email.
+- **Public reads:** Comment listing is publicly readable (no auth required); authenticated users get `user_vote` attached.
+- **Truncation flag:** Response includes `truncated: true` when the hard cap (2 000 comments) is exceeded.
+
+### Rate Limiting
+
+All write (mutating) endpoints are rate-limited via a Redis-backed sliding-window counter: 60 requests per minute per authenticated user (per IP for anonymous). The middleware sets standard `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers. If Redis is down, the limiter fails open.
 
 ### PDF Upload Authorization
 
@@ -307,7 +345,21 @@ Only the note's creator or an admin (subnotery or global) can upload PDF content
 ## Testing
 
 ```bash
+# Unit tests
 go test ./...
+```
+
+### Integration test scripts (requires running server + infrastructure)
+
+```powershell
+# Hot feed pipeline (signup, note, PDF, approve, vote, feed)
+.\scripts\test-hot-feed.ps1
+
+# PDF upload, purchase, and viewing workflow
+.\scripts\test-pdf-workflow.ps1
+
+# Full comment system (threads, votes, depth limits, admin delete, rate limiting)
+.\scripts\test-comments.ps1
 ```
 
 ## License
