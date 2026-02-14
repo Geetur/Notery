@@ -19,6 +19,24 @@ type Config struct {
 
 	// StripeWebhookSecret is the signing secret for verifying Stripe webhook signatures (whsec_xxx).
 	StripeWebhookSecret string
+
+	// BaseURL is the public-facing API URL used for email verification links.
+	BaseURL string
+
+	// SMTPHost is the SMTP server host for sending emails.
+	SMTPHost string
+
+	// SMTPPort is the SMTP server port.
+	SMTPPort string
+
+	// SMTPUser is the SMTP authentication username.
+	SMTPUser string
+
+	// SMTPPass is the SMTP authentication password.
+	SMTPPass string
+
+	// SMTPFrom is the "From" address for outgoing emails.
+	SMTPFrom string
 }
 
 // Load reads the .env file (if present) and returns a populated Config.
@@ -32,6 +50,12 @@ func Load() *Config {
 		JWTSecret:           os.Getenv("JWT_SECRET"),
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		BaseURL:             getenv("BASE_URL", "http://localhost:8080"),
+		SMTPHost:            os.Getenv("SMTP_HOST"),
+		SMTPPort:            getenv("SMTP_PORT", "587"),
+		SMTPUser:            os.Getenv("SMTP_USER"),
+		SMTPPass:            os.Getenv("SMTP_PASS"),
+		SMTPFrom:            getenv("SMTP_FROM", "noreply@notery.app"),
 	}
 
 	if cfg.JWTSecret == "" {
@@ -42,4 +66,12 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+// getenv returns the value of an environment variable or a default if not set.
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

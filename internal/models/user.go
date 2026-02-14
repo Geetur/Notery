@@ -8,6 +8,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// BcryptCost controls the bcrypt work factor. Tests can set this to bcrypt.MinCost
+// for speed. Production uses bcrypt.DefaultCost.
+var BcryptCost = bcrypt.DefaultCost
+
 // User represents an authenticated user with optional admin privileges.
 type User struct {
 	ID            uint        `json:"id" gorm:"primaryKey"`
@@ -17,6 +21,9 @@ type User struct {
 	Hash          string      `json:"-" gorm:"not null"`             // bcrypt hash, never exposed
 	AdminOf       []Subnotery `json:"admin_of" gorm:"many2many:user_admins;"`
 	IsGlobalAdmin bool        `json:"is_global_admin" gorm:"default:false"`
+
+	// ----- Account Security Fields -----
+	EmailVerified bool `json:"-" gorm:"default:false"` // true after email verification flow
 
 	// ----- Profile Fields -----
 	DisplayNameField string          `json:"display_name" gorm:"column:display_name;default:''"`
@@ -87,6 +94,7 @@ func (u *User) SelfProfile() map[string]interface{} {
 	return map[string]interface{}{
 		"id":                 u.ID,
 		"email":              u.Email,
+		"email_verified":     u.EmailVerified,
 		"username":           u.Username,
 		"display_name":       u.DisplayNameField,
 		"bio":                u.Bio,
@@ -100,7 +108,7 @@ func (u *User) SelfProfile() map[string]interface{} {
 
 // SetPassword hashes the given password and stores it in the Hash field.
 func (u *User) SetPassword(password string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {
 		return err
 	}

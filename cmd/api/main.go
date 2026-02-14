@@ -14,6 +14,7 @@ import (
 
 	"github.com/Geetur/Notery/internal/config"
 	"github.com/Geetur/Notery/internal/database"
+	"github.com/Geetur/Notery/internal/email"
 	"github.com/Geetur/Notery/internal/handlers"
 	"github.com/Geetur/Notery/internal/middleware"
 	"github.com/Geetur/Notery/internal/payment"
@@ -74,6 +75,10 @@ func main() {
 	}
 	// ------ initializing payment service ---------------------------------------------------
 
+	// ------ initializing email service -----------------------------------------------------
+	mailer := email.NewMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+	// ------ initializing email service -----------------------------------------------------
+
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
@@ -98,6 +103,8 @@ func main() {
 		SearchIndex: meiliIndex,
 		JWTSecret:   cfg.JWTSecret,
 		Payment:     paymentService,
+		Mailer:      mailer,
+		Config:      cfg,
 	})
 
 	// health check endpoint
@@ -109,28 +116,49 @@ func main() {
 	})
 
 	api := router.Group("/api/v1")
-	// auth endpoints (public)
-	api.POST("/signup", app.Signup)
-	api.POST("/login", app.Login)
+
+	// ===== AUTH RATE LIMITING =====
+	// Auth endpoints get strict rate limiting (5 req/min per IP) to prevent brute-force.
+	authRateLimit := middleware.RateLimitConfig{MaxRequests: 5, Window: 1 * time.Minute}
+
+	// Public read endpoints get moderate rate limiting (120 req/min per IP).
+	publicReadRateLimit := middleware.RateLimitConfig{MaxRequests: 120, Window: 1 * time.Minute}
+
+	// auth endpoints (public, rate-limited)
+	authGroup := api.Group("")
+	if redisClient != nil {
+		authGroup.Use(middleware.RateLimit(redisClient, authRateLimit, "auth:"))
+	}
+	authGroup.POST("/signup", app.Signup)
+	authGroup.POST("/login", app.Login)
+	authGroup.POST("/auth/refresh", app.RefreshToken)
+	authGroup.POST("/auth/logout", app.Logout)
+	authGroup.GET("/auth/verify-email", app.VerifyEmail)
 
 	// Stripe webhook (public — secured via Stripe signature verification, not JWT)
 	api.POST("/webhooks/stripe", app.HandleStripeWebhook)
 
-	// feed endpoint (public with optional auth for personalization)
-	api.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
+	// ===== PUBLIC READ ENDPOINTS (rate-limited) =====
+	publicRead := api.Group("")
+	if redisClient != nil {
+		publicRead.Use(middleware.RateLimit(redisClient, publicReadRateLimit, "pub:"))
+	}
 
-	// ----- Comment Read Endpoints (public, optional auth for user_vote field) -----
-	// FIX #6: Comment listing is publicly readable. Auth is optional so logged-in
-	// users get their vote state attached to each comment.
-	api.GET("/notes/:id/comments",
+	// feed endpoint (public with optional auth for personalization)
+	publicRead.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
+
+	// Comment Read Endpoints (public, optional auth for user_vote field)
+	publicRead.GET("/notes/:id/comments",
 		middleware.OptionalAuth(cfg.JWTSecret),
 		app.GetNoteComments)
-	api.GET("/comments/:comment_id",
+	publicRead.GET("/comments/:comment_id",
 		middleware.OptionalAuth(cfg.JWTSecret),
 		app.GetComment)
 
-	// ----- Public User Profile Read -----
-	api.GET("/users/:id/profile", app.GetUserProfile)
+	// Public User Profile Read
+	publicRead.GET("/users/:id/profile", app.GetUserProfile)
+	// Public avatar proxy
+	publicRead.GET("/avatars/:user_id", app.GetAvatar)
 
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
@@ -178,6 +206,16 @@ func main() {
 		protected.GET("/me/profile", app.GetMyProfile)
 		// Update own profile (partial updates)
 		protected.PATCH("/me/profile", app.UpdateMyProfile)
+		// Upload avatar (multipart/form-data, max 5MB, JPEG/PNG/WebP/GIF)
+		protected.POST("/me/avatar", app.UploadAvatar)
+		// Delete avatar
+		protected.DELETE("/me/avatar", app.DeleteAvatar)
+
+		// ----- Session Management Endpoints -----
+		// Revoke all refresh tokens (logout everywhere)
+		protected.POST("/auth/logout-all", app.LogoutAll)
+		// Resend email verification
+		protected.POST("/auth/resend-verification", app.ResendVerification)
 
 		// ----- Comment Write Endpoints -----
 		// Create a new comment or reply on a note

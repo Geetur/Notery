@@ -7,7 +7,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
+	"github.com/Geetur/Notery/internal/config"
 	"github.com/Geetur/Notery/internal/database"
+	"github.com/Geetur/Notery/internal/email"
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/payment"
 )
@@ -38,6 +40,13 @@ type App struct {
 	// Payment is the payment processing service (e.g., Stripe).
 	// When nil, purchases auto-fulfil without payment (development mode).
 	Payment payment.Service
+
+	// Mailer is the email sending service.
+	// Uses SMTP in production, LogMailer in dev, MockMailer in tests.
+	Mailer email.Mailer
+
+	// Config holds application configuration (base URL, etc.)
+	Config *config.Config
 }
 
 // AppConfig holds the configuration options for creating an App instance.
@@ -49,6 +58,8 @@ type AppConfig struct {
 	SearchIndex string
 	JWTSecret   string
 	Payment     payment.Service
+	Mailer      email.Mailer
+	Config      *config.Config
 }
 
 // NewApp creates and returns a new App instance with the given configuration.
@@ -62,8 +73,10 @@ func NewApp(cfg AppConfig) *App {
 		SearchIndex: cfg.SearchIndex,
 		JWTSecret:   cfg.JWTSecret,
 		Payment:     cfg.Payment,
+		Mailer:      cfg.Mailer,
+		Config:      cfg.Config,
 	}
 
-	appLog.Log("INIT", "App initialized", "hasDB", cfg.DB != nil, "hasRedis", cfg.Redis != nil, "hasR2", cfg.R2 != nil, "hasMeili", cfg.Meilisearch != nil, "hasJWT", cfg.JWTSecret != "", "hasPayment", cfg.Payment != nil)
+	appLog.Log("INIT", "App initialized", "hasDB", cfg.DB != nil, "hasRedis", cfg.Redis != nil, "hasR2", cfg.R2 != nil, "hasMeili", cfg.Meilisearch != nil, "hasJWT", cfg.JWTSecret != "", "hasPayment", cfg.Payment != nil, "hasMailer", cfg.Mailer != nil)
 	return app
 }
