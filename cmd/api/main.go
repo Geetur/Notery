@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"github.com/Geetur/Notery/internal/config"
@@ -77,6 +78,17 @@ func main() {
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
+	// CORS middleware — allow frontend origins during development and production.
+	// Tighten AllowOrigins before production deploy.
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5173"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	// Initialize the unified App handler with all dependencies
 	app := handlers.NewApp(handlers.AppConfig{
 		DB:          db,
@@ -116,6 +128,9 @@ func main() {
 	api.GET("/comments/:comment_id",
 		middleware.OptionalAuth(cfg.JWTSecret),
 		app.GetComment)
+
+	// ----- Public User Profile Read -----
+	api.GET("/users/:id/profile", app.GetUserProfile)
 
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")
@@ -157,6 +172,12 @@ func main() {
 		protected.GET("/me/purchases", app.GetMyPurchases)
 		// Get detailed purchase history with pagination
 		protected.GET("/me/purchases/history", app.GetPurchaseHistory)
+
+		// ----- User Profile Endpoints -----
+		// Get own full profile (authenticated self)
+		protected.GET("/me/profile", app.GetMyProfile)
+		// Update own profile (partial updates)
+		protected.PATCH("/me/profile", app.UpdateMyProfile)
 
 		// ----- Comment Write Endpoints -----
 		// Create a new comment or reply on a note

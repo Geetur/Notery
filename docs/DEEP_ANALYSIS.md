@@ -1,10 +1,5 @@
 # Notery Deep Analysis — Architecture, Risk Register, Patch Plan & Roadmap
 
-**Date:** 2026-02-13  
-**Analyst:** Staff+ Go Engineer (AI)  
-**Scope:** Full codebase — `cmd/`, `internal/`, `docs/`, `scripts/`
-
----
 
 ## A) Architecture Summary
 

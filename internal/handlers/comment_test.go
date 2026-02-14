@@ -23,10 +23,16 @@ func init() { gin.SetMode(gin.TestMode) }
 // testApp creates an App backed by an in-memory SQLite database with all tables migrated.
 func testApp(t *testing.T) *App {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	// Use a unique shared-cache in-memory DB per test to allow concurrent goroutine access
+	// while keeping test isolation. Each test gets its own named in-memory DB.
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
+	// Enable WAL mode + busy timeout for better concurrent read/write support.
+	db.Exec("PRAGMA journal_mode=WAL")
+	db.Exec("PRAGMA busy_timeout=5000")
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.Note{},
