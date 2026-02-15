@@ -5,6 +5,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -19,6 +20,10 @@ type Config struct {
 
 	// StripeWebhookSecret is the signing secret for verifying Stripe webhook signatures (whsec_xxx).
 	StripeWebhookSecret string
+
+	// CORSOrigins is the list of allowed origins for cross-origin requests.
+	// Loaded from CORS_ORIGINS env var (comma-separated). Defaults to localhost dev ports.
+	CORSOrigins []string
 }
 
 // Load reads the .env file (if present) and returns a populated Config.
@@ -32,6 +37,7 @@ func Load() *Config {
 		JWTSecret:           os.Getenv("JWT_SECRET"),
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		CORSOrigins:         parseCORSOrigins(os.Getenv("CORS_ORIGINS")),
 	}
 
 	if cfg.JWTSecret == "" {
@@ -42,4 +48,23 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+// parseCORSOrigins splits a comma-separated string of origins into a slice.
+// Defaults to localhost:3000 and localhost:5173 if empty.
+func parseCORSOrigins(raw string) []string {
+	if raw == "" {
+		return []string{"http://localhost:3000", "http://localhost:5173"}
+	}
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	if len(origins) == 0 {
+		return []string{"http://localhost:3000", "http://localhost:5173"}
+	}
+	return origins
 }

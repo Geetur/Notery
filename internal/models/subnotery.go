@@ -1,4 +1,4 @@
-// Package models defines the domain entities and their database mappings.
+// subnotery.go — Subnotery model: community containers for notes.
 package models
 
 import (

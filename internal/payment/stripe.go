@@ -1,3 +1,4 @@
+// stripe.go — Stripe payment provider implementation.
 package payment
 
 import (

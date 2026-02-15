@@ -1,4 +1,4 @@
-// Package handlers/content.go contains HTTP handlers for PDF content operations.
+// content.go — HTTP handlers for PDF content operations (upload, view, access control).
 // This file manages all PDF-related operations: upload, viewing, and access control.
 //
 // SECURITY ARCHITECTURE:
@@ -368,44 +368,6 @@ func (app *App) AdminPreviewPDF(c *gin.Context) {
 	// The actual access control is in GetNotePDFContent
 	// This endpoint just provides clearer semantics for admin UIs
 	app.GetNotePDFContent(c)
-}
-
-// GetMyPurchases returns all notes purchased by the authenticated user.
-//
-// This is used to show the "My Purchased Notes" section in the user's account.
-//
-// Response: JSON array of notes with purchase info
-//
-// Route: GET /api/v1/me/purchases
-func (app *App) GetMyPurchases(c *gin.Context) {
-	userID := helpers.GetUserID(c)
-	contentLog.Log("MY_PURCHASES", "fetching", "user_id", userID)
-
-	// Fetch purchases with note details
-	type PurchasedNote struct {
-		models.Note
-		PricePaid   int64     `json:"price_paid"`
-		PurchasedAt time.Time `json:"purchased_at"`
-	}
-
-	var purchasedNotes []PurchasedNote
-
-	// Join purchases with notes to get full note info
-	err := app.DB.Table("purchases").
-		Select("notes.*, purchases.price_paid, purchases.purchased_at").
-		Joins("JOIN notes ON notes.id = purchases.note_id").
-		Where("purchases.user_id = ?", userID).
-		Order("purchases.purchased_at DESC").
-		Scan(&purchasedNotes).Error
-
-	if err != nil {
-		contentLog.Log("MY_PURCHASES", "database error", "user_id", userID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch purchases"})
-		return
-	}
-
-	contentLog.Log("MY_PURCHASES", "success", "user_id", userID, "count", len(purchasedNotes))
-	c.JSON(http.StatusOK, gin.H{"purchases": purchasedNotes})
 }
 
 // DeleteNotePDF removes a note's PDF from R2 storage.

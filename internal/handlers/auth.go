@@ -1,4 +1,4 @@
-// Package handlers/auth.go contains the HTTP handlers for authentication operations.
+// auth.go — HTTP handlers for authentication (signup, login, JWT issuance).
 package handlers
 
 import (

@@ -1,4 +1,4 @@
-// Package handlers/note.go contains the HTTP handlers for note operations.
+// note.go — HTTP handlers for note CRUD and admin approval/rejection.
 package handlers
 
 import (
@@ -304,52 +304,78 @@ func (app *App) GetNoteByID(c *gin.Context) {
 }
 
 // GetPendingNotes retrieves pending notes scoped to the requesting admin.
+// Paginated response: { "notes": [...], "total": N, "page": P, "limit": L }
 func (app *App) GetPendingNotes(c *gin.Context) {
 	noteLog.Log("PENDING", "Processing get pending notes request")
 
 	userID := helpers.GetUserID(c)
 	isGlobal := helpers.GetAdminType(c)
+	pag := helpers.ParsePagination(c)
 	noteLog.Log("PENDING", "Admin identified", "userID", userID, "isGlobal", isGlobal)
 
 	var notes []models.Note
+	var total int64
+
+	query := app.DB.Model(&models.Note{})
 	if isGlobal {
-		// Global admin: fetch all pending notes
-		noteLog.Log("PENDING", "Fetching all pending notes (global admin)")
-		if err := app.DB.Where("status = ?", models.StatusPending).Find(&notes).Error; err != nil {
-			noteLog.Log("PENDING", "Failed to fetch pending notes", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
-			return
-		}
+		query = query.Where("status = ?", models.StatusPending)
 	} else {
-		// Subnotery admin: fetch pending notes for their communities only
-		noteLog.Log("PENDING", "Fetching pending notes for admin subnoteries", "userID", userID)
-		if err := app.DB.
+		query = query.
 			Joins("JOIN user_admins ON user_admins.subnotery_id = notes.subnotery_id").
-			Where("user_admins.user_id = ? AND notes.status = ?", userID, models.StatusPending).
-			Find(&notes).Error; err != nil {
-			noteLog.Log("PENDING", "Failed to fetch pending notes", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
-			return
-		}
+			Where("user_admins.user_id = ? AND notes.status = ?", userID, models.StatusPending)
 	}
 
-	noteLog.Log("PENDING", "Pending notes retrieved", "count", len(notes))
-	c.JSON(http.StatusOK, notes)
+	if err := query.Count(&total).Error; err != nil {
+		noteLog.Log("PENDING", "Failed to count pending notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
+		return
+	}
+
+	if err := query.Offset(pag.Offset).Limit(pag.Limit).Order("created_at DESC").Find(&notes).Error; err != nil {
+		noteLog.Log("PENDING", "Failed to fetch pending notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
+		return
+	}
+
+	noteLog.Log("PENDING", "Pending notes retrieved", "count", len(notes), "total", total)
+	c.JSON(http.StatusOK, gin.H{
+		"notes": notes,
+		"total": total,
+		"page":  pag.Page,
+		"limit": pag.Limit,
+	})
 }
 
-// GetApprovedNotes retrieves all notes with status "Approved"
+// GetApprovedNotes retrieves all notes with status "Approved".
+// Paginated response: { "notes": [...], "total": N, "page": P, "limit": L }
 func (app *App) GetApprovedNotes(c *gin.Context) {
 	noteLog.Log("APPROVED", "Processing get approved notes request")
+	pag := helpers.ParsePagination(c)
 
 	var notes []models.Note
-	if err := app.DB.Where("status = ?", models.StatusApproved).Find(&notes).Error; err != nil {
+	var total int64
+
+	query := app.DB.Model(&models.Note{}).Where("status = ?", models.StatusApproved)
+
+	if err := query.Count(&total).Error; err != nil {
+		noteLog.Log("APPROVED", "Failed to count approved notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
+		return
+	}
+
+	if err := query.Offset(pag.Offset).Limit(pag.Limit).Order("created_at DESC").Find(&notes).Error; err != nil {
 		noteLog.Log("APPROVED", "Failed to fetch approved notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
 		return
 	}
 
-	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes))
-	c.JSON(http.StatusOK, notes)
+	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes), "total", total)
+	c.JSON(http.StatusOK, gin.H{
+		"notes": notes,
+		"total": total,
+		"page":  pag.Page,
+		"limit": pag.Limit,
+	})
 }
 
 // indexNote adds or updates a note in the Meilisearch index.

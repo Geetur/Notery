@@ -1,6 +1,8 @@
+// subnotery.go — Subnotery fetching and ID parsing helpers.
 package helpers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -28,23 +30,11 @@ func MustParseSubnoteryID(c *gin.Context) (uint64, bool) {
 func FetchSubnotery(c *gin.Context, db *gorm.DB, subnoteryID uint64) (*models.Subnotery, bool) {
 	var subnotery models.Subnotery
 	if err := db.First(&subnotery, subnoteryID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch subnotery"})
 		}
-		return nil, false
-	}
-	return &subnotery, true
-}
-
-// FetchSubnoteryByName retrieves a subnotery by name from the database.
-// Returns the subnotery and true on success.
-// On failure (not found), returns nil, false without sending a response.
-// Caller decides how to handle missing subnotery (e.g., create it).
-func FetchSubnoteryByName(db *gorm.DB, name string) (*models.Subnotery, bool) {
-	var subnotery models.Subnotery
-	if err := db.Where("name = ?", name).First(&subnotery).Error; err != nil {
 		return nil, false
 	}
 	return &subnotery, true

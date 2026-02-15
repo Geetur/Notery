@@ -1,5 +1,4 @@
-// Package database/r2.go contains the Cloudflare R2 storage client initialization and operations.
-// R2 is used to store PDF content for notes securely. All PDF operations go through this package.
+// r2.go — Cloudflare R2 (S3-compatible) storage client for PDF management.
 //
 // ARCHITECTURE OVERVIEW:
 // ---------------------
@@ -36,18 +35,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// r2Client is the S3-compatible client for Cloudflare R2 operations.
-// Used for upload, delete, and object management operations.
-var r2Client *s3.Client
-
-// preSignedClient is used to generate time-limited signed URLs.
-// These URLs are only used server-side for fetching PDF content securely.
-var preSignedClient *s3.PresignClient
-
-// r2BucketName stores the bucket name for PDF storage.
-// Configured via R2_BUCKET_NAME environment variable.
-var r2BucketName string
-
 // R2Client provides a wrapper around R2 operations for PDF management.
 // This struct encapsulates all PDF-related R2 operations in a clean interface.
 type R2Client struct {
@@ -70,7 +57,7 @@ func InitR2() (*R2Client, error) {
 	accountID := getenv("R2_ACCOUNT_ID", "")
 	accessKeyID := getenv("R2_ACCESS_KEY_ID", "")
 	secretAccessKey := getenv("R2_SECRET_ACCESS_KEY", "")
-	r2BucketName = getenv("R2_BUCKET_NAME", "notery-pdfs")
+	bucketName := getenv("R2_BUCKET_NAME", "notery-pdfs")
 
 	// Validate required configuration
 	if accountID == "" || accessKeyID == "" || secretAccessKey == "" {
@@ -109,16 +96,16 @@ func InitR2() (*R2Client, error) {
 		return nil, err
 	}
 
-	// Initialize the S3 client for R2 operations
-	r2Client = s3.NewFromConfig(cfg)
-	preSignedClient = s3.NewPresignClient(r2Client)
+	// Initialize the S3 client for R2 operations.
+	client := s3.NewFromConfig(cfg)
+	presignClient := s3.NewPresignClient(client)
 
 	log.Println("Cloudflare R2 client initialized successfully.")
 
 	return &R2Client{
-		S3Client:      r2Client,
-		PresignClient: preSignedClient,
-		BucketName:    r2BucketName,
+		S3Client:      client,
+		PresignClient: presignClient,
+		BucketName:    bucketName,
 	}, nil
 }
 

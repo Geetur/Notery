@@ -1,4 +1,4 @@
-// Package middleware/admin.go provides middleware for admin authorization.
+// admin.go — Middleware for admin authorization (global and subnotery-scoped).
 package middleware
 
 import (

@@ -123,7 +123,7 @@ func (l *Logger) Log(action, msg string, fields ...interface{}) {
 	log.Printf("[%s] [%s] %s |%s", l.Domain, action, msg, pairs)
 }
 
-// Pre-configured loggers for each domain
+// Pre-configured loggers for each domain.
 var (
 	ContentLog    = NewLogger("CONTENT")
 	FeedLog       = NewLogger("FEED")
@@ -136,24 +136,9 @@ var (
 	CommentLog    = NewLogger("COMMENT")
 	PaymentLog    = NewLogger("PAYMENT")
 	WebhookLog    = NewLogger("WEBHOOK")
+	ProfileLog    = NewLogger("PROFILE")
+	SearchLog     = NewLogger("SEARCH")
 )
-
-// ----- RESPONSE HELPERS -----
-
-// RespondError sends a JSON error response with the given status code.
-func RespondError(c *gin.Context, status int, message string) {
-	c.JSON(status, gin.H{"error": message})
-}
-
-// RespondOK sends a JSON response with status 200.
-func RespondOK(c *gin.Context, data gin.H) {
-	c.JSON(http.StatusOK, data)
-}
-
-// RespondCreated sends a JSON response with status 201.
-func RespondCreated(c *gin.Context, data gin.H) {
-	c.JSON(http.StatusCreated, data)
-}
 
 // ----- JSON BINDING -----
 

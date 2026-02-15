@@ -1,0 +1,25 @@
+// security.go — Security-related HTTP middleware.
+package middleware
+
+import "github.com/gin-gonic/gin"
+
+// SecurityHeaders returns middleware that adds standard security headers to all responses.
+//
+// Headers set:
+//   - X-Content-Type-Options: nosniff — prevents MIME-type sniffing
+//   - X-Frame-Options: DENY — prevents clickjacking via iframes
+//   - Referrer-Policy: strict-origin-when-cross-origin — limits referrer leakage
+//   - X-XSS-Protection: 0 — disables legacy XSS auditor (modern CSP preferred)
+//   - Permissions-Policy: restrictive defaults for browser features
+//
+// HSTS is omitted because it should be set by the reverse proxy (nginx/Cloudflare).
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("X-XSS-Protection", "0")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+		c.Next()
+	}
+}

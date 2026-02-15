@@ -1,4 +1,4 @@
-// Package models/vote.go contains the Vote model definition.
+// vote.go — Vote model: tracks user votes on notes.
 package models
 
 // VoteDirection represents the direction of a user's vote.

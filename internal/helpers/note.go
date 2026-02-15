@@ -1,6 +1,8 @@
+// note.go — Note fetching and ID parsing helpers.
 package helpers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -29,7 +31,7 @@ func MustParseNoteID(c *gin.Context) (uint64, bool) {
 func FetchNote(c *gin.Context, db *gorm.DB, noteID uint64) (*models.Note, bool) {
 	var note models.Note
 	if err := db.First(&note, noteID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})

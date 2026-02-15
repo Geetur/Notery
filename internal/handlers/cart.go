@@ -1,4 +1,4 @@
-// Package handlers/cart.go contains the HTTP handlers for cart operations.
+// cart.go — HTTP handlers for shopping cart operations (Redis-backed).
 package handlers
 
 import (

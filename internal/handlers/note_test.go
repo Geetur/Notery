@@ -196,10 +196,19 @@ func TestGetApprovedNotes_HappyPath(t *testing.T) {
 		nil, app.GetApprovedNotes, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
 
-	var notes []models.Note
-	parseJSONArray(t, w, &notes)
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	notes, ok := resp["notes"].([]interface{})
+	if !ok {
+		t.Fatalf("expected 'notes' key in response")
+	}
 	if len(notes) != 2 {
 		t.Fatalf("expected 2 approved notes, got %d", len(notes))
+	}
+	if resp["total"] == nil || resp["page"] == nil || resp["limit"] == nil {
+		t.Fatal("missing pagination fields in response")
 	}
 }
 
@@ -210,6 +219,18 @@ func TestGetApprovedNotes_Empty(t *testing.T) {
 	w := serve("GET", "/notes/approved", "/notes/approved",
 		nil, app.GetApprovedNotes, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	notes, ok := resp["notes"].([]interface{})
+	if !ok {
+		t.Fatalf("expected 'notes' key in response")
+	}
+	if len(notes) != 0 {
+		t.Fatalf("expected 0 notes, got %d", len(notes))
+	}
 }
 
 // ===== GET PENDING NOTES (ADMIN) =====

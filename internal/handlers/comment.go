@@ -1,4 +1,4 @@
-// Package handlers/comment.go contains HTTP handlers for the Reddit-style comment system.
+// comment.go — HTTP handlers for the Reddit-style threaded comment system.
 //
 // ENDPOINTS:
 //
@@ -411,7 +411,7 @@ func (app *App) CreateComment(c *gin.Context) {
 //
 // Route: GET /api/v1/comments/:comment_id
 func (app *App) GetComment(c *gin.Context) {
-	commentID, ok := parseCommentID(c)
+	commentID, ok := helpers.MustParseCommentID(c)
 	if !ok {
 		return
 	}
@@ -498,7 +498,7 @@ func (app *App) GetComment(c *gin.Context) {
 //
 // Route: PUT /api/v1/comments/:comment_id
 func (app *App) EditComment(c *gin.Context) {
-	commentID, ok := parseCommentID(c)
+	commentID, ok := helpers.MustParseCommentID(c)
 	if !ok {
 		return
 	}
@@ -577,7 +577,7 @@ func (app *App) EditComment(c *gin.Context) {
 //
 // Route: DELETE /api/v1/comments/:comment_id
 func (app *App) DeleteComment(c *gin.Context) {
-	commentID, ok := parseCommentID(c)
+	commentID, ok := helpers.MustParseCommentID(c)
 	if !ok {
 		return
 	}
@@ -647,7 +647,7 @@ func (app *App) DeleteComment(c *gin.Context) {
 //
 // Route: POST /api/v1/comments/:comment_id/vote
 func (app *App) VoteComment(c *gin.Context) {
-	commentID, ok := parseCommentID(c)
+	commentID, ok := helpers.MustParseCommentID(c)
 	if !ok {
 		return
 	}
@@ -797,7 +797,7 @@ func (app *App) VoteComment(c *gin.Context) {
 //
 // Route: DELETE /api/v1/comments/:comment_id/vote
 func (app *App) RemoveCommentVote(c *gin.Context) {
-	commentID, ok := parseCommentID(c)
+	commentID, ok := helpers.MustParseCommentID(c)
 	if !ok {
 		return
 	}
@@ -856,36 +856,6 @@ func (app *App) RemoveCommentVote(c *gin.Context) {
 }
 
 // ===== TREE-BUILDING INTERNALS =====
-
-// buildCommentTree transforms a flat slice of comments into a sorted, depth-limited tree.
-func buildCommentTree(
-	comments []models.Comment,
-	userMap map[uint64]string,
-	userVotes map[uint]int8,
-	sortOrder models.CommentSortOrder,
-	maxDepth int,
-) []*CommentResponse {
-	responseMap := buildResponseMap(comments, userMap, userVotes)
-	wireChildren(responseMap)
-
-	// Collect roots (top-level comments)
-	var roots []*CommentResponse
-	for _, c := range comments {
-		if c.ParentID == nil {
-			if resp, ok := responseMap[c.ID]; ok {
-				roots = append(roots, resp)
-			}
-		}
-	}
-
-	// Sort entire tree recursively
-	sortTree(roots, sortOrder)
-
-	// Truncate beyond max depth
-	truncateDepth(responseMap, maxDepth)
-
-	return roots
-}
 
 // buildResponseMap converts flat comments into a map of CommentResponse pointers.
 func buildResponseMap(
@@ -1089,18 +1059,6 @@ func (app *App) lookupUsername(userID uint64) string {
 		return "User " + strconv.FormatUint(userID, 10)
 	}
 	return user.DisplayName()
-}
-
-// ===== URL PARAMETER HELPERS =====
-
-// parseCommentID extracts and validates the "comment_id" URL parameter.
-func parseCommentID(c *gin.Context) (uint64, bool) {
-	id, ok := helpers.ParseUintParam(c, "comment_id")
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid comment ID"})
-		return 0, false
-	}
-	return id, true
 }
 
 // ===== TWO-PHASE READ HELPERS =====

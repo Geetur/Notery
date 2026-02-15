@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 )
 
@@ -465,14 +466,14 @@ func TestUser_SelfProfileIncludesAllFields(t *testing.T) {
 func TestValidateUsername(t *testing.T) {
 	valid := []string{"abc", "user123", "my-handle", "under_score", "A1b"}
 	for _, u := range valid {
-		if err := validateUsername(u); err != nil {
+		if err := helpers.ValidateUsername(u); err != nil {
 			t.Errorf("username %q should be valid: %v", u, err)
 		}
 	}
 
 	invalid := []string{"ab", "A1", "", strings.Repeat("x", 31), "_start", "-start", "has space", "a@b"}
 	for _, u := range invalid {
-		if err := validateUsername(u); err == nil {
+		if err := helpers.ValidateUsername(u); err == nil {
 			t.Errorf("username %q should be invalid", u)
 		}
 	}
@@ -489,9 +490,9 @@ func TestNormalizeWhitespace(t *testing.T) {
 		{"   ", ""},
 	}
 	for _, tt := range tests {
-		got := normalizeWhitespace(tt.in)
+		got := helpers.NormalizeWhitespace(tt.in)
 		if got != tt.want {
-			t.Errorf("normalizeWhitespace(%q)=%q, want %q", tt.in, got, tt.want)
+			t.Errorf("NormalizeWhitespace(%q)=%q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

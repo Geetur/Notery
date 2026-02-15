@@ -1,4 +1,5 @@
-// Package models defines the domain entities and their database mappings.
+// Package models defines the domain data types, database mappings, and
+// domain constants/algorithms for the Notery API.
 package models
 
 import (

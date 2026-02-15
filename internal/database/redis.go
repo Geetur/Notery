@@ -1,5 +1,4 @@
-// Package database/redis.go contains the Redis
-// client initialization and connection testing logic
+// redis.go — Redis client initialization and connection testing.
 package database
 
 import (

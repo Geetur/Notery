@@ -1,4 +1,4 @@
-// Package models/note.go contains the Note model definition
+// note.go — Note model definition and status constants.
 package models
 
 import "time"

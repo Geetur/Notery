@@ -1,4 +1,4 @@
-// Package middleware/ratelimit.go provides per-user API rate limiting using Redis.
+// ratelimit.go — Per-user API rate limiting using Redis sliding windows.
 //
 // DESIGN:
 //

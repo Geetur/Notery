@@ -1,3 +1,4 @@
+// mock.go — Configurable test double for the payment.Service interface.
 package payment
 
 import "context"

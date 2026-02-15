@@ -1,4 +1,4 @@
-// Package handlers/feed.go contains the HTTP handlers for feed operations
+// feed.go — HTTP handlers for the hot feed, voting, and hotness scoring.
 package handlers
 
 import (
@@ -267,175 +267,104 @@ func (app *App) fetchNotes(noteIDs []string) []models.Note {
 	return ordered
 }
 
-// Upvote handles upvoting a note and updates hotness.
-// Uses a DB transaction as the source of truth; Redis vote cache is updated afterwards.
+// Upvote handles upvoting a note. Delegates to voteNote with VoteUp direction.
 func (app *App) Upvote(c *gin.Context) {
-	ctx := c.Request.Context()
-	noteID := c.Param("id")
-	userID := helpers.GetUserID(c)
-
-	feedLog.Log("UPVOTE", "processing", "user_id", userID, "note_id", noteID)
-
-	var note models.Note
-	if err := app.DB.First(&note, noteID).Error; err != nil {
-		feedLog.Log("UPVOTE", "note not found", "note_id", noteID, "error", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
-		return
-	}
-
-	noteIDUint := uint64(note.ID)
-
-	if err := app.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Read existing vote (row-level locking handled by DB serializable isolation)
-		var existing models.Vote
-		err := tx.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&existing).Error
-
-		if err == nil {
-			// Vote exists
-			if existing.Direction == models.VoteUp {
-				// Toggle off: remove upvote
-				if err := tx.Delete(&existing).Error; err != nil {
-					return err
-				}
-				if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1")).Error; err != nil {
-					return err
-				}
-				note.Upvotes--
-				feedLog.Log("UPVOTE", "toggled off", "user_id", userID, "note_id", noteID)
-			} else {
-				// Switch from down → up
-				if err := tx.Model(&existing).Update("direction", models.VoteUp).Error; err != nil {
-					return err
-				}
-				if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1")).Error; err != nil {
-					return err
-				}
-				if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes + 1")).Error; err != nil {
-					return err
-				}
-				note.Downvotes--
-				note.Upvotes++
-				feedLog.Log("UPVOTE", "switched from down", "user_id", userID, "note_id", noteID)
-			}
-		} else {
-			// No existing vote – create upvote
-			vote := models.Vote{UserID: userID, NoteID: noteIDUint, Direction: models.VoteUp}
-			if err := tx.Create(&vote).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes + 1")).Error; err != nil {
-				return err
-			}
-			note.Upvotes++
-			feedLog.Log("UPVOTE", "added", "user_id", userID, "note_id", noteID)
-		}
-		return nil
-	}); err != nil {
-		feedLog.Log("UPVOTE", "transaction failed", "user_id", userID, "note_id", noteID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process vote"})
-		return
-	}
-
-	// Update Redis vote cache (best-effort, skip if Redis unavailable)
-	if app.RDB != nil {
-		voteKey := fmt.Sprintf("votes:%s", noteID)
-		userVoteKey := fmt.Sprintf("%d", userID)
-		// Re-read the current vote state from DB to set cache correctly
-		var currentVote models.Vote
-		if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
-			// Vote was removed (toggle-off)
-			app.RDB.HDel(ctx, voteKey, userVoteKey)
-		} else {
-			app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
-		}
-	}
-
-	// Re-read note from DB for accurate vote counts (H5: avoid stale in-memory counts)
-	if err := app.DB.First(&note, note.ID).Error; err != nil {
-		feedLog.Log("UPVOTE", "failed to re-read note", "note_id", noteID, "error", err)
-	}
-
-	// Recalculate hotness
-	if err := app.UpdateNoteHotness(ctx, &note); err != nil {
-		feedLog.Log("UPVOTE", "hotness update failed", "note_id", noteID, "error", err)
-	}
-
-	feedLog.Log("UPVOTE", "completed", "user_id", userID, "note_id", noteID, "upvotes", note.Upvotes, "downvotes", note.Downvotes)
-	c.JSON(http.StatusOK, gin.H{
-		"upvotes":   note.Upvotes,
-		"downvotes": note.Downvotes,
-		"hotness":   note.Hotness,
-	})
+	app.voteNote(c, models.VoteUp)
 }
 
-// Downvote handles downvoting a note and updates hotness.
-// Uses a DB transaction as the source of truth; Redis vote cache is updated afterwards.
+// Downvote handles downvoting a note. Delegates to voteNote with VoteDown direction.
 func (app *App) Downvote(c *gin.Context) {
+	app.voteNote(c, models.VoteDown)
+}
+
+// voteNote is the unified vote handler for notes. Reddit-style toggle behavior:
+//   - Vote same direction as existing → toggle off (remove vote)
+//   - Vote opposite direction → switch
+//   - No existing vote → create new vote
+//
+// Uses a DB transaction as the source of truth; Redis cache is updated afterwards.
+func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 	ctx := c.Request.Context()
 	noteID := c.Param("id")
 	userID := helpers.GetUserID(c)
+	action := string(direction)
 
-	feedLog.Log("DOWNVOTE", "processing", "user_id", userID, "note_id", noteID)
+	feedLog.Log("VOTE", "processing", "user_id", userID, "note_id", noteID, "direction", action)
 
 	var note models.Note
 	if err := app.DB.First(&note, noteID).Error; err != nil {
-		feedLog.Log("DOWNVOTE", "note not found", "note_id", noteID, "error", err)
+		feedLog.Log("VOTE", "note not found", "note_id", noteID, "error", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 		return
 	}
 
 	noteIDUint := uint64(note.ID)
+	opposite := models.VoteDown
+	if direction == models.VoteDown {
+		opposite = models.VoteUp
+	}
 
 	if err := app.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing models.Vote
 		err := tx.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&existing).Error
 
 		if err == nil {
-			if existing.Direction == models.VoteDown {
-				// Toggle off: remove downvote
+			if existing.Direction == direction {
+				// Toggle off: remove vote in the same direction.
 				if err := tx.Delete(&existing).Error; err != nil {
 					return err
 				}
-				if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes - 1")).Error; err != nil {
+				col := "upvotes"
+				if direction == models.VoteDown {
+					col = "downvotes"
+				}
+				if err := tx.Model(&note).Update(col, gorm.Expr(col+" - 1")).Error; err != nil {
 					return err
 				}
-				note.Downvotes--
-				feedLog.Log("DOWNVOTE", "toggled off", "user_id", userID, "note_id", noteID)
+				feedLog.Log("VOTE", "toggled off", "user_id", userID, "note_id", noteID, "was", action)
 			} else {
-				// Switch from up → down
-				if err := tx.Model(&existing).Update("direction", models.VoteDown).Error; err != nil {
+				// Switch direction.
+				if err := tx.Model(&existing).Update("direction", direction).Error; err != nil {
 					return err
 				}
-				if err := tx.Model(&note).Update("upvotes", gorm.Expr("upvotes - 1")).Error; err != nil {
+				addCol := "upvotes"
+				subCol := "downvotes"
+				if direction == models.VoteDown {
+					addCol = "downvotes"
+					subCol = "upvotes"
+				}
+				if err := tx.Model(&note).Update(subCol, gorm.Expr(subCol+" - 1")).Error; err != nil {
 					return err
 				}
-				if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes + 1")).Error; err != nil {
+				if err := tx.Model(&note).Update(addCol, gorm.Expr(addCol+" + 1")).Error; err != nil {
 					return err
 				}
-				note.Upvotes--
-				note.Downvotes++
-				feedLog.Log("DOWNVOTE", "switched from up", "user_id", userID, "note_id", noteID)
+				feedLog.Log("VOTE", "switched", "user_id", userID, "note_id", noteID,
+					"from", string(opposite), "to", action)
 			}
 		} else {
-			// No existing vote – create downvote
-			vote := models.Vote{UserID: userID, NoteID: noteIDUint, Direction: models.VoteDown}
+			// No existing vote — create new.
+			vote := models.Vote{UserID: userID, NoteID: noteIDUint, Direction: direction}
 			if err := tx.Create(&vote).Error; err != nil {
 				return err
 			}
-			if err := tx.Model(&note).Update("downvotes", gorm.Expr("downvotes + 1")).Error; err != nil {
+			col := "upvotes"
+			if direction == models.VoteDown {
+				col = "downvotes"
+			}
+			if err := tx.Model(&note).Update(col, gorm.Expr(col+" + 1")).Error; err != nil {
 				return err
 			}
-			note.Downvotes++
-			feedLog.Log("DOWNVOTE", "added", "user_id", userID, "note_id", noteID)
+			feedLog.Log("VOTE", "created", "user_id", userID, "note_id", noteID, "direction", action)
 		}
 		return nil
 	}); err != nil {
-		feedLog.Log("DOWNVOTE", "transaction failed", "user_id", userID, "note_id", noteID, "error", err)
+		feedLog.Log("VOTE", "transaction failed", "user_id", userID, "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process vote"})
 		return
 	}
 
-	// Update Redis vote cache (best-effort, skip if Redis unavailable)
+	// Update Redis vote cache (best-effort, skip if Redis unavailable).
 	if app.RDB != nil {
 		voteKey := fmt.Sprintf("votes:%s", noteID)
 		userVoteKey := fmt.Sprintf("%d", userID)
@@ -447,17 +376,18 @@ func (app *App) Downvote(c *gin.Context) {
 		}
 	}
 
-	// Re-read note from DB for accurate vote counts (H5: avoid stale in-memory counts)
+	// Re-read note from DB for accurate vote counts (avoids stale in-memory counts).
 	if err := app.DB.First(&note, note.ID).Error; err != nil {
-		feedLog.Log("DOWNVOTE", "failed to re-read note", "note_id", noteID, "error", err)
+		feedLog.Log("VOTE", "failed to re-read note", "note_id", noteID, "error", err)
 	}
 
-	// Recalculate hotness
+	// Recalculate hotness.
 	if err := app.UpdateNoteHotness(ctx, &note); err != nil {
-		feedLog.Log("DOWNVOTE", "hotness update failed", "note_id", noteID, "error", err)
+		feedLog.Log("VOTE", "hotness update failed", "note_id", noteID, "error", err)
 	}
 
-	feedLog.Log("DOWNVOTE", "completed", "user_id", userID, "note_id", noteID, "upvotes", note.Upvotes, "downvotes", note.Downvotes)
+	feedLog.Log("VOTE", "completed", "user_id", userID, "note_id", noteID,
+		"upvotes", note.Upvotes, "downvotes", note.Downvotes)
 	c.JSON(http.StatusOK, gin.H{
 		"upvotes":   note.Upvotes,
 		"downvotes": note.Downvotes,

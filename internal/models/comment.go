@@ -1,5 +1,4 @@
-// Package models/comment.go contains the Comment and CommentVote models,
-// plus the Wilson score lower bound algorithm used for Reddit-style "Best" ranking.
+// comment.go — Comment and CommentVote models, Wilson score ranking algorithm.
 //
 // DESIGN:
 // -------

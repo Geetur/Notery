@@ -1,7 +1,8 @@
-// Package middleware/auth.go contains middleware for user authentication.
+// auth.go — JWT authentication middleware (required and optional variants).
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -16,129 +17,106 @@ import (
 // mwLog is the domain-specific logger for middleware operations.
 var mwLog = helpers.MiddlewareLog
 
-// RequireAuth returns a middleware that validates the JWT token in the Authorization header.
-// The jwtSecret is captured once when the middleware is created, avoiding per-request env lookups.
+// errNoBearer is returned when the Authorization header is missing the "Bearer " prefix.
+var errNoBearer = errors.New("missing or invalid Bearer prefix")
+
+// extractBearerToken pulls the raw token string from an Authorization header.
+// Returns errNoBearer if the header is empty or has the wrong format.
+func extractBearerToken(authHeader string) (string, error) {
+	if authHeader == "" {
+		return "", errNoBearer
+	}
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenString == authHeader {
+		return "", errNoBearer
+	}
+	return tokenString, nil
+}
+
+// parseJWTUserID validates a JWT string and extracts the user_id claim.
+// Returns the user ID or an error describing the failure.
+func parseJWTUserID(tokenString string, secretKey []byte) (uint64, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return secretKey, nil
+	})
+	if err != nil || !token.Valid {
+		return 0, fmt.Errorf("invalid token: %w", err)
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return 0, errors.New("invalid claims")
+	}
+
+	raw, exists := claims["user_id"]
+	if !exists {
+		return 0, errors.New("missing user_id claim")
+	}
+
+	userIDStr := fmt.Sprint(raw)
+	if userIDStr == "" {
+		return 0, errors.New("empty user_id claim")
+	}
+
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid user_id value %q: %w", userIDStr, err)
+	}
+	return userID, nil
+}
+
+// RequireAuth returns middleware that validates the JWT in the Authorization header.
+// Requests without a valid token are rejected with 401.
+// The jwtSecret is captured once when the middleware is created.
 func RequireAuth(jwtSecret string) gin.HandlerFunc {
 	secretKey := []byte(jwtSecret)
 
 	return func(c *gin.Context) {
 		mwLog.Log("AUTH", "Authenticating request")
 
-		// Extract Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			mwLog.Log("AUTH", "No Authorization header provided")
+		tokenString, err := extractBearerToken(c.GetHeader("Authorization"))
+		if err != nil {
+			mwLog.Log("AUTH", "No valid Authorization header")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
 			return
 		}
 
-		// Extract token from "Bearer <token>" format
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader {
-			mwLog.Log("AUTH", "Invalid Authorization header format")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Authorization header format"})
-			return
-		}
-
-		// Parse and validate the token
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return secretKey, nil
-		})
-
-		if err != nil || !token.Valid {
-			mwLog.Log("AUTH", "Invalid JWT token", "error", err)
+		userID, err := parseJWTUserID(tokenString, secretKey)
+		if err != nil {
+			mwLog.Log("AUTH", "JWT validation failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
 
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			mwLog.Log("AUTH", "Failed to parse JWT claims")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-			return
-		}
-
-		userID, exists := claims["user_id"]
-		if !exists {
-			mwLog.Log("AUTH", "JWT token missing user_id claim")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-			return
-		}
-		userIDStr := fmt.Sprint(userID)
-		if userIDStr == "" {
-			mwLog.Log("AUTH", "JWT token has empty user_id claim")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-			return
-		}
-		userIDUint, parseErr := strconv.ParseUint(userIDStr, 10, 64)
-		if parseErr != nil {
-			mwLog.Log("AUTH", "Invalid user_id claim in JWT", "value", userIDStr)
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-			return
-		}
-		c.Set("user_id", userIDUint)
-		mwLog.Log("AUTH", "User authenticated", "userID", userIDUint)
+		c.Set("user_id", userID)
+		mwLog.Log("AUTH", "User authenticated", "userID", userID)
 		c.Next()
 	}
 }
 
-// OptionalAuth returns a middleware that extracts user info from JWT if present,
+// OptionalAuth returns middleware that extracts user info from JWT if present,
 // but allows the request to proceed even without authentication.
-// Use this for endpoints that work for both logged-in and anonymous users.
+// Use this for endpoints that personalize responses for logged-in users.
 func OptionalAuth(jwtSecret string) gin.HandlerFunc {
 	secretKey := []byte(jwtSecret)
 
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			// No auth header, proceed as anonymous
+		tokenString, err := extractBearerToken(c.GetHeader("Authorization"))
+		if err != nil {
 			c.Next()
 			return
 		}
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader {
-			// Invalid format, proceed as anonymous
+		userID, err := parseJWTUserID(tokenString, secretKey)
+		if err != nil {
 			c.Next()
 			return
 		}
 
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return secretKey, nil
-		})
-
-		if err != nil || !token.Valid {
-			// Invalid token, proceed as anonymous
-			c.Next()
-			return
-		}
-
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			c.Next()
-			return
-		}
-
-		userID, exists := claims["user_id"]
-		if !exists {
-			c.Next()
-			return
-		}
-
-		userIDStr := fmt.Sprint(userID)
-		userIDUint, parseErr := strconv.ParseUint(userIDStr, 10, 64)
-		if parseErr != nil {
-			c.Next()
-			return
-		}
-
-		c.Set("user_id", userIDUint)
+		c.Set("user_id", userID)
 		c.Next()
 	}
 }

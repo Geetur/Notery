@@ -1,4 +1,4 @@
-// Package models/purchase.go contains the Purchase model definition
+// purchase.go — Purchase model: records a completed note purchase.
 package models
 
 import "time"

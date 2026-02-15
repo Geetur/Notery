@@ -1,4 +1,4 @@
-// Package handlers provides HTTP request handlers for the Notery API.
+// subnotery.go — HTTP handlers for subnotery management (join, admin, create).
 package handlers
 
 import (

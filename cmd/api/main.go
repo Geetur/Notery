@@ -1,3 +1,4 @@
+// main.go — Application entrypoint: dependency init, route wiring, graceful shutdown.
 package main
 
 import (
@@ -78,10 +79,14 @@ func main() {
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
 
-	// CORS middleware — allow frontend origins during development and production.
-	// Tighten AllowOrigins before production deploy.
+	// ----- Global middleware -----
+
+	// Security headers (nosniff, DENY frame, strict referrer, etc.)
+	router.Use(middleware.SecurityHeaders())
+
+	// CORS — origins loaded from CORS_ORIGINS env var (default: localhost dev ports).
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:5173"},
+		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
@@ -131,6 +136,9 @@ func main() {
 
 	// ----- Public User Profile Read -----
 	api.GET("/users/:id/profile", app.GetUserProfile)
+
+	// ----- Search (public, optional auth for personalization) -----
+	api.GET("/search", middleware.OptionalAuth(cfg.JWTSecret), app.SearchAll)
 
 	// applying the RequireAuth middleware to all protected routes in this group
 	protected := api.Group("")

@@ -1,4 +1,4 @@
-// Package handlers/purchase.go contains HTTP handlers for purchase operations.
+// purchase.go — HTTP handlers for the purchase flow (checkout, orders, history).
 // This file manages note purchases (checkout), order lifecycle, and purchase history.
 //
 // PURCHASE FLOW (with Order state machine):
@@ -884,4 +884,41 @@ func (app *App) ConfirmOrder(c *gin.Context) {
 		// Still processing (requires_payment_method, requires_confirmation, requires_action, processing)
 		c.JSON(http.StatusOK, gin.H{"order_id": order.ID, "status": "pending", "payment_status": result.Status})
 	}
+}
+
+// ----- GET /me/purchases -----
+
+// GetMyPurchases returns all notes purchased by the authenticated user.
+// Used to populate the "My Purchased Notes" section in the account view.
+//
+// Response: { "purchases": [ { note fields + price_paid, purchased_at } ] }
+//
+// Route: GET /api/v1/me/purchases
+func (app *App) GetMyPurchases(c *gin.Context) {
+	userID := helpers.GetUserID(c)
+	purchaseLog.Log("MY_PURCHASES", "fetching", "user_id", userID)
+
+	type PurchasedNote struct {
+		models.Note
+		PricePaid   int64     `json:"price_paid"`
+		PurchasedAt time.Time `json:"purchased_at"`
+	}
+
+	var purchasedNotes []PurchasedNote
+
+	err := app.DB.Table("purchases").
+		Select("notes.*, purchases.price_paid, purchases.purchased_at").
+		Joins("JOIN notes ON notes.id = purchases.note_id").
+		Where("purchases.user_id = ?", userID).
+		Order("purchases.purchased_at DESC").
+		Scan(&purchasedNotes).Error
+
+	if err != nil {
+		purchaseLog.Log("MY_PURCHASES", "database error", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch purchases"})
+		return
+	}
+
+	purchaseLog.Log("MY_PURCHASES", "success", "user_id", userID, "count", len(purchasedNotes))
+	c.JSON(http.StatusOK, gin.H{"purchases": purchasedNotes})
 }

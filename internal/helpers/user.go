@@ -1,6 +1,8 @@
+// user.go — User fetching helpers.
 package helpers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +19,7 @@ import (
 func FetchUser(c *gin.Context, db *gorm.DB, userID uint64) (*models.User, bool) {
 	var user models.User
 	if err := db.First(&user, userID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})

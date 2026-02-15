@@ -1,4 +1,4 @@
-// Package handlers/profile.go contains HTTP handlers for user profile management.
+// profile.go — HTTP handlers for user profile management.
 //
 // ENDPOINTS:
 //
@@ -21,7 +21,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -33,14 +32,7 @@ import (
 )
 
 // profileLog is the domain-specific logger for profile operations.
-var profileLog = helpers.NewLogger("PROFILE")
-
-// usernameRegex defines allowed characters for usernames: alphanumeric, underscores, hyphens.
-// Must start with a letter or digit.
-var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
-
-// displayNameRegex allows letters, digits, spaces, underscores, hyphens, and periods.
-var displayNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9 _.'-]*$`)
+var profileLog = helpers.ProfileLog
 
 // ----- GET /me/profile -----
 
@@ -108,8 +100,7 @@ func (app *App) UpdateMyProfile(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 
 	var req UpdateProfileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+	if !helpers.BindJSON(c, &req) {
 		return
 	}
 
@@ -130,7 +121,7 @@ func (app *App) UpdateMyProfile(c *gin.Context) {
 	if req.Username != nil {
 		username := strings.TrimSpace(*req.Username)
 		if username != "" {
-			if err := validateUsername(username); err != nil {
+			if err := helpers.ValidateUsername(username); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
@@ -140,7 +131,7 @@ func (app *App) UpdateMyProfile(c *gin.Context) {
 
 	// --- Display name validation ---
 	if req.DisplayName != nil {
-		dn := normalizeWhitespace(*req.DisplayName)
+		dn := helpers.NormalizeWhitespace(*req.DisplayName)
 		if dn != "" {
 			runeCount := utf8.RuneCountInString(dn)
 			if runeCount < models.MinDisplayNameLength {
@@ -157,7 +148,7 @@ func (app *App) UpdateMyProfile(c *gin.Context) {
 				})
 				return
 			}
-			if !displayNameRegex.MatchString(dn) {
+			if !helpers.DisplayNameRegex.MatchString(dn) {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": "Display name contains invalid characters (letters, digits, spaces, hyphens, underscores, periods allowed)",
 				})
@@ -264,30 +255,4 @@ func (app *App) GetUserProfile(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, user.PublicProfile())
-}
-
-// ===== VALIDATION HELPERS =====
-
-// validateUsername checks username format and length constraints.
-func validateUsername(username string) error {
-	runeCount := utf8.RuneCountInString(username)
-	if runeCount < models.MinUsernameLength {
-		return errors.New("username too short (min 3 characters)")
-	}
-	if runeCount > models.MaxUsernameLength {
-		return errors.New("username too long (max 30 characters)")
-	}
-	if !usernameRegex.MatchString(username) {
-		return errors.New("username can only contain letters, digits, underscores, and hyphens, and must start with a letter or digit")
-	}
-	return nil
-}
-
-// normalizeWhitespace trims outer whitespace and collapses internal runs of
-// whitespace to single spaces. Example: "  John   Doe  " → "John Doe".
-func normalizeWhitespace(s string) string {
-	s = strings.TrimSpace(s)
-	// Collapse internal whitespace runs
-	parts := strings.Fields(s)
-	return strings.Join(parts, " ")
 }

@@ -1,3 +1,4 @@
+// meilisearch.go — Meilisearch full-text search client initialization.
 package database
 
 import (

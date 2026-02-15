@@ -1,6 +1,6 @@
-// Package models/order.go contains the Order and OrderItem models.
-// Orders track a payment session, while OrderItems are the individual notes being purchased.
-// Purchase records are only created once an Order transitions to OrderPaid.
+// order.go — Order and OrderItem models with state machine transitions.
+// Orders track a payment session; OrderItems are the individual notes being purchased.
+// Purchase records are created only once an Order transitions to OrderPaid.
 package models
 
 import "time"

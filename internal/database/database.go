@@ -1,5 +1,5 @@
-// Package database/database.go contains the postgres database
-// initialization and migration logic
+// Package database provides initialization and connection management for all
+// external data stores: PostgreSQL (GORM), Redis, Meilisearch, and Cloudflare R2.
 package database
 
 import (

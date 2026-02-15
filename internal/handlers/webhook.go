@@ -1,4 +1,4 @@
-// Package handlers/webhook.go contains the Stripe webhook handler.
+// webhook.go — Stripe webhook handler for payment event processing.
 // This endpoint is PUBLIC (no JWT auth) — security is via Stripe signature verification.
 //
 // WEBHOOK FLOW:
