@@ -15,6 +15,7 @@ import (
 
 	"github.com/Geetur/Notery/internal/config"
 	"github.com/Geetur/Notery/internal/database"
+	"github.com/Geetur/Notery/internal/email"
 	"github.com/Geetur/Notery/internal/handlers"
 	"github.com/Geetur/Notery/internal/middleware"
 	"github.com/Geetur/Notery/internal/payment"
@@ -75,6 +76,10 @@ func main() {
 	}
 	// ------ initializing payment service ---------------------------------------------------
 
+	// ------ initializing email service -----------------------------------------------------
+	mailer := email.NewMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+	// ------ initializing email service -----------------------------------------------------
+
 	// setting up the Gin router with middleware attached
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
@@ -103,6 +108,8 @@ func main() {
 		SearchIndex: meiliIndex,
 		JWTSecret:   cfg.JWTSecret,
 		Payment:     paymentService,
+		Mailer:      mailer,
+		BaseURL:     cfg.BaseURL,
 	})
 
 	// health check endpoint
@@ -114,7 +121,32 @@ func main() {
 	})
 
 	api := router.Group("/api/v1")
-	// auth endpoints (public)
+
+	// ----- Auth Endpoints (public, rate-limited) -----
+	auth := api.Group("/auth")
+	if redisClient != nil {
+		auth.Use(middleware.RateLimit(redisClient, middleware.DefaultAuthRateLimit, "auth:"))
+	}
+	{
+		auth.POST("/signup", app.Signup)
+		auth.POST("/login", app.Login)
+		auth.POST("/refresh", app.RefreshAccessToken)
+		auth.POST("/logout", app.Logout)
+		auth.POST("/forgot-password", app.ForgotPassword)
+		auth.POST("/reset-password", app.ResetPassword)
+		auth.GET("/verify-email", app.VerifyEmail)
+	}
+
+	// Auth endpoints that require authentication
+	authProtected := auth.Group("")
+	authProtected.Use(middleware.RequireAuth(cfg.JWTSecret))
+	{
+		authProtected.POST("/logout-all", app.LogoutAll)
+		authProtected.POST("/resend-verification", app.ResendVerification)
+		authProtected.POST("/change-password", app.ChangePassword)
+	}
+
+	// Legacy auth routes (backward compatibility)
 	api.POST("/signup", app.Signup)
 	api.POST("/login", app.Login)
 

@@ -6,7 +6,9 @@ A Go REST API for a Reddit-like note marketplace — users sign up, creators pub
 
 ## Features
 
-- **Authentication** — JWT (HS256) signup/login; secret loaded once at startup
+- **Authentication** — JWT (HS256) with refresh token rotation; 15-min access tokens, 30-day refresh tokens with family-based theft detection
+- **Email Verification** — Token-based email verification with configurable SMTP (SMTP/Log/Mock mailer)
+- **Password Management** — Secure forgot-password / reset-password flows with single-use tokens; change-password with session revocation
 - **User Profiles** — Display name, bio, avatar URL, public/private visibility; PATCH partial updates with regex validation
 - **Notes** — CRUD with admin approval lifecycle (Pending → Approved → Rejected)
 - **PDF Content** — Secure upload to Cloudflare R2, proxy-only viewing, magic-byte (`%PDF-`) validation
@@ -16,7 +18,7 @@ A Go REST API for a Reddit-like note marketplace — users sign up, creators pub
 - **Voting & Hot Feed** — Reddit-style hotness algorithm; DB-authoritative votes with Redis cache
 - **Comments** — Threaded tree with Wilson score ranking, soft-delete, depth caps, per-comment voting
 - **Search** — Reddit-style multi-type search (notes via Meilisearch, subnoteries/users/comments via DB)
-- **Rate Limiting** — Redis sliding-window per-user (60 req/min write, configurable)
+- **Rate Limiting** — Redis sliding-window per-user; three tiers: auth (5/min), write (60/min), read (120/min)
 - **Security Headers** — X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy
 - **CORS** — Configurable origins via `CORS_ORIGINS` env var
 - **Role-Based Access** — Global admins, subnotery-scoped admins, creators, purchasers
@@ -56,9 +58,11 @@ Notery/
 │   │   ├── redis.go               # Redis init
 │   │   ├── meilisearch.go         # Meilisearch init
 │   │   └── r2.go                  # Cloudflare R2 client (PDF storage)
+│   ├── email/
+│   │   └── email.go               # Mailer interface (SMTP/Log/Mock) + templates (Package doc)
 │   ├── handlers/
 │   │   ├── app.go                 # App struct + constructor (Package doc)
-│   │   ├── auth.go                # Signup / Login
+│   │   ├── auth.go                # Auth: signup, login, refresh, logout, verify, reset, change-password
 │   │   ├── cart.go                # Cart CRUD (Redis)
 │   │   ├── comment.go             # Threaded comments, voting, tree assembly
 │   │   ├── content.go             # PDF upload / view / delete + access control
@@ -84,6 +88,7 @@ Notery/
 │   │   └── security.go            # Security response headers
 │   ├── models/
 │   │   ├── user.go                # User + bcrypt + profile DTOs (Package doc)
+│   │   ├── session.go             # RefreshToken, EmailVerification, PasswordReset + crypto helpers
 │   │   ├── note.go                # Note + NoteStatus enum
 │   │   ├── comment.go             # Comment + CommentVote + Wilson score
 │   │   ├── order.go               # Order + OrderItem + state machine
@@ -151,6 +156,16 @@ JWT_SECRET=your-super-secret-key
 # CORS (comma-separated, defaults to localhost:3000,localhost:5173)
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 
+# Base URL (used in email links, defaults to http://localhost:8080)
+BASE_URL=http://localhost:8080
+
+# SMTP (optional — omit for log-to-stdout dev mode)
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your_smtp_user
+SMTP_PASS=your_smtp_password
+SMTP_FROM=noreply@notery.app
+
 # Stripe (optional — omit for auto-fulfil dev mode)
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
@@ -176,8 +191,15 @@ curl http://localhost:8080/health
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| POST | `/api/v1/signup` | Register |
-| POST | `/api/v1/login` | Authenticate |
+| POST | `/api/v1/signup` | Register (legacy) |
+| POST | `/api/v1/login` | Authenticate (legacy) |
+| POST | `/api/v1/auth/signup` | Register + issue tokens + send verification email |
+| POST | `/api/v1/auth/login` | Authenticate + issue tokens |
+| POST | `/api/v1/auth/refresh` | Rotate refresh token |
+| POST | `/api/v1/auth/logout` | Revoke refresh token |
+| POST | `/api/v1/auth/forgot-password` | Request password reset email |
+| POST | `/api/v1/auth/reset-password` | Reset password with token |
+| GET  | `/api/v1/auth/verify-email` | Verify email via token |
 | POST | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
 
 ### Public (Optional Auth)
@@ -213,6 +235,9 @@ curl http://localhost:8080/health
 | GET | `/api/v1/me/purchases/history` | Purchase history (paginated) |
 | GET | `/api/v1/me/profile` | Own profile |
 | PATCH | `/api/v1/me/profile` | Update profile |
+| POST | `/api/v1/auth/logout-all` | Revoke all refresh tokens |
+| POST | `/api/v1/auth/resend-verification` | Resend verification email |
+| POST | `/api/v1/auth/change-password` | Change password (revokes sessions) |
 | POST | `/api/v1/subnoteries/:id/join` | Join subnotery |
 | POST | `/api/v1/notes/:id/comments` | Create comment |
 | PUT | `/api/v1/comments/:comment_id` | Edit comment |
@@ -245,6 +270,12 @@ The `votes` table is the single source of truth. Each vote runs in a DB transact
 
 ### JWT Middleware
 `RequireAuth` and `OptionalAuth` share a common `parseJWTUserID()` helper, eliminating ~40 lines of duplicated token parsing.
+
+### Refresh Token Rotation
+Family-based rotation with theft detection. Reusing a revoked token revokes the entire token family (all sessions for that login). See `models/session.go` for crypto helpers.
+
+### Email Verification & Password Reset
+Configurable Mailer interface (SMTP for production, LogMailer for dev, MockMailer for tests). Anti-enumeration on forgot-password (always returns 200). Single-use reset tokens with 1-hour TTL. Password changes revoke all active sessions.
 
 ### Payment Integration
 `payment.Service` interface backed by Stripe in production, configurable mock in tests. Fulfilment is webhook-authoritative. When Stripe is not configured, orders auto-fulfil. See [docs/PAYMENT_SYSTEM.md](docs/PAYMENT_SYSTEM.md).

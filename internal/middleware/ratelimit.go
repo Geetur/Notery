@@ -39,6 +39,20 @@ var DefaultWriteRateLimit = RateLimitConfig{
 	Window:      1 * time.Minute,
 }
 
+// DefaultAuthRateLimit is the limit for authentication endpoints
+// (login, signup, password reset): 5 requests per minute to slow brute-force.
+var DefaultAuthRateLimit = RateLimitConfig{
+	MaxRequests: 5,
+	Window:      1 * time.Minute,
+}
+
+// DefaultReadRateLimit is the limit for public read endpoints
+// (feed, search, profiles): 120 requests per minute.
+var DefaultReadRateLimit = RateLimitConfig{
+	MaxRequests: 120,
+	Window:      1 * time.Minute,
+}
+
 // RateLimit returns a Gin middleware that enforces per-user rate limiting.
 // It requires a Redis client and a configuration. The keyPrefix is prepended to
 // the rate-limit key so different route groups can have independent counters

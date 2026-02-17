@@ -43,6 +43,9 @@ func testApp(t *testing.T) *App {
 		&models.Order{},
 		&models.OrderItem{},
 		&models.Purchase{},
+		&models.RefreshToken{},
+		&models.EmailVerification{},
+		&models.PasswordReset{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

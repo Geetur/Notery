@@ -87,12 +87,12 @@ $emailB = "commenter_b_$rand@test.com"
 
 Api "POST" "$base/signup" -Body @{ email=$emailA; username="alice$rand"; password="pass123!" }
 $loginA = Api "POST" "$base/login" -Body @{ email=$emailA; password="pass123!" }
-$tokA = $loginA.token
+$tokA = $loginA.access_token
 $hdrsA = @{ Authorization = "Bearer $tokA" }
 
 Api "POST" "$base/signup" -Body @{ email=$emailB; username="bob$rand"; password="pass123!" }
 $loginB = Api "POST" "$base/login" -Body @{ email=$emailB; password="pass123!" }
-$tokB = $loginB.token
+$tokB = $loginB.access_token
 $hdrsB = @{ Authorization = "Bearer $tokB" }
 
 Write-Host "   Created alice ($emailA) and bob ($emailB)" -ForegroundColor Green

@@ -24,6 +24,17 @@ type Config struct {
 	// CORSOrigins is the list of allowed origins for cross-origin requests.
 	// Loaded from CORS_ORIGINS env var (comma-separated). Defaults to localhost dev ports.
 	CORSOrigins []string
+
+	// BaseURL is the public URL for this API (used in email links).
+	// Loaded from BASE_URL env var. Defaults to http://localhost:8080.
+	BaseURL string
+
+	// SMTP configuration for outbound emails.
+	SMTPHost string
+	SMTPPort string
+	SMTPUser string
+	SMTPPass string
+	SMTPFrom string
 }
 
 // Load reads the .env file (if present) and returns a populated Config.
@@ -33,11 +44,22 @@ func Load() *Config {
 		log.Println("No .env file found (ok):", err)
 	}
 
+	baseURL := os.Getenv("BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+
 	cfg := &Config{
 		JWTSecret:           os.Getenv("JWT_SECRET"),
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
 		CORSOrigins:         parseCORSOrigins(os.Getenv("CORS_ORIGINS")),
+		BaseURL:             baseURL,
+		SMTPHost:            os.Getenv("SMTP_HOST"),
+		SMTPPort:            os.Getenv("SMTP_PORT"),
+		SMTPUser:            os.Getenv("SMTP_USER"),
+		SMTPPass:            os.Getenv("SMTP_PASS"),
+		SMTPFrom:            os.Getenv("SMTP_FROM"),
 	}
 
 	if cfg.JWTSecret == "" {

@@ -79,7 +79,7 @@ if (-not $creatorLogin) {
     Write-Host "Failed to login creator. Exiting." -ForegroundColor Red
     exit 1
 }
-$creatorToken = $creatorLogin.token
+$creatorToken = $creatorLogin.access_token
 Write-Host "   Creator token: $($creatorToken.Substring(0,20))..." -ForegroundColor Gray
 
 $buyerSignup = Test-Endpoint -Method "POST" -Url "$BaseUrl/signup" -Body @{
@@ -102,7 +102,7 @@ if (-not $buyerLogin) {
     Write-Host "Failed to login buyer. Exiting." -ForegroundColor Red
     exit 1
 }
-$buyerToken = $buyerLogin.token
+$buyerToken = $buyerLogin.access_token
 Write-Host "   Buyer token: $($buyerToken.Substring(0,20))..." -ForegroundColor Gray
 
 # ============================================
@@ -114,6 +114,7 @@ $noteResponse = Test-Endpoint -Method "POST" -Url "$BaseUrl/notes" -Headers @{
     Authorization = "Bearer $creatorToken"
 } -Body @{
     title          = "Test Note with PDF"
+    author         = "Test Author"
     price          = 999
     subnotery_name = "TestSubnotery_$timestamp"
 } -Description "Creating a new note"

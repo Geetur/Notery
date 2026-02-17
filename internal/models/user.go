@@ -25,6 +25,7 @@ type User struct {
 	AvatarURL        string          `json:"avatar_url" gorm:"default:''"`
 	ProfileVisibility ProfileVisibility `json:"profile_visibility" gorm:"default:'public'"`
 	ProfileUpdatedAt *time.Time      `json:"profile_updated_at"`
+	EmailVerified    bool            `json:"email_verified" gorm:"default:false"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -94,6 +95,7 @@ func (u *User) SelfProfile() map[string]interface{} {
 		"avatar_url":         u.AvatarURL,
 		"profile_visibility": u.ProfileVisibility,
 		"profile_updated_at": u.ProfileUpdatedAt,
+		"email_verified":     u.EmailVerified,
 		"created_at":         u.CreatedAt,
 		"updated_at":         u.UpdatedAt,
 	}

@@ -28,7 +28,7 @@ $login = Invoke-RestMethod -Uri "$base/login" -Method POST -ContentType "applica
     email    = $email
     password = "testpass123"
 } | ConvertTo-Json)
-$token = $login.token
+$token = $login.access_token
 Write-Host "Got token: $($token.Substring(0,40))..." -ForegroundColor Green
 $headers = @{ Authorization = "Bearer $token" }
 
