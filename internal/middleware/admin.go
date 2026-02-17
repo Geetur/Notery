@@ -20,7 +20,9 @@
 //	for downstream handlers.
 //
 // DB: SELECT user by ID, conditional SELECT note for subnotery derivation,
-//     COUNT on user_admins join table.
+//
+//	COUNT on user_admins join table.
+//
 // Technologies: PostgreSQL (GORM).
 // Helpers: helpers.GetUserID.
 package middleware
