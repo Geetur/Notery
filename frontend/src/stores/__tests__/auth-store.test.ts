@@ -1,5 +1,7 @@
 // auth-store.test.ts — Tests for the Zustand auth store.
 import { useAuthStore } from "@/stores/auth-store";
+import { getAccessToken } from "@/lib/api-client";
+import { getMyProfile } from "@/services/profile";
 
 // Mock the api-client module
 jest.mock("@/lib/api-client", () => ({
@@ -79,7 +81,6 @@ describe("useAuthStore", () => {
     });
 
     it("initialize sets loading=false when no token", async () => {
-        const { getAccessToken } = require("@/lib/api-client");
         (getAccessToken as jest.Mock).mockReturnValue(null);
 
         await useAuthStore.getState().initialize();
@@ -90,8 +91,6 @@ describe("useAuthStore", () => {
     });
 
     it("initialize fetches profile when token exists", async () => {
-        const { getAccessToken } = require("@/lib/api-client");
-        const { getMyProfile } = require("@/services/profile");
 
         const mockProfile = {
             id: 1,

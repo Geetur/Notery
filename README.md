@@ -51,7 +51,7 @@ A full-stack Reddit-like note marketplace built with **Go** (API) and **Next.js*
 | File Storage | Cloudflare R2 (S3-compatible) | — |
 | Payments | [Stripe](https://stripe.com/) PaymentIntent API | — |
 | Auth | JWT HS256 | — |
-| Frontend Framework | [Next.js](https://nextjs.org/) (App Router) | 14.2.35 |
+| Frontend Framework | [Next.js](https://nextjs.org/) (App Router) | 15.5.12 |
 | Frontend Language | TypeScript | 5.x |
 | Styling | TailwindCSS | 3.4.x |
 | UI Components | [shadcn/ui](https://ui.shadcn.com/) (20 components) | — |
