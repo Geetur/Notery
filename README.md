@@ -284,7 +284,7 @@ npm run dev
 # → http://localhost:3000
 ```
 
-## API Endpoints (54 routes)
+## API Endpoints (55 routes)
 
 ### Public (11 routes)
 
@@ -313,7 +313,7 @@ npm run dev
 | GET | `/api/v1/users/:id/avatar` | Public avatar proxy (24h cache) |
 | GET | `/api/v1/search?q=&type=` | Multi-type search (notes/subnoteries/users/comments) |
 
-### Protected — Requires JWT (30 routes)
+### Auth-Only — Requires JWT, no email verification needed (11 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -321,23 +321,28 @@ npm run dev
 | POST | `/api/v1/auth/resend-verification` | Resend verification email |
 | POST | `/api/v1/auth/change-password` | Change password (revokes all sessions) |
 | GET | `/api/v1/notes/:id` | Get note by ID |
-| POST | `/api/v1/notes` | Create note |
 | GET | `/api/v1/notes/approved` | List approved notes (paginated) |
-| POST | `/api/v1/notes/:id/content` | Upload PDF |
 | GET | `/api/v1/notes/:id/content` | View/stream PDF |
+| GET | `/api/v1/cart` | View cart |
+| GET | `/api/v1/notes/:id/purchased` | Check purchase status |
+| GET | `/api/v1/me/purchases` | My purchased notes |
+| GET | `/api/v1/me/purchases/history` | Purchase history (paginated) |
+| GET | `/api/v1/me/profile` | Own profile (full) |
+| GET | `/api/v1/orders/:order_id` | Order status |
+| GET | `/api/v1/me/notes` | Own created notes (paginated, filterable by status) |
+
+### Verified — Requires JWT + verified email (20 routes)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/notes` | Create note |
+| POST | `/api/v1/notes/:id/content` | Upload PDF |
 | POST | `/api/v1/notes/:id/upvote` | Upvote note |
 | POST | `/api/v1/notes/:id/downvote` | Downvote note |
-| GET | `/api/v1/cart` | View cart |
 | POST | `/api/v1/cart` | Add to cart |
 | DELETE | `/api/v1/cart/:item_id` | Remove from cart |
 | POST | `/api/v1/checkout` | Checkout cart |
 | POST | `/api/v1/notes/:id/purchase` | Direct purchase |
-| GET | `/api/v1/notes/:id/purchased` | Check purchase status |
-| GET | `/api/v1/orders/:order_id` | Order status |
-| POST | `/api/v1/orders/:order_id/confirm` | Manual order reconciliation |
-| GET | `/api/v1/me/purchases` | My purchased notes |
-| GET | `/api/v1/me/purchases/history` | Purchase history (paginated) |
-| GET | `/api/v1/me/profile` | Own profile (full) |
 | PATCH | `/api/v1/me/profile` | Update own profile |
 | POST | `/api/v1/me/avatar` | Upload avatar (multipart, max 5 MB) |
 | DELETE | `/api/v1/me/avatar` | Delete own avatar |
@@ -346,6 +351,7 @@ npm run dev
 | DELETE | `/api/v1/comments/:comment_id` | Soft-delete comment |
 | POST | `/api/v1/comments/:comment_id/vote` | Vote on comment |
 | DELETE | `/api/v1/comments/:comment_id/vote` | Remove comment vote |
+| POST | `/api/v1/orders/:order_id/confirm` | Manual order reconciliation |
 | POST | `/api/v1/subnoteries/:id/join` | Join subnotery |
 
 ### Admin — Global or Subnotery-Scoped (7 routes)

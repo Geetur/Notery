@@ -1,7 +1,8 @@
-// page.tsx — Own profile settings page.
+// page.tsx — Own profile page with settings and created notes tabs.
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,15 +15,25 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { changePassword, resendVerification } from "@/services/auth";
+import { getMyNotes } from "@/services/notes";
 import { updateMyProfile } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth-store";
-import type { ProfileVisibility } from "@/types";
-import { AlertCircle, CheckCircle, Loader2, Mail } from "lucide-react";
+import type { Note, NoteStatus, ProfileVisibility } from "@/types";
+import {
+    AlertCircle,
+    CheckCircle,
+    Clock,
+    FileText,
+    Loader2,
+    Mail,
+    XCircle,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export default function ProfilePage() {
     const router = useRouter();
@@ -38,6 +49,31 @@ export default function ProfilePage() {
     const [newPassword, setNewPassword] = useState("");
     const [changingPassword, setChangingPassword] = useState(false);
 
+    // My Notes state
+    const [myNotes, setMyNotes] = useState<Note[]>([]);
+    const [notesTotal, setNotesTotal] = useState(0);
+    const [notesPage, setNotesPage] = useState(1);
+    const [notesLoading, setNotesLoading] = useState(false);
+    const [statusFilter, setStatusFilter] = useState<NoteStatus | "all">("all");
+
+    const fetchMyNotes = useCallback(async (page: number, status: NoteStatus | "all") => {
+        setNotesLoading(true);
+        try {
+            const params: { page: number; limit: number; status?: NoteStatus } = {
+                page,
+                limit: 10,
+            };
+            if (status !== "all") params.status = status;
+            const res = await getMyNotes(params);
+            setMyNotes(res.notes || []);
+            setNotesTotal(res.total);
+        } catch {
+            toast({ title: "Failed to load your notes", variant: "destructive" });
+        } finally {
+            setNotesLoading(false);
+        }
+    }, [toast]);
+
     useEffect(() => {
         if (user) {
             setDisplayName(user.display_name || "");
@@ -52,9 +88,44 @@ export default function ProfilePage() {
         }
     }, [isAuthenticated, loading, router]);
 
+    // Fetch notes when page or filter changes
+    useEffect(() => {
+        if (isAuthenticated) {
+            fetchMyNotes(notesPage, statusFilter);
+        }
+    }, [isAuthenticated, notesPage, statusFilter, fetchMyNotes]);
+
     if (!isAuthenticated || !user) {
         return null;
     }
+
+    const statusBadge = (status: NoteStatus) => {
+        switch (status) {
+            case "Approved":
+                return (
+                    <Badge className="bg-green-500/15 text-green-500 border-green-500/30 hover:bg-green-500/20">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Approved
+                    </Badge>
+                );
+            case "Pending":
+                return (
+                    <Badge className="bg-yellow-500/15 text-yellow-500 border-yellow-500/30 hover:bg-yellow-500/20">
+                        <Clock className="h-3 w-3 mr-1" />
+                        Pending
+                    </Badge>
+                );
+            case "Rejected":
+                return (
+                    <Badge variant="destructive" className="bg-red-500/15 text-red-500 border-red-500/30 hover:bg-red-500/20">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Rejected
+                    </Badge>
+                );
+        }
+    };
+
+    const totalPages = Math.ceil(notesTotal / 10);
 
     const handleSaveProfile = async () => {
         setSaving(true);
@@ -103,7 +174,7 @@ export default function ProfilePage() {
 
     return (
         <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
-            <h1 className="text-xl font-bold">Profile Settings</h1>
+            <h1 className="text-xl font-bold">Profile</h1>
 
             {/* Email verification alert */}
             {!user.email_verified && (
@@ -124,120 +195,236 @@ export default function ProfilePage() {
                 </Card>
             )}
 
-            {/* Profile info */}
-            <Card className="border-border">
-                <CardHeader>
-                    <CardTitle className="text-sm">Profile Information</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    {/* Avatar */}
-                    <div className="flex items-center gap-4">
-                        <Avatar className="h-16 w-16">
-                            <AvatarImage src={user.avatar_url} />
-                            <AvatarFallback className="text-lg">
-                                {user.username[0]?.toUpperCase()}
-                            </AvatarFallback>
-                        </Avatar>
-                        <div>
-                            <p className="font-medium">{user.username}</p>
-                            <p className="text-xs text-muted-foreground">{user.email}</p>
-                            {user.email_verified && (
-                                <span className="flex items-center gap-1 text-xs text-green-500">
-                                    <CheckCircle className="h-3 w-3" /> Verified
-                                </span>
-                            )}
-                        </div>
-                    </div>
+            <Tabs defaultValue="settings">
+                <TabsList className="w-full">
+                    <TabsTrigger value="settings" className="flex-1">Settings</TabsTrigger>
+                    <TabsTrigger value="my-notes" className="flex-1">
+                        <FileText className="h-4 w-4 mr-1" />
+                        My Notes
+                        {notesTotal > 0 && (
+                            <span className="ml-1.5 text-xs bg-muted-foreground/20 rounded-full px-1.5">
+                                {notesTotal}
+                            </span>
+                        )}
+                    </TabsTrigger>
+                </TabsList>
 
-                    <Separator />
+                {/* ─── Settings Tab ─── */}
+                <TabsContent value="settings" className="space-y-4">
+                    {/* Profile info */}
+                    <Card className="border-border">
+                        <CardHeader>
+                            <CardTitle className="text-sm">Profile Information</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {/* Avatar */}
+                            <div className="flex items-center gap-4">
+                                <Avatar className="h-16 w-16">
+                                    <AvatarImage src={user.avatar_url} />
+                                    <AvatarFallback className="text-lg">
+                                        {user.username[0]?.toUpperCase()}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <div>
+                                    <p className="font-medium">{user.username}</p>
+                                    <p className="text-xs text-muted-foreground">{user.email}</p>
+                                    {user.email_verified && (
+                                        <span className="flex items-center gap-1 text-xs text-green-500">
+                                            <CheckCircle className="h-3 w-3" /> Verified
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
 
-                    {/* Display name */}
-                    <div>
-                        <Label htmlFor="displayName">Display Name</Label>
-                        <Input
-                            id="displayName"
-                            value={displayName}
-                            onChange={(e) => setDisplayName(e.target.value)}
-                            placeholder="Your display name"
-                            maxLength={50}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">2-50 characters</p>
-                    </div>
+                            <Separator />
 
-                    {/* Bio */}
-                    <div>
-                        <Label htmlFor="bio">Bio</Label>
-                        <Textarea
-                            id="bio"
-                            value={bio}
-                            onChange={(e) => setBio(e.target.value)}
-                            placeholder="Tell us about yourself"
-                            maxLength={500}
-                            className="resize-none"
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">{bio.length}/500</p>
-                    </div>
+                            {/* Display name */}
+                            <div>
+                                <Label htmlFor="displayName">Display Name</Label>
+                                <Input
+                                    id="displayName"
+                                    value={displayName}
+                                    onChange={(e) => setDisplayName(e.target.value)}
+                                    placeholder="Your display name"
+                                    maxLength={50}
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">2-50 characters</p>
+                            </div>
 
-                    {/* Visibility */}
-                    <div>
-                        <Label>Profile Visibility</Label>
+                            {/* Bio */}
+                            <div>
+                                <Label htmlFor="bio">Bio</Label>
+                                <Textarea
+                                    id="bio"
+                                    value={bio}
+                                    onChange={(e) => setBio(e.target.value)}
+                                    placeholder="Tell us about yourself"
+                                    maxLength={500}
+                                    className="resize-none"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">{bio.length}/500</p>
+                            </div>
+
+                            {/* Visibility */}
+                            <div>
+                                <Label>Profile Visibility</Label>
+                                <Select
+                                    value={visibility}
+                                    onValueChange={(v) => setVisibility(v as ProfileVisibility)}
+                                >
+                                    <SelectTrigger className="w-[180px]">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="public">Public</SelectItem>
+                                        <SelectItem value="private">Private</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <Button onClick={handleSaveProfile} disabled={saving}>
+                                {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                                Save Changes
+                            </Button>
+                        </CardContent>
+                    </Card>
+
+                    {/* Change password */}
+                    <Card className="border-border">
+                        <CardHeader>
+                            <CardTitle className="text-sm">Change Password</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div>
+                                <Label htmlFor="currentPassword">Current Password</Label>
+                                <Input
+                                    id="currentPassword"
+                                    type="password"
+                                    value={currentPassword}
+                                    onChange={(e) => setCurrentPassword(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <Label htmlFor="newPassword">New Password</Label>
+                                <Input
+                                    id="newPassword"
+                                    type="password"
+                                    value={newPassword}
+                                    onChange={(e) => setNewPassword(e.target.value)}
+                                    minLength={8}
+                                />
+                                <p className="text-xs text-muted-foreground mt-1">Minimum 8 characters</p>
+                            </div>
+                            <Button
+                                onClick={handleChangePassword}
+                                disabled={changingPassword || !currentPassword || !newPassword}
+                                variant="outline"
+                            >
+                                {changingPassword && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                                Change Password
+                            </Button>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                {/* ─── My Notes Tab ─── */}
+                <TabsContent value="my-notes" className="space-y-4">
+                    {/* Status filter */}
+                    <div className="flex items-center gap-2">
+                        <Label className="text-sm whitespace-nowrap">Filter by status:</Label>
                         <Select
-                            value={visibility}
-                            onValueChange={(v) => setVisibility(v as ProfileVisibility)}
+                            value={statusFilter}
+                            onValueChange={(v) => {
+                                setStatusFilter(v as NoteStatus | "all");
+                                setNotesPage(1);
+                            }}
                         >
-                            <SelectTrigger className="w-[180px]">
+                            <SelectTrigger className="w-[150px]">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="public">Public</SelectItem>
-                                <SelectItem value="private">Private</SelectItem>
+                                <SelectItem value="all">All</SelectItem>
+                                <SelectItem value="Pending">Pending</SelectItem>
+                                <SelectItem value="Approved">Approved</SelectItem>
+                                <SelectItem value="Rejected">Rejected</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
 
-                    <Button onClick={handleSaveProfile} disabled={saving}>
-                        {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                        Save Changes
-                    </Button>
-                </CardContent>
-            </Card>
+                    {notesLoading ? (
+                        <div className="flex justify-center py-8">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                    ) : myNotes.length === 0 ? (
+                        <Card className="border-border">
+                            <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+                                <FileText className="h-10 w-10 text-muted-foreground mb-2" />
+                                <p className="text-sm text-muted-foreground">
+                                    {statusFilter === "all"
+                                        ? "You haven't created any notes yet."
+                                        : `No ${statusFilter.toLowerCase()} notes found.`}
+                                </p>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                        <>
+                            <div className="space-y-2">
+                                {myNotes.map((note) => (
+                                    <Card key={note.id} className="border-border">
+                                        <CardContent className="flex items-center justify-between p-3">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-medium text-sm truncate">
+                                                    {note.title}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    by {note.author} &middot;{" "}
+                                                    {new Date(note.created_at).toLocaleDateString()}
+                                                    {note.price > 0 && (
+                                                        <> &middot; ${(note.price / 100).toFixed(2)}</>
+                                                    )}
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center gap-2 ml-3 shrink-0">
+                                                {statusBadge(note.status)}
+                                                {note.has_pdf && (
+                                                    <span className="text-xs text-muted-foreground">
+                                                        PDF
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
+                            </div>
 
-            {/* Change password */}
-            <Card className="border-border">
-                <CardHeader>
-                    <CardTitle className="text-sm">Change Password</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div>
-                        <Label htmlFor="currentPassword">Current Password</Label>
-                        <Input
-                            id="currentPassword"
-                            type="password"
-                            value={currentPassword}
-                            onChange={(e) => setCurrentPassword(e.target.value)}
-                        />
-                    </div>
-                    <div>
-                        <Label htmlFor="newPassword">New Password</Label>
-                        <Input
-                            id="newPassword"
-                            type="password"
-                            value={newPassword}
-                            onChange={(e) => setNewPassword(e.target.value)}
-                            minLength={8}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">Minimum 8 characters</p>
-                    </div>
-                    <Button
-                        onClick={handleChangePassword}
-                        disabled={changingPassword || !currentPassword || !newPassword}
-                        variant="outline"
-                    >
-                        {changingPassword && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                        Change Password
-                    </Button>
-                </CardContent>
-            </Card>
+                            {/* Pagination */}
+                            {totalPages > 1 && (
+                                <div className="flex items-center justify-center gap-2 pt-2">
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={notesPage <= 1}
+                                        onClick={() => setNotesPage((p) => p - 1)}
+                                    >
+                                        Previous
+                                    </Button>
+                                    <span className="text-xs text-muted-foreground">
+                                        Page {notesPage} of {totalPages}
+                                    </span>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={notesPage >= totalPages}
+                                        onClick={() => setNotesPage((p) => p + 1)}
+                                    >
+                                        Next
+                                    </Button>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }

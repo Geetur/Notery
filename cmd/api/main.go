@@ -175,77 +175,80 @@ func main() {
 	// ----- Search (public, optional auth for personalization) -----
 	api.GET("/search", middleware.OptionalAuth(cfg.JWTSecret), app.SearchAll)
 
-	// applying the RequireAuth middleware to all protected routes in this group
+	// ----- Auth-Only Endpoints (login required, email verification NOT required) -----
+	// These endpoints allow unverified users to read data, view their profile,
+	// and check statuses. They can use the app as a reader until verified.
+	authOnly := api.Group("")
+	authOnly.Use(middleware.RequireAuth(cfg.JWTSecret))
+	{
+		// Read-only note endpoints
+		authOnly.GET("/notes/:id", app.GetNoteByID)
+		authOnly.GET("/notes/approved", app.GetApprovedNotes)
+		// View/stream PDF content (requires purchase or admin access)
+		authOnly.GET("/notes/:id/content", app.GetNotePDFContent)
+
+		// Read-only cart endpoint
+		authOnly.GET("/cart", app.GetCart)
+
+		// Read-only purchase endpoints
+		authOnly.GET("/notes/:id/purchased", app.CheckPurchaseStatus)
+		authOnly.GET("/me/purchases", app.GetMyPurchases)
+		authOnly.GET("/me/purchases/history", app.GetPurchaseHistory)
+
+		// Self-profile (read own profile, needed for verification banner)
+		authOnly.GET("/me/profile", app.GetMyProfile)
+
+		// Read-only order status
+		authOnly.GET("/orders/:order_id", app.GetOrderStatus)
+
+		// Own created notes (for "My Notes" tab on profile)
+		authOnly.GET("/me/notes", app.GetMyNotes)
+	}
+
+	// ----- Verified Endpoints (login + email verification required) -----
+	// All write/mutating operations require a verified email address.
+	// Unverified users get 403 with code "EMAIL_NOT_VERIFIED".
 	protected := api.Group("")
 	protected.Use(middleware.RequireAuth(cfg.JWTSecret))
-
-	// Apply per-user write rate limiting to all protected (mutating) routes.
+	protected.Use(middleware.RequireVerified(db))
 	protected.Use(middleware.RateLimit(redisClient, middleware.DefaultWriteRateLimit, "write:"))
 	{
-		// note endpoints
-		protected.GET("/notes/:id", app.GetNoteByID)
+		// note write endpoints
 		protected.POST("/notes", app.CreateNote)
-		protected.GET("/notes/approved", app.GetApprovedNotes)
 
 		// ----- PDF Content Endpoints -----
-		// Upload PDF for a note (note creator uploads after creating note metadata)
 		protected.POST("/notes/:id/content", app.UploadNotePDF)
-		// View/stream PDF content (requires purchase or admin access)
-		protected.GET("/notes/:id/content", app.GetNotePDFContent)
 
 		// voting endpoints
 		protected.POST("/notes/:id/upvote", app.Upvote)
 		protected.POST("/notes/:id/downvote", app.Downvote)
 
-		// cart endpoints
-		protected.GET("/cart", app.GetCart)
+		// cart write endpoints
 		protected.POST("/cart", app.AddToCart)
 		protected.DELETE("/cart/:item_id", app.RemoveFromCart)
 
 		// ----- Purchase Endpoints -----
-		// Checkout entire cart
 		protected.POST("/checkout", app.CheckoutCart)
-		// Direct purchase of single note (bypass cart)
 		protected.POST("/notes/:id/purchase", app.PurchaseSingleNote)
-		// Check if user purchased a specific note
-		protected.GET("/notes/:id/purchased", app.CheckPurchaseStatus)
 
-		// ----- User Account Endpoints -----
-		// Get all purchased notes (for "My Purchases" page)
-		protected.GET("/me/purchases", app.GetMyPurchases)
-		// Get detailed purchase history with pagination
-		protected.GET("/me/purchases/history", app.GetPurchaseHistory)
-
-		// ----- User Profile Endpoints -----
-		// Get own full profile (authenticated self)
-		protected.GET("/me/profile", app.GetMyProfile)
-		// Update own profile (partial updates)
+		// ----- User Profile Write Endpoints -----
 		protected.PATCH("/me/profile", app.UpdateMyProfile)
 
 		// ----- Avatar Endpoints -----
-		// Upload a new avatar (multipart, max 5 MB, JPEG/PNG/WebP/GIF)
 		protected.POST("/me/avatar", app.UploadAvatar)
-		// Delete own avatar
 		protected.DELETE("/me/avatar", app.DeleteAvatar)
 
 		// ----- Comment Write Endpoints -----
-		// Create a new comment or reply on a note
 		protected.POST("/notes/:id/comments", app.CreateComment)
-		// Edit own comment
 		protected.PUT("/comments/:comment_id", app.EditComment)
-		// Soft-delete own comment (also allows subnotery admin delete below)
 		protected.DELETE("/comments/:comment_id", app.DeleteComment)
-		// Vote on a comment (+1 upvote, -1 downvote, toggle)
 		protected.POST("/comments/:comment_id/vote", app.VoteComment)
-		// Remove vote from a comment
 		protected.DELETE("/comments/:comment_id/vote", app.RemoveCommentVote)
+
 		// ----- Order Endpoints -----
-		// Check order status (frontend polls after payment)
-		protected.GET("/orders/:order_id", app.GetOrderStatus)
-		// Manually confirm/reconcile order (checks Stripe if webhook was delayed)
 		protected.POST("/orders/:order_id/confirm", app.ConfirmOrder)
 
-		//subnotery endpoints
+		// subnotery endpoints
 		protected.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
 	}
 

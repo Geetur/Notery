@@ -469,6 +469,60 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 	})
 }
 
+// GetMyNotes returns a paginated list of notes created by the authenticated user.
+//
+// Supports optional status filtering via ?status= query parameter (Pending, Approved, Rejected).
+// If no status filter is provided, returns notes of all statuses. Ordered by creation
+// time descending so the newest notes appear first.
+//
+// DB: COUNT + SELECT from notes WHERE creator_id = userID [AND status = ...]. Paginated.
+// Technologies: PostgreSQL (GORM).
+// Helpers: helpers.GetUserID, helpers.ParsePagination.
+//
+// Route: GET /api/v1/me/notes
+func (app *App) GetMyNotes(c *gin.Context) {
+	noteLog.Log("MY_NOTES", "Processing get my notes request")
+
+	userID := helpers.GetUserID(c)
+	pag := helpers.ParsePagination(c)
+
+	var notes []models.Note
+	var total int64
+
+	query := app.DB.Model(&models.Note{}).Where("creator_id = ?", userID)
+
+	// Optional status filter
+	if statusFilter := c.Query("status"); statusFilter != "" {
+		status := models.NoteStatus(statusFilter)
+		if status != models.StatusPending && status != models.StatusApproved && status != models.StatusRejected {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status filter. Must be Pending, Approved, or Rejected"})
+			return
+		}
+		query = query.Where("status = ?", status)
+		noteLog.Log("MY_NOTES", "Filtering by status", "status", statusFilter)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		noteLog.Log("MY_NOTES", "Failed to count notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch your notes"})
+		return
+	}
+
+	if err := query.Offset(pag.Offset).Limit(pag.Limit).Order("created_at DESC").Find(&notes).Error; err != nil {
+		noteLog.Log("MY_NOTES", "Failed to fetch notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch your notes"})
+		return
+	}
+
+	noteLog.Log("MY_NOTES", "Notes retrieved", "count", len(notes), "total", total, "userID", userID)
+	c.JSON(http.StatusOK, gin.H{
+		"notes": notes,
+		"total": total,
+		"page":  pag.Page,
+		"limit": pag.Limit,
+	})
+}
+
 // indexNote adds or updates a note in the Meilisearch full-text search index.
 // Called during note approval to make the note discoverable via search.
 //
