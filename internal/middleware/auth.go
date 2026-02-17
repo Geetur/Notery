@@ -1,4 +1,19 @@
 // auth.go — JWT authentication middleware (required and optional variants).
+//
+// MIDDLEWARE:
+//
+//	RequireAuth   Validates JWT, extracts user_id, sets context. Rejects 401 on failure.
+//	OptionalAuth  Same JWT parsing, but allows unauthenticated requests through.
+//
+// DESIGN:
+//
+//	Both middlewares share extractBearerToken() and parseJWTUserID() helpers to avoid
+//	duplicating JWT parsing logic. The JWT secret is captured once at middleware
+//	creation time (closure), so config changes require a restart.
+//
+//	JWT claims must contain a "user_id" field (set during token issuance in auth.go).
+//	The parsed user_id is stored in the Gin context for downstream handlers via
+//	c.Set("user_id", userID).
 package middleware
 
 import (

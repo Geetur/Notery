@@ -1,4 +1,28 @@
 // admin.go — Middleware for admin authorization (global and subnotery-scoped).
+//
+// MIDDLEWARE:
+//
+//	RequireAdmin  Verifies calling user is a global admin or subnotery admin.
+//
+// DESIGN:
+//
+//	Admin resolution follows a two-tier model:
+//	  1. Global admins — is_global_admin flag on the User model. Grants access to
+//	     all admin endpoints regardless of subnotery context.
+//	  2. Subnotery admins — checked via the user_admins join table. Only grants
+//	     access for operations within the specific subnotery.
+//
+//	Subnotery context is resolved from URL params: first from :subnotery_id, then
+//	by deriving it from :id (note ID → note.subnotery_id). If no subnotery context
+//	can be determined, non-global admins are denied with 403.
+//
+//	Sets "admin_type" (bool) and optionally "admin_subnotery_id" in Gin context
+//	for downstream handlers.
+//
+// DB: SELECT user by ID, conditional SELECT note for subnotery derivation,
+//     COUNT on user_admins join table.
+// Technologies: PostgreSQL (GORM).
+// Helpers: helpers.GetUserID.
 package middleware
 
 import (
@@ -13,9 +37,9 @@ import (
 	"github.com/Geetur/Notery/internal/models"
 )
 
-// RequireAdmin is a middleware function that checks if the authenticated user has admin privileges
-// RequireAdmin interacts with the database to verify admin status for a subnotery.
-// RequireAdmin interacts with the User and Note models.
+// RequireAdmin returns middleware that checks if the authenticated user has admin
+// privileges. Global admins pass immediately; subnotery admins are verified against
+// the resolved subnotery context (from URL :subnotery_id or derived from :id note).
 func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mwLog.Log("ADMIN", "Checking admin privileges")

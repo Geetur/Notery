@@ -1,4 +1,25 @@
 // note.go — HTTP handlers for note CRUD and admin approval/rejection.
+//
+// ENDPOINTS:
+//
+//	POST  /notes              Create a new note (auto-creates subnotery if needed)
+//	GET   /notes/:id          Get a single approved note by ID
+//	GET   /notes/approved     List all approved notes (paginated)
+//	GET   /notes/pending      List pending notes for the requesting admin (paginated)
+//	PATCH /notes/:id/approve  Approve a pending note (requires PDF, indexes in Meilisearch)
+//	PATCH /notes/:id/reject   Reject a note (removes from search/feed, deletes from DB)
+//	DELETE /notes/:id         Delete a note (removes from search/feed/R2, deletes from DB)
+//
+// DESIGN:
+//
+//	Notes follow a Pending → Approved/Rejected lifecycle. Only approved notes are
+//	visible to non-admin users and indexed in Meilisearch for search. Approval
+//	requires a PDF to be uploaded first (via content.go). Subnoteries are auto-created
+//	during note creation: the creator becomes the first admin and member.
+//
+//	Admin scope is enforced by upstream middleware: global admins see all pending
+//	notes; subnotery admins see only notes in their subnoteries. Pending note
+//	listing is paginated with total count.
 package handlers
 
 import (
@@ -18,7 +39,10 @@ import (
 // noteLog is the domain-specific logger for note operations.
 var noteLog = helpers.NoteLog
 
-// deletePDFFromR2 removes a note's PDF from R2 storage if R2 is configured.
+// deletePDFFromR2 removes a note's PDF from Cloudflare R2 storage if R2 is configured.
+// Best-effort: logs failures but does not propagate errors to the caller.
+//
+// Technologies: Cloudflare R2 (S3 DeleteObject).
 func (app *App) deletePDFFromR2(ctx context.Context, noteID uint) {
 	if app.R2 != nil {
 		if err := app.R2.DeletePDF(ctx, noteID); err != nil {
@@ -29,8 +53,18 @@ func (app *App) deletePDFFromR2(ctx context.Context, noteID uint) {
 	}
 }
 
-// CreateNote handles the creation of a new note.
-// Auto-creates subnotery when missing and assigns the creator as its first admin.
+// CreateNote handles the creation of a new note with metadata.
+//
+// If the specified subnotery doesn't exist, it is created automatically and the
+// requesting user becomes its first admin and member. The note starts in Pending
+// status and must be approved by an admin before it appears in search or the feed.
+//
+// DB: SELECT subnotery by name, INSERT subnotery (if new), INSERT user_admins + user_memberships
+//     (if new), INSERT note. All in a single GORM transaction.
+// Technologies: PostgreSQL (GORM transaction).
+// Helpers: helpers.BindJSON, helpers.GetUserID.
+//
+// Route: POST /api/v1/notes
 func (app *App) CreateNote(c *gin.Context) {
 	noteLog.Log("CREATE", "Processing note creation request")
 
@@ -123,8 +157,19 @@ func (app *App) CreateNote(c *gin.Context) {
 	c.JSON(http.StatusCreated, note)
 }
 
-// DeleteNote handles the deletion of a note by ID.
-// DeleteNote removes the note from both the database and Meilisearch if approved.
+// DeleteNote permanently removes a note and all associated resources.
+//
+// If the note was approved, it is first removed from the Meilisearch index and
+// the Redis hot feed. Then the note record is deleted from the database. If the
+// note had a PDF, it is cleaned up from Cloudflare R2. On index removal failure,
+// the delete is aborted to maintain search consistency.
+//
+// DB: SELECT note by ID, DELETE note. Conditional: re-index on rollback.
+// Technologies: PostgreSQL (GORM), Meilisearch (document delete), Redis ZREM (feed removal),
+//     Cloudflare R2 (PDF cleanup).
+// Helpers: helpers.MustFetchNote.
+//
+// Route: DELETE /api/v1/notes/:id
 func (app *App) DeleteNote(c *gin.Context) {
 	noteLog.Log("DELETE", "Processing note deletion request")
 
@@ -171,7 +216,18 @@ func (app *App) DeleteNote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Note deleted successfully"})
 }
 
-// RejectNote handles rejecting a note by ID.
+// RejectNote rejects a note, removing it from search/feed and deleting it from the DB.
+//
+// If the note was previously approved, it is removed from the Meilisearch index
+// and the Redis hot feed first. The note is then deleted from the database.
+// On index removal failure, the status change is rolled back.
+//
+// DB: SELECT note by ID, UPDATE status to Rejected, DELETE note. Conditional rollback on failure.
+// Technologies: PostgreSQL (GORM), Meilisearch (document delete), Redis ZREM (feed removal),
+//     Cloudflare R2 (PDF cleanup if exists).
+// Helpers: helpers.MustFetchNote.
+//
+// Route: PATCH /api/v1/notes/:id/reject
 func (app *App) RejectNote(c *gin.Context) {
 	noteLog.Log("REJECT", "Processing note rejection request")
 
@@ -225,8 +281,17 @@ func (app *App) RejectNote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Note rejected successfully"})
 }
 
-// ApproveNote handles approving a note by ID.
-// ApproveNote updates the note's status to "Approved" and indexes it in Meilisearch.
+// ApproveNote transitions a note from Pending to Approved status.
+//
+// Validates that the note has a PDF before approval. Updates the status,
+// indexes the note in Meilisearch for full-text search, and adds it to the
+// Redis hot feed. On indexing failure, the status change is rolled back.
+//
+// DB: SELECT note by ID, UPDATE status to Approved. Conditional rollback on index failure.
+// Technologies: PostgreSQL (GORM), Meilisearch (document add/update), Redis ZADD (feed).
+// Helpers: helpers.MustFetchNote.
+//
+// Route: PATCH /api/v1/notes/:id/approve
 func (app *App) ApproveNote(c *gin.Context) {
 	noteLog.Log("APPROVE", "Processing note approval request")
 
@@ -282,7 +347,16 @@ func (app *App) ApproveNote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Note approved successfully"})
 }
 
-// GetNoteByID retrieves a note by its ID.
+// GetNoteByID retrieves a single note by its ID.
+//
+// Only returns notes with Approved status. Non-approved notes return 403 Forbidden
+// to prevent information leakage about pending/rejected content.
+//
+// DB: SELECT note by ID via GORM.
+// Technologies: PostgreSQL (GORM).
+// Helpers: helpers.MustFetchNote.
+//
+// Route: GET /api/v1/notes/:id
 func (app *App) GetNoteByID(c *gin.Context) {
 	noteLog.Log("GET", "Processing get note by ID request")
 
@@ -303,8 +377,17 @@ func (app *App) GetNoteByID(c *gin.Context) {
 	c.JSON(http.StatusOK, note)
 }
 
-// GetPendingNotes retrieves pending notes scoped to the requesting admin.
-// Paginated response: { "notes": [...], "total": N, "page": P, "limit": L }
+// GetPendingNotes retrieves pending notes visible to the requesting admin.
+//
+// Global admins see all pending notes; subnotery admins see only notes in their
+// administered subnoteries (via JOIN on user_admins). Paginated response includes
+// total count for frontend pagination.
+//
+// DB: COUNT + SELECT from notes with optional JOIN on user_admins. Paginated with OFFSET/LIMIT.
+// Technologies: PostgreSQL (GORM, conditional JOIN for scoping).
+// Helpers: helpers.GetUserID, helpers.GetAdminType, helpers.ParsePagination.
+//
+// Route: GET /api/v1/notes/pending
 func (app *App) GetPendingNotes(c *gin.Context) {
 	noteLog.Log("PENDING", "Processing get pending notes request")
 
@@ -346,8 +429,16 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 	})
 }
 
-// GetApprovedNotes retrieves all notes with status "Approved".
-// Paginated response: { "notes": [...], "total": N, "page": P, "limit": L }
+// GetApprovedNotes returns a paginated list of all approved notes.
+//
+// Public endpoint (requires auth but no admin). Returns notes ordered by
+// creation time descending with total count for frontend pagination.
+//
+// DB: COUNT + SELECT from notes WHERE status = Approved. Paginated with OFFSET/LIMIT.
+// Technologies: PostgreSQL (GORM).
+// Helpers: helpers.ParsePagination.
+//
+// Route: GET /api/v1/notes/approved
 func (app *App) GetApprovedNotes(c *gin.Context) {
 	noteLog.Log("APPROVED", "Processing get approved notes request")
 	pag := helpers.ParsePagination(c)
@@ -378,7 +469,10 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 	})
 }
 
-// indexNote adds or updates a note in the Meilisearch index.
+// indexNote adds or updates a note in the Meilisearch full-text search index.
+// Called during note approval to make the note discoverable via search.
+//
+// Technologies: Meilisearch (AddDocuments with primary key "id").
 func (app *App) indexNote(note models.Note) error {
 	noteLog.Log("INDEX", "Indexing note in Meilisearch", "noteID", note.ID)
 	if app.Search == nil || app.SearchIndex == "" {
@@ -395,7 +489,10 @@ func (app *App) indexNote(note models.Note) error {
 	return nil
 }
 
-// removeNoteFromIndex removes a note from the Meilisearch index.
+// removeNoteFromIndex removes a note from the Meilisearch full-text search index.
+// Called during note deletion or rejection to keep search results consistent.
+//
+// Technologies: Meilisearch (DeleteDocument by ID).
 func (app *App) removeNoteFromIndex(noteID uint) error {
 	noteLog.Log("INDEX", "Removing note from Meilisearch", "noteID", noteID)
 	if app.Search == nil || app.SearchIndex == "" {

@@ -1,4 +1,17 @@
 // cart.go — HTTP handlers for shopping cart operations (Redis-backed).
+//
+// ENDPOINTS:
+//
+//	POST   /cart           Add an approved note to the user's cart
+//	GET    /cart           Retrieve all items in the user's cart
+//	DELETE /cart/:item_id  Remove an item from the user's cart
+//
+// DESIGN:
+//
+//	Cart state lives entirely in Redis as a set per user (key: "cart:{user_id}").
+//	Items are note IDs stored as strings. Before adding, the handler validates
+//	that the note exists and is approved (DB lookup). Removal and retrieval are
+//	pure Redis operations. The cart is cleared server-side after order fulfilment.
 package handlers
 
 import (
@@ -19,7 +32,16 @@ type CartRequest struct {
 	ItemID string `json:"item_id" binding:"required"`
 }
 
-// AddToCart handles adding an item to the user's cart in Redis.
+// AddToCart validates and adds an approved note to the user's shopping cart.
+//
+// Validates that item_id is a positive integer, then checks the notes table
+// to confirm the note exists and has status "Approved" before adding.
+//
+// DB: SELECT from notes (existence + approval check via GORM).
+// Technologies: PostgreSQL (GORM) for validation, Redis SADD for cart storage.
+// Helpers: helpers.BindJSON, helpers.GetUserID, helpers.CartKey.
+//
+// Route: POST /api/v1/cart
 func (app *App) AddToCart(c *gin.Context) {
 	cartLog.Log("ADD", "Processing add to cart request")
 
@@ -67,7 +89,16 @@ func (app *App) AddToCart(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Item added to cart successfully"})
 }
 
-// GetCart handles retrieving all items in the user's cart from Redis.
+// GetCart returns all item IDs in the authenticated user's shopping cart.
+//
+// Pure Redis read — no database interaction. Returns the set members
+// as a JSON array. Empty cart returns an empty array (not an error).
+//
+// DB: None (Redis-only operation).
+// Technologies: Redis SMEMBERS for set retrieval.
+// Helpers: helpers.GetUserID, helpers.CartKey.
+//
+// Route: GET /api/v1/cart
 func (app *App) GetCart(c *gin.Context) {
 	cartLog.Log("GET", "Processing get cart request")
 
@@ -89,7 +120,16 @@ func (app *App) GetCart(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"cart": cartItems})
 }
 
-// RemoveFromCart handles removing an item from the user's cart in Redis.
+// RemoveFromCart removes a single item from the user's shopping cart.
+//
+// Idempotent — removing a non-existent item silently succeeds (Redis SREM
+// returns 0 but no error). Item ID comes from the URL parameter.
+//
+// DB: None (Redis-only operation).
+// Technologies: Redis SREM for set removal.
+// Helpers: helpers.GetUserID, helpers.CartKey.
+//
+// Route: DELETE /api/v1/cart/:item_id
 func (app *App) RemoveFromCart(c *gin.Context) {
 	cartLog.Log("REMOVE", "Processing remove from cart request")
 

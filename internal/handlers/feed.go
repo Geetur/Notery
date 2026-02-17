@@ -1,4 +1,22 @@
 // feed.go — HTTP handlers for the hot feed, voting, and hotness scoring.
+//
+// ENDPOINTS:
+//
+//	GET  /feed/hot          Hot feed (personalised if authenticated, global if anonymous)
+//	POST /notes/:id/upvote  Upvote a note (toggle off if already upvoted, switch if downvoted)
+//	POST /notes/:id/downvote Downvote a note (toggle off if already downvoted, switch if upvoted)
+//
+// DESIGN:
+//
+//	The hot feed uses Reddit's hotness algorithm: sign(score) * log10(max(|score|, 1)) +
+//	(created_at - epoch) / decay. Scores are stored in Redis sorted sets for O(log n)
+//	retrieval. Personalised feeds union the user's subscribed subnotery feeds with the
+//	global feed, giving subscribed content a 1.1x weight boost.
+//
+//	Voting is DB-authoritative: each vote runs in a GORM transaction that atomically
+//	updates the votes table and the note's counter columns. Redis vote cache is updated
+//	best-effort after the transaction. The note is re-read from the DB after the
+//	transaction for accurate counts before hotness recalculation.
 package handlers
 
 import (
@@ -33,7 +51,8 @@ const (
 )
 
 // CalculateHotness computes the Reddit-style hot score for a note.
-// Formula: sign(score) * log10(max(|score|, 1)) + (created_at - epoch) / decay
+// Formula: sign(score) * log10(max(|score|, 1)) + (created_at - epoch) / decay.
+// The epoch is Jan 1, 2025; decay constant is 45000 seconds (12.5 hours).
 func CalculateHotness(upvotes, downvotes uint64, createdAt time.Time) float64 {
 	score := int64(upvotes) - int64(downvotes)
 	order := math.Log10(math.Max(math.Abs(float64(score)), 1))
@@ -47,8 +66,12 @@ func CalculateHotness(upvotes, downvotes uint64, createdAt time.Time) float64 {
 	return sign*order + seconds/hotDecaySeconds
 }
 
-// UpdateNoteHotness recalculates and stores a note's hotness score in Redis.
-// Call this after any vote change.
+// UpdateNoteHotness recalculates and persists a note's hotness score.
+// Updates both the database (hotness column) and Redis sorted sets (global + subnotery feeds).
+// Called after any vote change or note approval.
+//
+// DB: UPDATE notes.hotness via GORM.
+// Technologies: PostgreSQL (GORM), Redis ZADD on feed sorted sets.
 func (app *App) UpdateNoteHotness(ctx context.Context, note *models.Note) error {
 	hotness := CalculateHotness(note.Upvotes, note.Downvotes, note.CreatedAt)
 	feedLog.Log("HOTNESS", "calculated", "note_id", note.ID, "score", fmt.Sprintf("%.4f", hotness), "upvotes", note.Upvotes, "downvotes", note.Downvotes)
@@ -96,7 +119,10 @@ func (app *App) UpdateNoteHotness(ctx context.Context, note *models.Note) error 
 }
 
 // AddNoteToFeed adds an approved note to the hot feeds.
-// Call this when a note is approved.
+// No-op if the note is not approved. Called when a note is approved.
+//
+// DB: None (delegates to UpdateNoteHotness).
+// Technologies: Redis ZADD via UpdateNoteHotness.
 func (app *App) AddNoteToFeed(ctx context.Context, note *models.Note) error {
 	if note.Status != models.StatusApproved {
 		return nil
@@ -104,8 +130,11 @@ func (app *App) AddNoteToFeed(ctx context.Context, note *models.Note) error {
 	return app.UpdateNoteHotness(ctx, note)
 }
 
-// RemoveNoteFromFeed removes a note from all hot feeds.
-// Call this when a note is rejected or deleted.
+// RemoveNoteFromFeed removes a note from all hot feeds (global + subnotery).
+// No-op if Redis is not configured. Called when a note is rejected or deleted.
+//
+// DB: None (Redis-only operation).
+// Technologies: Redis ZREM on global and subnotery feed keys.
 func (app *App) RemoveNoteFromFeed(ctx context.Context, note *models.Note) error {
 	if app.RDB == nil {
 		return nil
@@ -130,9 +159,24 @@ func (app *App) RemoveNoteFromFeed(ctx context.Context, note *models.Note) error
 	return nil
 }
 
-// GetHotFeed returns the hot feed for a user (personalized) or globally (public).
-// For logged-in users: subscribed subnoteries first, then global.
-// For anonymous users: just global hot notes.
+// GetHotFeed returns the hot feed, personalised for authenticated users or
+// global for anonymous visitors.
+//
+// For logged-in users: fetches subscribed subnotery feeds and unions them with
+// the global feed (subscribed content gets a 1.1x weight boost). Falls back to
+// global if the user has no subscriptions. For anonymous users: returns the
+// global hot feed directly.
+//
+// DB: SELECT from user_memberships (subscriptions lookup), SELECT from notes (batch fetch by ID).
+// Technologies: Redis ZUNIONSTORE + ZREVRANGE for feed assembly, PostgreSQL (GORM) for note data.
+// Helpers: helpers.ParsePagination, helpers.TryGetUserID.
+//
+// Query params:
+//
+//	page  — page number (default 1)
+//	limit — page size (default 25, max 100)
+//
+// Route: GET /api/v1/feed/hot
 func (app *App) GetHotFeed(c *gin.Context) {
 	start := time.Now()
 	ctx := c.Request.Context()
@@ -267,22 +311,35 @@ func (app *App) fetchNotes(noteIDs []string) []models.Note {
 	return ordered
 }
 
-// Upvote handles upvoting a note. Delegates to voteNote with VoteUp direction.
+// Upvote handles upvoting a note. Delegates to the unified voteNote handler.
+//
+// Route: POST /api/v1/notes/:id/upvote
 func (app *App) Upvote(c *gin.Context) {
 	app.voteNote(c, models.VoteUp)
 }
 
-// Downvote handles downvoting a note. Delegates to voteNote with VoteDown direction.
+// Downvote handles downvoting a note. Delegates to the unified voteNote handler.
+//
+// Route: POST /api/v1/notes/:id/downvote
 func (app *App) Downvote(c *gin.Context) {
 	app.voteNote(c, models.VoteDown)
 }
 
-// voteNote is the unified vote handler for notes. Reddit-style toggle behavior:
+// voteNote is the unified vote handler for notes. Implements Reddit-style toggle:
 //   - Vote same direction as existing → toggle off (remove vote)
 //   - Vote opposite direction → switch
-//   - No existing vote → create new vote
+//   - No existing vote → create new
 //
-// Uses a DB transaction as the source of truth; Redis cache is updated afterwards.
+// The entire operation runs in a DB transaction for atomicity. After the transaction,
+// the note is re-read from the DB for accurate vote counts, then hotness is recalculated
+// and stored in both the DB and Redis.
+//
+// DB: SELECT/INSERT/UPDATE/DELETE on votes, UPDATE on notes (counter columns), all in transaction.
+//     Re-SELECT note after transaction for accurate counts.
+// Technologies: PostgreSQL (GORM transaction), Redis HSET/HDEL (vote cache), Redis ZADD (hotness).
+// Helpers: helpers.GetUserID.
+//
+// Route: POST /api/v1/notes/:id/upvote (via Upvote) or POST /api/v1/notes/:id/downvote (via Downvote)
 func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 	ctx := c.Request.Context()
 	noteID := c.Param("id")

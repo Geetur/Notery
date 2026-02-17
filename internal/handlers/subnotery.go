@@ -1,4 +1,17 @@
-// subnotery.go — HTTP handlers for subnotery management (join, admin, create).
+// subnotery.go — HTTP handlers for subnotery management (join, admin).
+//
+// ENDPOINTS:
+//
+//	POST /subnoteries/:subnotery_id/join    Join a subnotery as a member
+//	POST /subnoteries/:subnotery_id/admins  Grant admin privileges to a user
+//
+// DESIGN:
+//
+//	Subnoteries are community containers for notes. Users join as members;
+//	admins are promoted by existing admins. Membership and admin status are
+//	stored via GORM many-to-many associations (user_memberships, user_admins).
+//	Auto-creation of subnoteries happens in the note creation flow (note.go),
+//	not here.
 package handlers
 
 import (
@@ -13,6 +26,15 @@ import (
 var subnoteryLog = helpers.SubnoteryLog
 
 // AddAdminToSubnotery grants admin privileges to a user for a specific subnotery.
+//
+// Looks up the subnotery by URL param ID and the target user by email from
+// the request body. Appends the user to the subnotery's Admins association.
+//
+// DB: SELECT from subnoteries, SELECT from users (by email), INSERT into user_admins (GORM association).
+// Technologies: PostgreSQL (GORM many-to-many association append).
+// Helpers: helpers.MustParseSubnoteryID, helpers.BindJSON, helpers.FetchSubnotery, helpers.FetchUserByEmail.
+//
+// Route: POST /api/v1/subnoteries/:subnotery_id/admins
 func (app *App) AddAdminToSubnotery(c *gin.Context) {
 	subnoteryLog.Log("ADD_ADMIN", "Processing add admin request")
 
@@ -61,6 +83,16 @@ func (app *App) AddAdminToSubnotery(c *gin.Context) {
 }
 
 // JoinSubnotery adds the authenticated user as a member of the specified subnotery.
+//
+// Fetches the subnotery by URL param ID and the authenticated user from context.
+// Appends the user to the subnotery's Members association. Idempotent — joining
+// a subnotery the user is already a member of is a no-op at the DB level.
+//
+// DB: SELECT from subnoteries, SELECT from users, INSERT into user_memberships (GORM association).
+// Technologies: PostgreSQL (GORM many-to-many association append).
+// Helpers: helpers.MustParseSubnoteryID, helpers.FetchSubnotery, helpers.GetUserID, helpers.FetchUser.
+//
+// Route: POST /api/v1/subnoteries/:subnotery_id/join
 func (app *App) JoinSubnotery(c *gin.Context) {
 	subnoteryLog.Log("JOIN", "Processing join subnotery request")
 

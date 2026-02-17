@@ -1,13 +1,23 @@
 // search.go — Full-text search across notes, subnoteries, users, and comments.
 //
-// Provides a Reddit-style unified search endpoint where the caller can toggle
-// between result types via the "type" query parameter.
+// ENDPOINTS:
 //
-// Search types:
-//   - notes (default): Meilisearch-backed full-text search on approved notes.
-//   - subnoteries:     Database ILIKE search on subnotery names.
-//   - users:           Database ILIKE search on username / display_name.
-//   - comments:        Database ILIKE search on comment body (approved notes only).
+//	GET /search?q=&type=&page=&limit=   Unified multi-type search
+//
+// DESIGN:
+//
+//	Provides a Reddit-style unified search endpoint where the caller toggles
+//	between result types via the "type" query parameter.
+//
+//	Search types:
+//	  - notes (default): Meilisearch-backed full-text search on approved notes.
+//	  - subnoteries:     Database ILIKE search on subnotery names.
+//	  - users:           Database ILIKE search on username / display_name.
+//	  - comments:        Database ILIKE search on comment body (approved notes only).
+//
+//	Note search delegates to Meilisearch for relevance-ranked results. All other
+//	types use PostgreSQL ILIKE for pattern matching on public-facing fields only.
+//	All responses are paginated with {type, results, total, page, limit}.
 package handlers
 
 import (
@@ -45,10 +55,17 @@ func validSearchType(t SearchType) bool {
 
 // Search handles the unified search endpoint.
 //
+// Dispatches to type-specific search functions based on the "type" query param.
+// All results follow the same paginated envelope: {type, results, total, page, limit}.
+//
+// DB: Depends on search type — see individual search functions.
+// Technologies: PostgreSQL (GORM ILIKE), Meilisearch (full-text for notes).
+// Helpers: helpers.ParsePagination.
+//
 // Query params:
-//   - q:    search query (required, min 1 char after trimming)
-//   - type: notes | subnoteries | users | comments (default: notes)
-//   - page: page number (default 1)
+//   - q:     search query (required, min 1 char after trimming)
+//   - type:  notes | subnoteries | users | comments (default: notes)
+//   - page:  page number (default 1)
 //   - limit: results per page (default 25, max 100)
 //
 // Route: GET /api/v1/search
@@ -84,7 +101,10 @@ func (app *App) SearchAll(c *gin.Context) {
 	}
 }
 
-// searchNotes queries approved notes via Meilisearch.
+// searchNotes queries approved notes via Meilisearch full-text search.
+//
+// DB: None — reads from Meilisearch index (synced on note approval).
+// Technologies: Meilisearch (offset/limit pagination).
 func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination) {
 	if app.Search == nil || app.SearchIndex == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Search is not configured"})
@@ -112,7 +132,10 @@ func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination
 	})
 }
 
-// searchSubnoteries queries subnotery names via database ILIKE.
+// searchSubnoteries queries subnotery names via database ILIKE pattern matching.
+//
+// DB: COUNT + SELECT from subnoteries WHERE name ILIKE. Paginated with OFFSET/LIMIT.
+// Technologies: PostgreSQL (GORM ILIKE).
 func (app *App) searchSubnoteries(c *gin.Context, query string, pag helpers.Pagination) {
 	pattern := "%" + query + "%"
 
@@ -140,7 +163,10 @@ func (app *App) searchSubnoteries(c *gin.Context, query string, pag helpers.Pagi
 }
 
 // searchUsers queries users by username or display name via database ILIKE.
-// Only returns public profile data — never leaks email or hash.
+// Only returns public profile data (via User.PublicProfile()) — never leaks email or hash.
+//
+// DB: COUNT + SELECT from users WHERE username/display_name ILIKE. Paginated.
+// Technologies: PostgreSQL (GORM ILIKE).
 func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination) {
 	pattern := "%" + query + "%"
 
@@ -176,7 +202,12 @@ func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination
 }
 
 // searchComments queries comment bodies via database ILIKE.
-// Only searches comments on approved notes. Returns comment metadata, not full trees.
+// Only searches non-deleted comments on approved notes. Returns comment metadata
+// with resolved usernames, not full threaded trees.
+//
+// DB: COUNT + SELECT from comments JOIN notes WHERE status=Approved AND body ILIKE.
+//     Fetches usernames via fetchCommentUsernames helper. Paginated.
+// Technologies: PostgreSQL (GORM ILIKE + JOIN).
 func (app *App) searchComments(c *gin.Context, query string, pag helpers.Pagination) {
 	pattern := "%" + query + "%"
 
