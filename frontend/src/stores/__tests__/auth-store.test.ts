@@ -1,7 +1,7 @@
 // auth-store.test.ts — Tests for the Zustand auth store.
-import { useAuthStore } from "@/stores/auth-store";
 import { getAccessToken } from "@/lib/api-client";
 import { getMyProfile } from "@/services/profile";
+import { useAuthStore } from "@/stores/auth-store";
 
 // Mock the api-client module
 jest.mock("@/lib/api-client", () => ({
