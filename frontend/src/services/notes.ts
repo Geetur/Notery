@@ -6,6 +6,7 @@ import type {
     FeedResponse,
     Note,
     NotesListResponse,
+    NoteStatus,
     PaginationParams,
     VoteResponse,
 } from "@/types";
@@ -84,4 +85,16 @@ export function getPendingNotes(
     if (params?.limit) query.set("limit", String(params.limit));
     const qs = query.toString();
     return apiGet(`/notes/pending${qs ? `?${qs}` : ""}`);
+}
+
+/** GET /me/notes — List notes created by the authenticated user (with optional status filter). */
+export function getMyNotes(
+    params?: PaginationParams & { status?: NoteStatus }
+): Promise<NotesListResponse> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    if (params?.status) query.set("status", params.status);
+    const qs = query.toString();
+    return apiGet(`/me/notes${qs ? `?${qs}` : ""}`);
 }
