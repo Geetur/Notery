@@ -169,6 +169,9 @@ func main() {
 	// ----- Public User Profile Read -----
 	api.GET("/users/:id/profile", app.GetUserProfile)
 
+	// ----- Public Avatar Proxy (24h cache) -----
+	api.GET("/users/:id/avatar", app.GetAvatar)
+
 	// ----- Search (public, optional auth for personalization) -----
 	api.GET("/search", middleware.OptionalAuth(cfg.JWTSecret), app.SearchAll)
 
@@ -218,6 +221,12 @@ func main() {
 		protected.GET("/me/profile", app.GetMyProfile)
 		// Update own profile (partial updates)
 		protected.PATCH("/me/profile", app.UpdateMyProfile)
+
+		// ----- Avatar Endpoints -----
+		// Upload a new avatar (multipart, max 5 MB, JPEG/PNG/WebP/GIF)
+		protected.POST("/me/avatar", app.UploadAvatar)
+		// Delete own avatar
+		protected.DELETE("/me/avatar", app.DeleteAvatar)
 
 		// ----- Comment Write Endpoints -----
 		// Create a new comment or reply on a note
