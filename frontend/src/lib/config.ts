@@ -3,7 +3,7 @@
 
 /** Base URL for the Notery API. Defaults to localhost:8080 in development. */
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 /** API v1 prefix. All endpoints are under this path. */
 export const API_V1 = `${API_BASE_URL}/api/v1`;

@@ -1,114 +1,114 @@
 // notes.test.ts — Tests for notes service functions.
 
 jest.mock("@/lib/api-client", () => ({
-  apiGet: jest.fn(),
-  apiPost: jest.fn(),
-  apiDelete: jest.fn(),
-  getAccessToken: jest.fn(() => "mock-token"),
+    apiGet: jest.fn(),
+    apiPost: jest.fn(),
+    apiDelete: jest.fn(),
+    getAccessToken: jest.fn(() => "mock-token"),
 }));
 
 jest.mock("@/lib/config", () => ({
-  API_V1: "http://localhost:8080/api/v1",
-  TOKEN_KEY: "notery_access_token",
-  REFRESH_TOKEN_KEY: "notery_refresh_token",
+    API_V1: "http://localhost:8080/api/v1",
+    TOKEN_KEY: "notery_access_token",
+    REFRESH_TOKEN_KEY: "notery_refresh_token",
 }));
 
+import { apiDelete, apiGet, apiPost } from "@/lib/api-client";
 import {
-  getHotFeed,
-  getApprovedNotes,
-  getNoteById,
-  createNote,
-  upvoteNote,
-  downvoteNote,
-  deleteNote,
-  getPendingNotes,
+    createNote,
+    deleteNote,
+    downvoteNote,
+    getApprovedNotes,
+    getHotFeed,
+    getNoteById,
+    getPendingNotes,
+    upvoteNote,
 } from "@/services/notes";
-import { apiGet, apiPost, apiDelete } from "@/lib/api-client";
 
 const mockApiGet = apiGet as jest.MockedFunction<typeof apiGet>;
 const mockApiPost = apiPost as jest.MockedFunction<typeof apiPost>;
 const mockApiDelete = apiDelete as jest.MockedFunction<typeof apiDelete>;
 
 beforeEach(() => {
-  jest.clearAllMocks();
+    jest.clearAllMocks();
 });
 
 describe("getHotFeed", () => {
-  it("calls /feed/hot with no params", async () => {
-    mockApiGet.mockResolvedValue({ notes: [], total: 0 });
-    await getHotFeed();
-    expect(mockApiGet).toHaveBeenCalledWith("/feed/hot");
-  });
+    it("calls /feed/hot with no params", async () => {
+        mockApiGet.mockResolvedValue({ notes: [], total: 0 });
+        await getHotFeed();
+        expect(mockApiGet).toHaveBeenCalledWith("/feed/hot");
+    });
 
-  it("passes pagination params", async () => {
-    mockApiGet.mockResolvedValue({ notes: [], total: 0 });
-    await getHotFeed({ page: 2, limit: 10 });
-    expect(mockApiGet).toHaveBeenCalledWith("/feed/hot?page=2&limit=10");
-  });
+    it("passes pagination params", async () => {
+        mockApiGet.mockResolvedValue({ notes: [], total: 0 });
+        await getHotFeed({ page: 2, limit: 10 });
+        expect(mockApiGet).toHaveBeenCalledWith("/feed/hot?page=2&limit=10");
+    });
 });
 
 describe("getApprovedNotes", () => {
-  it("calls /notes/approved", async () => {
-    mockApiGet.mockResolvedValue({ notes: [], total: 0 });
-    await getApprovedNotes();
-    expect(mockApiGet).toHaveBeenCalledWith("/notes/approved");
-  });
+    it("calls /notes/approved", async () => {
+        mockApiGet.mockResolvedValue({ notes: [], total: 0 });
+        await getApprovedNotes();
+        expect(mockApiGet).toHaveBeenCalledWith("/notes/approved");
+    });
 });
 
 describe("getNoteById", () => {
-  it("calls /notes/:id", async () => {
-    const mockNote = { id: 1, title: "Test" };
-    mockApiGet.mockResolvedValue(mockNote);
-    const result = await getNoteById(1);
-    expect(mockApiGet).toHaveBeenCalledWith("/notes/1");
-    expect(result).toEqual(mockNote);
-  });
+    it("calls /notes/:id", async () => {
+        const mockNote = { id: 1, title: "Test" };
+        mockApiGet.mockResolvedValue(mockNote);
+        const result = await getNoteById(1);
+        expect(mockApiGet).toHaveBeenCalledWith("/notes/1");
+        expect(result).toEqual(mockNote);
+    });
 });
 
 describe("createNote", () => {
-  it("calls POST /notes with note data", async () => {
-    const data = {
-      title: "My Note",
-      author: "Author",
-      subnotery_name: "Science",
-      price: 499,
-    };
-    mockApiPost.mockResolvedValue({ id: 1, ...data });
-    await createNote(data);
-    expect(mockApiPost).toHaveBeenCalledWith("/notes", data);
-  });
+    it("calls POST /notes with note data", async () => {
+        const data = {
+            title: "My Note",
+            author: "Author",
+            subnotery_name: "Science",
+            price: 499,
+        };
+        mockApiPost.mockResolvedValue({ id: 1, ...data });
+        await createNote(data);
+        expect(mockApiPost).toHaveBeenCalledWith("/notes", data);
+    });
 });
 
 describe("upvoteNote", () => {
-  it("calls POST /notes/:id/upvote", async () => {
-    mockApiPost.mockResolvedValue({ vote: 1 });
-    await upvoteNote(5);
-    expect(mockApiPost).toHaveBeenCalledWith("/notes/5/upvote");
-  });
+    it("calls POST /notes/:id/upvote", async () => {
+        mockApiPost.mockResolvedValue({ vote: 1 });
+        await upvoteNote(5);
+        expect(mockApiPost).toHaveBeenCalledWith("/notes/5/upvote");
+    });
 });
 
 describe("downvoteNote", () => {
-  it("calls POST /notes/:id/downvote", async () => {
-    mockApiPost.mockResolvedValue({ vote: -1 });
-    await downvoteNote(5);
-    expect(mockApiPost).toHaveBeenCalledWith("/notes/5/downvote");
-  });
+    it("calls POST /notes/:id/downvote", async () => {
+        mockApiPost.mockResolvedValue({ vote: -1 });
+        await downvoteNote(5);
+        expect(mockApiPost).toHaveBeenCalledWith("/notes/5/downvote");
+    });
 });
 
 describe("deleteNote", () => {
-  it("calls DELETE /notes/:id", async () => {
-    mockApiDelete.mockResolvedValue({ message: "deleted" });
-    await deleteNote(3);
-    expect(mockApiDelete).toHaveBeenCalledWith("/notes/3");
-  });
+    it("calls DELETE /notes/:id", async () => {
+        mockApiDelete.mockResolvedValue({ message: "deleted" });
+        await deleteNote(3);
+        expect(mockApiDelete).toHaveBeenCalledWith("/notes/3");
+    });
 });
 
 describe("getPendingNotes", () => {
-  it("calls /notes/pending with pagination", async () => {
-    mockApiGet.mockResolvedValue({ notes: [], total: 0 });
-    await getPendingNotes({ page: 1, limit: 25 });
-    expect(mockApiGet).toHaveBeenCalledWith(
-      "/notes/pending?page=1&limit=25"
-    );
-  });
+    it("calls /notes/pending with pagination", async () => {
+        mockApiGet.mockResolvedValue({ notes: [], total: 0 });
+        await getPendingNotes({ page: 1, limit: 25 });
+        expect(mockApiGet).toHaveBeenCalledWith(
+            "/notes/pending?page=1&limit=25"
+        );
+    });
 });

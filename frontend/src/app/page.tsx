@@ -1,9 +1,9 @@
 // page.tsx — Home page: Reddit-style feed with left nav + main feed + right sidebar.
 "use client";
 
+import { NoteFeed } from "@/components/feed/note-feed";
 import { LeftSidebar } from "@/components/layout/left-sidebar";
 import { RightSidebar } from "@/components/layout/right-sidebar";
-import { NoteFeed } from "@/components/feed/note-feed";
 
 export default function HomePage() {
   return (

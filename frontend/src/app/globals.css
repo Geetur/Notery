@@ -9,6 +9,7 @@
 }
 
 @layer base {
+
   /* Light theme — clean Reddit-inspired palette */
   :root {
     --background: 0 0% 96%;
