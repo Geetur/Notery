@@ -307,6 +307,24 @@ go test -race ./...
 .\scripts\test-comments.ps1
 ```
 
+## Frontend
+
+The `frontend/` directory contains a production-quality Next.js 14 frontend with:
+
+- Reddit-style feed, voting, threaded comments
+- Note marketplace (browse, purchase, download PDFs)
+- Dark mode, responsive 3-column layout
+- 54 tests, TypeScript, TailwindCSS, shadcn/ui
+
+```bash
+cd frontend
+npm install
+npm run dev    # http://localhost:3000
+npm test       # 54 tests
+```
+
+See [frontend/README.md](frontend/README.md) for full documentation.
+
 ## License
 
 Copyright (c) 2026 Jeter Pontes. All rights reserved.
