@@ -2,6 +2,7 @@
 // Prices, dates, vote counts, file sizes, etc.
 
 import { format, formatDistanceToNow } from "date-fns";
+import { API_V1 } from "./config";
 
 /**
  * Format cents to a display price string.
@@ -73,4 +74,17 @@ export function formatFileSize(bytes: number): string {
  */
 export function netScore(upvotes: number, downvotes: number): number {
     return upvotes - downvotes;
+}
+
+/**
+ * Build the avatar proxy URL for a user.
+ * Returns undefined if the user has no avatar, so <AvatarImage> shows fallback.
+ * Appends a cache-bust `v` param to force reload after upload.
+ */
+export function avatarUrl(
+    userId: number,
+    avatarKey: string | undefined | null
+): string | undefined {
+    if (!avatarKey) return undefined;
+    return `${API_V1}/users/${userId}/avatar?v=${encodeURIComponent(avatarKey)}`;
 }

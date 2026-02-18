@@ -1,5 +1,11 @@
 // notes.ts — Notes API service. Wraps all note-related endpoints.
-import { apiDelete, apiGet, apiPost, getAccessToken } from "@/lib/api-client";
+import {
+    apiDelete,
+    apiGet,
+    apiPatch,
+    apiPost,
+    getAccessToken,
+} from "@/lib/api-client";
 import { API_V1 } from "@/lib/config";
 import type {
     CreateNoteRequest,
@@ -97,4 +103,14 @@ export function getMyNotes(
     if (params?.status) query.set("status", params.status);
     const qs = query.toString();
     return apiGet(`/me/notes${qs ? `?${qs}` : ""}`);
+}
+
+/** PATCH /notes/:id/approve — Approve a pending note (admin only). */
+export function approveNote(id: number): Promise<{ message: string }> {
+    return apiPatch(`/notes/${id}/approve`);
+}
+
+/** PATCH /notes/:id/reject — Reject a note (admin only). */
+export function rejectNote(id: number): Promise<{ message: string }> {
+    return apiPatch(`/notes/${id}/reject`);
 }

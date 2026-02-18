@@ -43,7 +43,7 @@ export function NoteCard({ note, viewMode, purchased }: NoteCardProps) {
                     {/* Meta line */}
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-0.5">
                         <Link
-                            href={`/n/${note.subnotery_id}`}
+                            href={`/communities/${note.subnotery_id}`}
                             className="font-semibold text-foreground hover:underline"
                         >
                             n/{note.subnotery_id}

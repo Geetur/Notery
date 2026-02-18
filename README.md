@@ -106,7 +106,7 @@ Notery/
 │   │   ├── profile.go             # User profile management
 │   │   ├── purchase.go            # Checkout, orders, purchase history
 │   │   ├── search.go              # Multi-type search
-│   │   ├── subnotery.go           # Join subnotery, add admin
+│   │   ├── subnotery.go           # Browse, join subnotery, add admin
 │   │   ├── webhook.go             # Stripe webhook (signature-verified)
 │   │   └── *_test.go              # 191 tests across 9 test files
 │   ├── helpers/
@@ -285,7 +285,7 @@ npm run dev
 # → http://localhost:3000
 ```
 
-## API Endpoints (54 routes)
+## API Endpoints (57 routes)
 
 ### Public (17 routes)
 
@@ -308,7 +308,7 @@ npm run dev
 | POST | `/api/v1/login` | Authenticate (legacy) |
 | POST | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
 
-### Public with Optional Auth (6 routes)
+### Public with Optional Auth (9 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -318,6 +318,9 @@ npm run dev
 | GET | `/api/v1/users/:id/profile` | Public user profile |
 | GET | `/api/v1/users/:id/avatar` | Public avatar proxy (24h cache) |
 | GET | `/api/v1/search?q=&type=` | Multi-type search (notes/subnoteries/users/comments) |
+| GET | `/api/v1/subnoteries` | List all subnoteries (paginated) |
+| GET | `/api/v1/subnoteries/:id` | Get subnotery detail (admins, member count) |
+| GET | `/api/v1/subnoteries/:id/notes` | List approved notes in subnotery (paginated) |
 
 ### Auth-Only — Requires JWT, no email verification needed (10 routes)
 

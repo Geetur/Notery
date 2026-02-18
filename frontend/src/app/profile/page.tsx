@@ -17,6 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { avatarUrl } from "@/lib/format";
 import { resendVerification } from "@/services/auth";
 import { getMyNotes } from "@/services/notes";
 import { deleteAvatar, updateMyProfile, uploadAvatar } from "@/services/profile";
@@ -252,7 +253,7 @@ export default function ProfilePage() {
                             <div className="flex items-center gap-4">
                                 <div className="relative group">
                                     <Avatar className="h-16 w-16">
-                                        <AvatarImage src={user.avatar_url} />
+                                        <AvatarImage src={avatarUrl(user.id, user.avatar_url)} />
                                         <AvatarFallback className="text-lg">
                                             {user.username[0]?.toUpperCase()}
                                         </AvatarFallback>

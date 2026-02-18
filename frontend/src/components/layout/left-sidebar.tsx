@@ -15,6 +15,7 @@ import {
     ShoppingCart,
     TrendingUp,
     User,
+    Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -81,6 +82,12 @@ export function LeftSidebar({ mobile }: LeftSidebarProps) {
                         icon={<Search className={iconSize} />}
                         label="Explore"
                         active={pathname === "/search"}
+                    />
+                    <SidebarLink
+                        href="/communities"
+                        icon={<Users className={iconSize} />}
+                        label="Communities"
+                        active={pathname.startsWith("/communities")}
                     />
                 </div>
 

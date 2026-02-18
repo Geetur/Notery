@@ -36,8 +36,34 @@ export interface Subnotery {
     name: string;
     admins?: User[];
     members?: User[];
+    admin_count?: number;
+    member_count?: number;
     created_at: string;
     updated_at: string;
+}
+
+export interface SubnoteryListItem {
+    id: number;
+    name: string;
+    admin_count: number;
+    member_count: number;
+    created_at: string;
+}
+
+export interface SubnoteryDetail {
+    id: number;
+    name: string;
+    admins: { id: number; username: string }[];
+    member_count: number;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface SubnoteryListResponse {
+    subnoteries: SubnoteryListItem[];
+    total: number;
+    page: number;
+    limit: number;
 }
 
 export interface User {

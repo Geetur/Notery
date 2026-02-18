@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate } from "@/lib/format";
+import { avatarUrl, formatDate } from "@/lib/format";
 import { getUserProfile } from "@/services/profile";
 import { useQuery } from "@tanstack/react-query";
 import { Calendar } from "lucide-react";
@@ -54,7 +54,7 @@ export default function UserProfilePage() {
                     {/* Avatar + name */}
                     <div className="flex items-end gap-4 -mt-10 mb-4">
                         <Avatar className="h-20 w-20 border-4 border-card">
-                            <AvatarImage src={profile.avatar_url} />
+                            <AvatarImage src={avatarUrl(profile.id, profile.avatar_url)} />
                             <AvatarFallback className="text-xl">
                                 {profile.username[0]?.toUpperCase()}
                             </AvatarFallback>

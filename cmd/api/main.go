@@ -132,6 +132,11 @@ func main() {
 	api.GET("/users/:id/profile", app.GetUserProfile)
 	api.GET("/users/:id/avatar", app.GetAvatar)
 
+	// Subnotery browsing (public)
+	api.GET("/subnoteries", app.ListSubnoteries)
+	api.GET("/subnoteries/:subnotery_id", app.GetSubnoteryDetail)
+	api.GET("/subnoteries/:subnotery_id/notes", app.GetSubnoteryNotes)
+
 	// ── Authenticated Read-Only (login required, no verification) ──────────
 	// Unverified users can browse, view profile, check purchases — read-only.
 	readOnly := api.Group("", middleware.RequireAuth(cfg.JWTSecret))
