@@ -59,17 +59,29 @@ func EnsureMeilisearchIndex(client meilisearch.ServiceManager, indexName string)
 		return errors.New("meilisearch index name is empty")
 	}
 	_, err := client.GetIndex(indexName)
-	if err == nil {
-		return nil
-	}
-	log.Printf("Meilisearch index %q not found, creating...", indexName)
-	_, err = client.CreateIndex(&meilisearch.IndexConfig{
-		Uid:        indexName,
-		PrimaryKey: "id",
-	})
 	if err != nil {
-		log.Printf("Failed to create Meilisearch index %q: %v", indexName, err)
-		return err
+		log.Printf("Meilisearch index %q not found, creating...", indexName)
+		_, err = client.CreateIndex(&meilisearch.IndexConfig{
+			Uid:        indexName,
+			PrimaryKey: "id",
+		})
+		if err != nil {
+			log.Printf("Failed to create Meilisearch index %q: %v", indexName, err)
+			return err
+		}
 	}
+
+	// Configure sortable attributes so search results can be ordered by
+	// hotness, recency, or vote count.
+	index := client.Index(indexName)
+	if _, err := index.UpdateSortableAttributes(&[]string{
+		"hotness",
+		"created_at",
+		"upvotes",
+		"downvotes",
+	}); err != nil {
+		log.Printf("Warning: failed to set sortable attributes for %q: %v (search will still work)", indexName, err)
+	}
+
 	return nil
 }

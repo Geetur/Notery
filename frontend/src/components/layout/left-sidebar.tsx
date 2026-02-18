@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import {
+    Bookmark,
     BookOpen,
     Compass,
     FileText,
@@ -107,6 +108,12 @@ export function LeftSidebar({ mobile }: LeftSidebarProps) {
                                 icon={<BookOpen className={iconSize} />}
                                 label="My Purchases"
                                 active={pathname === "/purchases"}
+                            />
+                            <SidebarLink
+                                href="/bookmarks"
+                                icon={<Bookmark className={iconSize} />}
+                                label="Bookmarks"
+                                active={pathname === "/bookmarks"}
                             />
                             <SidebarLink
                                 href="/cart"

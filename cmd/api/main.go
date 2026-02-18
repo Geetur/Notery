@@ -150,6 +150,8 @@ func main() {
 	readOnly.GET("/me/profile", app.GetMyProfile)
 	readOnly.GET("/orders/:order_id", app.GetOrderStatus)
 	readOnly.GET("/me/notes", app.GetMyNotes)
+	readOnly.GET("/bookmarks", app.GetBookmarks)
+	readOnly.GET("/bookmarks/:note_id", app.CheckBookmark)
 
 	// ── Verified Write Endpoints (login + email verification) ──────────────
 	// All mutating operations require a verified email. Unverified → 403.
@@ -186,6 +188,10 @@ func main() {
 	// Orders & Subnoteries
 	write.POST("/orders/:order_id/confirm", app.ConfirmOrder)
 	write.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
+
+	// Bookmarks
+	write.POST("/bookmarks/:note_id", app.AddBookmark)
+	write.DELETE("/bookmarks/:note_id", app.RemoveBookmark)
 
 	// ── Admin Endpoints (verified + admin role) ────────────────────────────
 	admin := write.Group("", middleware.RequireAdmin(db))

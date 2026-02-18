@@ -1,5 +1,6 @@
 // index.ts — Re-export all service modules.
 export * as authService from "./auth";
+export * as bookmarksService from "./bookmarks";
 export * as commentsService from "./comments";
 export * as notesService from "./notes";
 export * as profileService from "./profile";

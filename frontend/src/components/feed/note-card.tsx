@@ -4,21 +4,51 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
 import { formatPrice, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { addBookmark, removeBookmark } from "@/services/bookmarks";
+import { useAuthStore } from "@/stores/auth-store";
 import type { Note, ViewMode } from "@/types";
-import { Download, FileText, Lock, MessageSquare } from "lucide-react";
+import { Bookmark, BookmarkCheck, Download, FileText, Lock, MessageSquare } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { VoteButtons } from "./vote-buttons";
 
 interface NoteCardProps {
     note: Note;
     viewMode: ViewMode;
     purchased?: boolean;
+    bookmarked?: boolean;
 }
 
-export function NoteCard({ note, viewMode, purchased }: NoteCardProps) {
+export function NoteCard({ note, viewMode, purchased, bookmarked: initialBookmarked }: NoteCardProps) {
     const isCompact = viewMode === "compact";
+    const { isAuthenticated } = useAuthStore();
+    const { toast } = useToast();
+    const [bookmarked, setBookmarked] = useState(initialBookmarked ?? false);
+
+    const toggleBookmark = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!isAuthenticated) {
+            toast({ title: "Sign in", description: "Log in to bookmark notes.", variant: "destructive" });
+            return;
+        }
+        try {
+            if (bookmarked) {
+                await removeBookmark(note.id);
+                setBookmarked(false);
+                toast({ title: "Removed", description: "Bookmark removed." });
+            } else {
+                await addBookmark(note.id);
+                setBookmarked(true);
+                toast({ title: "Saved", description: "Note bookmarked." });
+            }
+        } catch {
+            toast({ title: "Error", description: "Failed to update bookmark.", variant: "destructive" });
+        }
+    };
 
     return (
         <Card
@@ -121,6 +151,19 @@ export function NoteCard({ note, viewMode, purchased }: NoteCardProps) {
                             <MessageSquare className="h-3.5 w-3.5" />
                             Comments
                         </Link>
+
+                        <button
+                            onClick={toggleBookmark}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                            title={bookmarked ? "Remove bookmark" : "Bookmark"}
+                        >
+                            {bookmarked ? (
+                                <BookmarkCheck className="h-3.5 w-3.5 text-primary" />
+                            ) : (
+                                <Bookmark className="h-3.5 w-3.5" />
+                            )}
+                            {bookmarked ? "Saved" : "Save"}
+                        </button>
 
                         {/* Price in compact mode */}
                         {isCompact && (

@@ -20,11 +20,13 @@ import {
     CheckCircle,
     ChevronLeft,
     ChevronRight,
+    Eye,
     FileText,
     Shield,
     Users,
     XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -75,16 +77,12 @@ export default function CommunityDetailPage() {
             .catch(() => { });
     }, [communityId, notesPage]);
 
-    // Load pending notes (admin only)
+    // Load pending notes (admin only, scoped to this subnotery)
     const loadPending = useCallback(() => {
         if (!isAdmin) return;
-        getPendingNotes({ page: 1, limit: PAGE_SIZE })
+        getPendingNotes({ page: 1, limit: PAGE_SIZE, subnotery_id: communityId })
             .then((res) => {
-                // Filter to only this subnotery's pending notes
-                const filtered = (res.notes ?? []).filter(
-                    (n) => n.subnotery_id === communityId
-                );
-                setPendingNotes(filtered);
+                setPendingNotes(res.notes ?? []);
             })
             .catch(() => { });
     }, [isAdmin, communityId]);
@@ -320,6 +318,19 @@ export default function CommunityDetailPage() {
                                                     </div>
                                                 </div>
                                                 <div className="flex gap-2 shrink-0 ml-4">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        asChild
+                                                    >
+                                                        <Link
+                                                            href={`/notes/${note.id}`}
+                                                            title="View note details"
+                                                        >
+                                                            <Eye className="h-4 w-4 mr-1" />
+                                                            View
+                                                        </Link>
+                                                    </Button>
                                                     <Button
                                                         size="sm"
                                                         variant="default"

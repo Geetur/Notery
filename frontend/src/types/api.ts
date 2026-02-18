@@ -9,7 +9,8 @@ export type VoteDirection = "up" | "down";
 export type OrderStatus = "pending" | "paid" | "fulfilled" | "failed" | "refunded";
 export type ProfileVisibility = "public" | "private";
 export type CommentSortOrder = "best" | "new" | "top" | "controversial" | "old";
-export type SearchType = "notes" | "subnoteries" | "users" | "comments";
+export type SearchType = "notes" | "subnoteries" | "users" | "comments" | "all";
+export type SearchSort = "relevance" | "hot" | "new" | "top" | "comments";
 
 // ─── Domain Models ────────────────────────────────────────────────────────────
 

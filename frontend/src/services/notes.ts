@@ -82,13 +82,14 @@ export function deleteNote(id: number): Promise<{ message: string }> {
     return apiDelete(`/notes/${id}`);
 }
 
-/** GET /notes/pending — List pending notes (admin only, paginated). */
+/** GET /notes/pending — List pending notes (admin only, paginated, optionally scoped by subnotery). */
 export function getPendingNotes(
-    params?: PaginationParams
+    params?: PaginationParams & { subnotery_id?: number }
 ): Promise<NotesListResponse> {
     const query = new URLSearchParams();
     if (params?.page) query.set("page", String(params.page));
     if (params?.limit) query.set("limit", String(params.limit));
+    if (params?.subnotery_id) query.set("subnotery_id", String(params.subnotery_id));
     const qs = query.toString();
     return apiGet(`/notes/pending${qs ? `?${qs}` : ""}`);
 }

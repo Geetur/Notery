@@ -127,12 +127,15 @@ func (app *App) CreateNote(c *gin.Context) {
 				noteLog.Log("CREATE", "Failed to assign admin", "error", err)
 				return err
 			}
-			if err := tx.Model(&subnotery).Association("Members").Append(&creator); err != nil {
-				noteLog.Log("CREATE", "Failed to add member", "error", err)
-				return err
-			}
-			noteLog.Log("CREATE", "Creator assigned as admin/member", "subnoteryID", subnotery.ID)
+			noteLog.Log("CREATE", "Creator assigned as admin", "subnoteryID", subnotery.ID)
 		}
+
+		// Always auto-join creator as member (idempotent — GORM ignores duplicates)
+		if err := tx.Model(&subnotery).Association("Members").Append(&creator); err != nil {
+			noteLog.Log("CREATE", "Failed to add member", "error", err)
+			return err
+		}
+		noteLog.Log("CREATE", "Creator ensured as member", "subnoteryID", subnotery.ID)
 
 		// Create the note record (author = creator's display name)
 		note = models.Note{
@@ -407,6 +410,11 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 		query = query.
 			Joins("JOIN user_admins ON user_admins.subnotery_id = notes.subnotery_id").
 			Where("user_admins.user_id = ? AND notes.status = ?", userID, models.StatusPending)
+	}
+
+	// Optional subnotery filter — used by community detail pages.
+	if subID := c.Query("subnotery_id"); subID != "" {
+		query = query.Where("notes.subnotery_id = ?", subID)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
