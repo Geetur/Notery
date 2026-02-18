@@ -174,6 +174,38 @@ func TestGetNoteByID_Pending(t *testing.T) {
 	assertStatus(t, w, http.StatusForbidden)
 }
 
+func TestGetNoteByID_PendingGlobalAdmin(t *testing.T) {
+	app := testApp(t)
+	creator := seedUser(t, app.DB, "pendcreator2")
+	noteID := seedPendingNote(t, app.DB, creator)
+
+	admin := seedUser(t, app.DB, "pendgadmin")
+	app.DB.Model(&models.User{}).Where("id = ?", admin).Update("is_global_admin", true)
+
+	// Global admin CAN view a pending note
+	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID, authMW(admin))
+	assertStatus(t, w, http.StatusOK)
+}
+
+func TestGetNoteByID_PendingSubnoteryAdmin(t *testing.T) {
+	app := testApp(t)
+	creator := seedUser(t, app.DB, "pendcreator3")
+	noteID := seedPendingNote(t, app.DB, creator)
+
+	// Look up the note's subnotery
+	var note models.Note
+	app.DB.First(&note, noteID)
+
+	subAdmin := seedUser(t, app.DB, "pendsadmin")
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", subAdmin, note.SubnoteryID)
+
+	// Subnotery admin CAN view a pending note in their subnotery
+	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID, authMW(subAdmin))
+	assertStatus(t, w, http.StatusOK)
+}
+
 func TestGetNoteByID_NotFound(t *testing.T) {
 	app := testApp(t)
 	uid := seedUser(t, app.DB, "nfgetter")

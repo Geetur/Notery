@@ -1,22 +1,28 @@
-// page.tsx — User profile page (public view) with posted notes.
+// page.tsx — Public user profile page: Reddit-style with Overview and Posts tabs.
+// Shows profile banner, avatar, username, bio, joined date, and posted notes.
+// No edit controls — those are only on the own-profile page (/profile).
 "use client";
 
 import { NoteCard } from "@/components/feed/note-card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { avatarUrl, formatDate } from "@/lib/format";
 import { getUserNotes } from "@/services/notes";
 import { getUserProfile } from "@/services/profile";
 import { useQuery } from "@tanstack/react-query";
-import { Calendar, FileText } from "lucide-react";
+import { FileText } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useState } from "react";
+
+type UserTab = "overview" | "posts";
 
 export default function UserProfilePage() {
     const params = useParams();
     const userId = Number(params.id);
+    const [activeTab, setActiveTab] = useState<UserTab>("overview");
 
     const {
         data: profile,
@@ -36,49 +42,64 @@ export default function UserProfilePage() {
 
     if (isLoading) {
         return (
-            <div className="max-w-2xl mx-auto px-4 py-4">
-                <div className="flex items-center gap-4 mb-4">
-                    <Skeleton className="h-20 w-20 rounded-full" />
-                    <div className="space-y-2">
-                        <Skeleton className="h-6 w-40" />
-                        <Skeleton className="h-4 w-24" />
+            <div className="flex">
+                <main className="flex-1 min-w-0 px-4 py-0">
+                    <div className="h-28 bg-gradient-to-r from-primary/20 to-primary/5 -mx-4" />
+                    <div className="max-w-3xl mx-auto">
+                        <div className="flex items-end gap-4 -mt-10 mb-4 px-2">
+                            <Skeleton className="h-20 w-20 rounded-full" />
+                            <div className="space-y-2 pb-1">
+                                <Skeleton className="h-6 w-40" />
+                                <Skeleton className="h-4 w-24" />
+                            </div>
+                        </div>
+                        <Skeleton className="h-10 w-48 mb-4 mx-2" />
+                        <div className="space-y-3 px-2">
+                            <Skeleton className="h-24 w-full" />
+                            <Skeleton className="h-24 w-full" />
+                        </div>
                     </div>
-                </div>
-                <Skeleton className="h-32 w-full" />
+                </main>
             </div>
         );
     }
 
     if (isError || !profile) {
         return (
-            <div className="max-w-2xl mx-auto px-4 py-8 text-center">
-                <p className="text-destructive">User not found.</p>
+            <div className="flex">
+                <main className="flex-1 min-w-0 px-4 py-8 text-center">
+                    <p className="text-destructive">User not found.</p>
+                </main>
             </div>
         );
     }
 
     const notes = notesData?.notes ?? [];
 
-    return (
-        <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
-            {/* Profile card */}
-            <Card className="border-border">
-                {/* Banner */}
-                <div className="h-24 bg-gradient-to-r from-primary/20 to-primary/5 rounded-t-lg" />
+    const tabs: { key: UserTab; label: string; icon: React.ReactNode }[] = [
+        { key: "overview", label: "Overview", icon: null },
+        { key: "posts", label: "Posts", icon: <FileText className="h-4 w-4" /> },
+    ];
 
-                <CardContent className="px-4 pb-4">
-                    {/* Avatar + name */}
-                    <div className="flex items-end gap-4 -mt-10 mb-4">
-                        <Avatar className="h-20 w-20 border-4 border-card">
+    return (
+        <div className="flex">
+            <main className="flex-1 min-w-0 px-4 py-0">
+                {/* Profile banner */}
+                <div className="h-28 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/5 -mx-4" />
+
+                <div className="max-w-3xl mx-auto">
+                    {/* Avatar + name row */}
+                    <div className="flex items-end gap-4 -mt-10 mb-2 px-2">
+                        <Avatar className="h-20 w-20 border-4 border-background">
                             <AvatarImage
                                 src={avatarUrl(profile.id, profile.avatar_url)}
                             />
-                            <AvatarFallback className="text-xl">
+                            <AvatarFallback className="text-2xl">
                                 {profile.username[0]?.toUpperCase()}
                             </AvatarFallback>
                         </Avatar>
-                        <div>
-                            <h1 className="text-xl font-bold text-foreground">
+                        <div className="pb-1">
+                            <h1 className="text-xl font-bold">
                                 {profile.display_name || profile.username}
                             </h1>
                             <p className="text-sm text-muted-foreground">
@@ -87,71 +108,141 @@ export default function UserProfilePage() {
                         </div>
                     </div>
 
-                    {/* Bio */}
-                    {profile.bio && (
-                        <p className="text-sm text-foreground mb-4">
-                            {profile.bio}
-                        </p>
-                    )}
-
-                    <Separator className="mb-4" />
-
-                    {/* Stats */}
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                            <Calendar className="h-4 w-4" />
-                            <span>Joined {formatDate(profile.created_at)}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                            <FileText className="h-4 w-4" />
-                            <span>
-                                {notesData?.total ?? 0} note
-                                {(notesData?.total ?? 0) !== 1 ? "s" : ""}
-                            </span>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Posted notes */}
-            <div>
-                <h2 className="text-lg font-semibold text-foreground mb-3">
-                    Posts
-                </h2>
-                {notesLoading ? (
-                    <div className="space-y-3">
-                        <Skeleton className="h-24 w-full" />
-                        <Skeleton className="h-24 w-full" />
-                    </div>
-                ) : notes.length === 0 ? (
-                    <Card className="border-border p-6 text-center">
-                        <p className="text-sm text-muted-foreground">
-                            No posts yet.
-                        </p>
-                    </Card>
-                ) : (
-                    <div className="space-y-2">
-                        {notes.map((note) => (
-                            <div key={note.id}>
-                                {/* Subnotery label at top like Reddit */}
-                                <div className="text-xs text-muted-foreground mb-0.5 pl-2">
-                                    <Link
-                                        href={`/communities/${note.subnotery_id}`}
-                                        className="font-semibold text-foreground hover:underline"
-                                    >
-                                        n/
-                                        {note.subnotery_name ||
-                                            note.subnotery_id}
-                                    </Link>
-                                    <span className="mx-1">&bull;</span>
-                                    Posted by u/{profile.username}
-                                </div>
-                                <NoteCard note={note} viewMode="card" />
-                            </div>
+                    {/* Tab navigation — Reddit style */}
+                    <div className="flex border-b border-border mb-4 px-2">
+                        {tabs.map((tab) => (
+                            <button
+                                key={tab.key}
+                                onClick={() => setActiveTab(tab.key)}
+                                className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.key
+                                        ? "border-primary text-primary"
+                                        : "border-transparent text-muted-foreground hover:text-foreground"
+                                    }`}
+                            >
+                                {tab.icon}
+                                {tab.label}
+                            </button>
                         ))}
                     </div>
-                )}
-            </div>
+
+                    {/* ─── Overview Tab ─── */}
+                    {activeTab === "overview" && (
+                        <div className="space-y-3 px-2">
+                            {profile.bio && (
+                                <Card className="border-border p-4">
+                                    <p className="text-sm">{profile.bio}</p>
+                                </Card>
+                            )}
+                            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                                Recent Posts
+                            </h2>
+                            {notesLoading ? (
+                                <div className="space-y-2">
+                                    {Array.from({ length: 3 }).map((_, i) => (
+                                        <Skeleton key={i} className="h-24 w-full" />
+                                    ))}
+                                </div>
+                            ) : notes.length === 0 ? (
+                                <Card className="border-border p-6 text-center">
+                                    <p className="text-sm text-muted-foreground">
+                                        No posts yet.
+                                    </p>
+                                </Card>
+                            ) : (
+                                notes.slice(0, 5).map((note) => (
+                                    <div key={note.id}>
+                                        <div className="text-xs text-muted-foreground mb-0.5 pl-2">
+                                            <Link
+                                                href={`/communities/${note.subnotery_id}`}
+                                                className="font-semibold text-foreground hover:underline"
+                                            >
+                                                n/{note.subnotery_name || note.subnotery_id}
+                                            </Link>
+                                            <span className="mx-1">&bull;</span>
+                                            Posted by u/{profile.username}
+                                        </div>
+                                        <NoteCard note={note} viewMode="card" />
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+
+                    {/* ─── Posts Tab ─── */}
+                    {activeTab === "posts" && (
+                        <div className="space-y-2 px-2">
+                            {notesLoading ? (
+                                <div className="space-y-2">
+                                    {Array.from({ length: 5 }).map((_, i) => (
+                                        <Skeleton key={i} className="h-24 w-full" />
+                                    ))}
+                                </div>
+                            ) : notes.length === 0 ? (
+                                <Card className="border-border p-6 text-center">
+                                    <p className="text-sm text-muted-foreground">
+                                        No posts yet.
+                                    </p>
+                                </Card>
+                            ) : (
+                                notes.map((note) => (
+                                    <div key={note.id}>
+                                        <div className="text-xs text-muted-foreground mb-0.5 pl-2">
+                                            <Link
+                                                href={`/communities/${note.subnotery_id}`}
+                                                className="font-semibold text-foreground hover:underline"
+                                            >
+                                                n/{note.subnotery_name || note.subnotery_id}
+                                            </Link>
+                                            <span className="mx-1">&bull;</span>
+                                            Posted by u/{profile.username}
+                                        </div>
+                                        <NoteCard note={note} viewMode="card" />
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </div>
+            </main>
+
+            {/* Right sidebar — profile info card */}
+            <aside className="hidden lg:block w-72 shrink-0 border-l border-border">
+                <div className="sticky top-12 h-[calc(100vh-48px)] overflow-y-auto p-4 space-y-4">
+                    <Card className="border-border">
+                        <CardHeader className="py-3 px-4">
+                            <CardTitle className="text-sm font-semibold">
+                                About {profile.display_name || profile.username}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="px-4 pb-4 pt-0 space-y-3">
+                            {profile.bio && (
+                                <>
+                                    <p className="text-xs text-muted-foreground leading-relaxed">
+                                        {profile.bio}
+                                    </p>
+                                    <Separator />
+                                </>
+                            )}
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                    <p className="font-semibold text-foreground">Posts</p>
+                                    <p className="text-muted-foreground">
+                                        {notesData?.total ?? 0}
+                                    </p>
+                                </div>
+                                <div className="flex items-start gap-1">
+                                    <div>
+                                        <p className="font-semibold text-foreground">Joined</p>
+                                        <p className="text-muted-foreground">
+                                            {formatDate(profile.created_at)}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
+            </aside>
         </div>
     );
 }

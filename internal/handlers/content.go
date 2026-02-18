@@ -454,10 +454,14 @@ func (app *App) GetNotePreview(c *gin.Context) {
 		return
 	}
 
-	// Only approved notes can be previewed publicly
+	// Only approved notes can be previewed publicly; admins can preview any note.
 	if note.Status != models.StatusApproved {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Note is not available for preview"})
-		return
+		userID := helpers.GetUserID(c)
+		if userID == 0 || !app.CanViewPendingNote(userID, &note) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Note is not available for preview"})
+			return
+		}
+		contentLog.Log("PREVIEW", "admin viewing non-approved note", "note_id", noteID, "status", note.Status)
 	}
 
 	if !note.HasPDF {

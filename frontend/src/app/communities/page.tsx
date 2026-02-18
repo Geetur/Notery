@@ -2,7 +2,6 @@
 // Shows all communities with member/admin counts and links to detail pages.
 "use client";
 
-import { LeftSidebar } from "@/components/layout/left-sidebar";
 import { RightSidebar } from "@/components/layout/right-sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,12 +38,7 @@ export default function CommunitiesPage() {
     const totalPages = Math.ceil(total / PAGE_SIZE);
 
     return (
-        <div className="flex px-0 py-0">
-            <aside className="hidden md:block w-56 shrink-0 border-r border-border">
-                <div className="sticky top-12 h-[calc(100vh-48px)] overflow-y-auto">
-                    <LeftSidebar />
-                </div>
-            </aside>
+        <div className="flex">
             <main className="flex-1 min-w-0 px-4 py-4">
                 <div className="max-w-3xl mx-auto">
                     <h1 className="text-2xl font-bold mb-4">Communities</h1>

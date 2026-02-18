@@ -372,12 +372,13 @@ func (app *App) ApproveNote(c *gin.Context) {
 
 // GetNoteByID retrieves a single note by its ID.
 //
-// Only returns notes with Approved status. Non-approved notes return 403 Forbidden
-// to prevent information leakage about pending/rejected content.
+// Approved notes are visible to all authenticated users. Non-approved notes
+// (Pending/Rejected) are only visible to admins (global or scoped to the
+// note's subnotery). Non-admin users receive 403 Forbidden.
 //
-// DB: SELECT note by ID via GORM.
+// DB: SELECT note by ID via GORM; optional admin check via user + user_admins.
 // Technologies: PostgreSQL (GORM).
-// Helpers: helpers.MustFetchNote.
+// Helpers: helpers.MustFetchNote, helpers.GetUserID.
 //
 // Route: GET /api/v1/notes/:id
 func (app *App) GetNoteByID(c *gin.Context) {
@@ -389,12 +390,33 @@ func (app *App) GetNoteByID(c *gin.Context) {
 		return
 	}
 
-	// Only approved notes are visible to normal users.
-	// Pending/rejected notes are only viewable in the admin pending queue.
+	// Approved notes are visible to all authenticated users.
+	// Non-approved notes are only visible to admins (global or scoped to the note's subnotery).
 	if note.Status != models.StatusApproved {
-		noteLog.Log("GET", "Note not approved", "noteID", note.ID, "status", note.Status)
-		c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
-		return
+		userID := helpers.GetUserID(c)
+
+		// Check global admin
+		var user models.User
+		if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
+			noteLog.Log("GET", "Note not approved, user lookup failed", "noteID", note.ID)
+			c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
+			return
+		}
+
+		if !user.IsGlobalAdmin {
+			// Check subnotery admin
+			var adminCount int64
+			app.DB.Table("user_admins").
+				Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).
+				Count(&adminCount)
+			if adminCount == 0 {
+				noteLog.Log("GET", "Note not approved, user not admin", "noteID", note.ID, "status", note.Status)
+				c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
+				return
+			}
+		}
+
+		noteLog.Log("GET", "Admin viewing non-approved note", "noteID", note.ID, "status", note.Status, "userID", userID)
 	}
 
 	noteLog.Log("GET", "Note retrieved", "noteID", note.ID)
