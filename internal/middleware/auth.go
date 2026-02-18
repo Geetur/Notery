@@ -84,6 +84,8 @@ func parseJWTUserID(tokenString string, secretKey []byte) (uint64, error) {
 }
 
 // RequireAuth returns middleware that validates the JWT in the Authorization header.
+// Also supports a ?token= query parameter as fallback for endpoints that need
+// browser-native access (e.g., PDF viewer in an iframe).
 // Requests without a valid token are rejected with 401.
 // The jwtSecret is captured once when the middleware is created.
 func RequireAuth(jwtSecret string) gin.HandlerFunc {
@@ -93,6 +95,13 @@ func RequireAuth(jwtSecret string) gin.HandlerFunc {
 		mwLog.Log("AUTH", "Authenticating request")
 
 		tokenString, err := extractBearerToken(c.GetHeader("Authorization"))
+		if err != nil {
+			// Fallback: check query parameter (used by PDF viewer)
+			if qToken := c.Query("token"); qToken != "" {
+				tokenString = qToken
+				err = nil
+			}
+		}
 		if err != nil {
 			mwLog.Log("AUTH", "No valid Authorization header")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})

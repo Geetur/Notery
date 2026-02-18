@@ -370,12 +370,9 @@ func (app *App) GetNoteByID(c *gin.Context) {
 		return
 	}
 
-	// Allow the creator to view their own note regardless of status,
-	// so the redirect after note creation works for pending notes.
-	userID, hasUser := c.Get("user_id")
-	isCreator := hasUser && userID.(uint64) == uint64(note.CreatorID)
-
-	if note.Status != models.StatusApproved && !isCreator {
+	// Only approved notes are visible to normal users.
+	// Pending/rejected notes are only viewable in the admin pending queue.
+	if note.Status != models.StatusApproved {
 		noteLog.Log("GET", "Note not approved", "noteID", note.ID, "status", note.Status)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
 		return

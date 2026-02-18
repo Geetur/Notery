@@ -162,12 +162,12 @@ func TestGetNoteByID_Pending(t *testing.T) {
 	creator := seedUser(t, app.DB, "pendcreator")
 	noteID := seedPendingNote(t, app.DB, creator)
 
-	// Creator can view their own pending note
+	// Creator cannot view their own pending note (only admins via pending queue)
 	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
 		nil, app.GetNoteByID, authMW(creator))
-	assertStatus(t, w, http.StatusOK)
+	assertStatus(t, w, http.StatusForbidden)
 
-	// Another user cannot view someone else's pending note
+	// Another user also cannot view a pending note
 	other := seedUser(t, app.DB, "pendother")
 	w = serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
 		nil, app.GetNoteByID, authMW(other))

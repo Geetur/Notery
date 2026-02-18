@@ -28,12 +28,14 @@ import {
     Camera,
     CheckCircle,
     Clock,
+    Eye,
     FileText,
     Loader2,
     Mail,
     Trash2,
     XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -408,9 +410,12 @@ export default function ProfilePage() {
                                     <Card key={note.id} className="border-border">
                                         <CardContent className="flex items-center justify-between p-3">
                                             <div className="flex-1 min-w-0">
-                                                <p className="font-medium text-sm truncate">
+                                                <Link
+                                                    href={`/notes/${note.id}`}
+                                                    className="font-medium text-sm truncate hover:text-primary block"
+                                                >
                                                     {note.title}
-                                                </p>
+                                                </Link>
                                                 <p className="text-xs text-muted-foreground">
                                                     by {note.author} &middot;{" "}
                                                     {new Date(note.created_at).toLocaleDateString()}
@@ -421,10 +426,18 @@ export default function ProfilePage() {
                                             </div>
                                             <div className="flex items-center gap-2 ml-3 shrink-0">
                                                 {statusBadge(note.status)}
-                                                {note.has_pdf && (
-                                                    <span className="text-xs text-muted-foreground">
-                                                        PDF
-                                                    </span>
+                                                {note.has_pdf && note.status === "Approved" && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 gap-1 text-xs"
+                                                        asChild
+                                                    >
+                                                        <Link href={`/notes/${note.id}`}>
+                                                            <Eye className="h-3 w-3" />
+                                                            View
+                                                        </Link>
+                                                    </Button>
                                                 )}
                                             </div>
                                         </CardContent>

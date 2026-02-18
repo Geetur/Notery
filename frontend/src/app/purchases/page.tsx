@@ -1,17 +1,17 @@
 // page.tsx — My Purchases page.
+// Lists purchased notes with links to view them in the in-app PDF viewer.
+// No download functionality — all viewing is in-app only.
 "use client";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getAccessToken } from "@/lib/api-client";
-import { API_V1 } from "@/lib/config";
 import { formatDate, formatPrice } from "@/lib/format";
 import { getPurchaseHistory } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, Calendar, Download, FileText } from "lucide-react";
+import { ArrowLeft, BookOpen, Calendar, Eye, FileText } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -26,13 +26,6 @@ export default function PurchasesPage() {
         queryFn: () => getPurchaseHistory({ page, limit: 20 }),
         enabled: isAuthenticated,
     });
-
-    const handleDownload = (noteId: number) => {
-        const token = getAccessToken();
-        if (token) {
-            window.open(`${API_V1}/notes/${noteId}/content?token=${token}`, "_blank");
-        }
-    };
 
     useEffect(() => {
         if (!isAuthenticated && !loading) {
@@ -109,10 +102,12 @@ export default function PurchasesPage() {
                                             variant="outline"
                                             size="sm"
                                             className="h-8 gap-1"
-                                            onClick={() => handleDownload(purchase.note_id)}
+                                            asChild
                                         >
-                                            <Download className="h-3.5 w-3.5" />
-                                            PDF
+                                            <Link href={`/notes/${purchase.note_id}`}>
+                                                <Eye className="h-3.5 w-3.5" />
+                                                View
+                                            </Link>
                                         </Button>
                                     )}
                                 </CardContent>

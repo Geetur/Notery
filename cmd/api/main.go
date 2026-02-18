@@ -147,6 +147,7 @@ func main() {
 	readOnly.GET("/notes/:id", app.GetNoteByID)
 	readOnly.GET("/notes/approved", app.GetApprovedNotes)
 	readOnly.GET("/notes/:id/content", app.GetNotePDFContent)
+	readOnly.GET("/notes/:id/preview", app.GetNotePreview)
 	readOnly.GET("/cart", app.GetCart)
 	readOnly.GET("/notes/:id/purchased", app.CheckPurchaseStatus)
 	readOnly.GET("/me/purchases", app.GetMyPurchases)

@@ -29,7 +29,7 @@ A full-stack Reddit-like note marketplace built with **Go** (API) and **Next.js*
 ### Frontend (Next.js 14)
 
 - **Reddit-style feed** — Hot, New, Top sorting
-- **Note marketplace** — Browse, purchase, download PDFs
+- **Note marketplace** — Browse, purchase, view PDFs in-app (no downloads)
 - **Voting** — Reddit-style upvote/downvote on notes and comments
 - **Threaded comments** — Nested threads with collapse, reply, edit, delete
 - **User profiles** — Public profiles, settings, email verification indicators
@@ -330,7 +330,8 @@ npm run dev
 | POST | `/api/v1/auth/resend-verification` | Resend verification email |
 | GET | `/api/v1/notes/:id` | Get note by ID |
 | GET | `/api/v1/notes/approved` | List approved notes (paginated) |
-| GET | `/api/v1/notes/:id/content` | View/stream PDF |
+| GET | `/api/v1/notes/:id/content` | View/stream full PDF (in-app) |
+| GET | `/api/v1/notes/:id/preview` | Preview first pages of PDF |
 | GET | `/api/v1/cart` | View cart |
 | GET | `/api/v1/notes/:id/purchased` | Check purchase status |
 | GET | `/api/v1/me/purchases` | My purchased notes |

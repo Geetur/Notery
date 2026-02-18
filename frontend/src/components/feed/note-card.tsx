@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { addBookmark, removeBookmark } from "@/services/bookmarks";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Note, ViewMode } from "@/types";
-import { Bookmark, BookmarkCheck, Download, FileText, Lock, MessageSquare } from "lucide-react";
+import { Bookmark, BookmarkCheck, CheckCircle, FileText, Lock, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { VoteButtons } from "./vote-buttons";
@@ -123,7 +123,7 @@ export function NoteCard({ note, viewMode, purchased, bookmarked: initialBookmar
                             {/* Purchase state */}
                             {purchased ? (
                                 <span className="flex items-center gap-1 text-xs text-green-500">
-                                    <Download className="h-3 w-3" />
+                                    <CheckCircle className="h-3 w-3" />
                                     Owned
                                 </span>
                             ) : (

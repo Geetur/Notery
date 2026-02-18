@@ -7,10 +7,13 @@
 # Usage:
 #   .\scripts\test-all.ps1              # Backend + Frontend only
 #   .\scripts\test-all.ps1 -E2E        # Also run E2E scripts (requires running server)
+#   .\scripts\test-all.ps1 -K6         # Also run k6 load tests (requires running server)
+#   .\scripts\test-all.ps1 -E2E -K6    # Run everything
 #   .\scripts\test-all.ps1 -Verbose     # Show full output
 
 param(
     [switch]$E2E,
+    [switch]$K6,
     [switch]$Verbose
 )
 
@@ -114,6 +117,36 @@ if ($E2E) {
         Run-Step "E2E: $scriptName" {
             & ".\$script" 2>&1 | ForEach-Object { if ($Verbose) { Write-Host "    $_" } }
         }
+    }
+}
+
+# ─── k6 Load Tests (optional) ──────────────────────────────────────────────
+
+if ($K6) {
+    Write-Section "K6 LOAD TESTS (requires running server)"
+
+    Run-Step "k6 smoke test" {
+        $output = k6 run scripts/k6/smoke-test.js 2>&1
+        $output | ForEach-Object {
+            if ($Verbose -or $_ -match "checks|http_req|running|default") { Write-Host "    $_" }
+        }
+        if ($LASTEXITCODE -ne 0) { throw "k6 smoke test failed" }
+    }
+
+    Run-Step "k6 auth flow" {
+        $output = k6 run scripts/k6/auth-flow.js 2>&1
+        $output | ForEach-Object {
+            if ($Verbose -or $_ -match "checks|http_req|running|default|errors") { Write-Host "    $_" }
+        }
+        if ($LASTEXITCODE -ne 0) { throw "k6 auth flow test failed" }
+    }
+
+    Run-Step "k6 load test" {
+        $output = k6 run scripts/k6/load-test.js 2>&1
+        $output | ForEach-Object {
+            if ($Verbose -or $_ -match "checks|http_req|running|default|errors") { Write-Host "    $_" }
+        }
+        if ($LASTEXITCODE -ne 0) { throw "k6 load test failed" }
     }
 }
 

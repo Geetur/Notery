@@ -1,17 +1,17 @@
 // page.tsx — Note detail page with Reddit-style layout.
-// Shows note content, purchase widget in right sidebar, and comment section.
+// Shows note content via in-app PDF viewer, purchase widget in right sidebar, and comment section.
+// No download functionality — all viewing is in-app only via the PDFViewer component.
 "use client";
 
 import { CommentSection } from "@/components/comments";
 import { VoteButtons } from "@/components/feed/vote-buttons";
+import { PDFViewer } from "@/components/pdf-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { getAccessToken } from "@/lib/api-client";
-import { API_V1 } from "@/lib/config";
 import { formatDate, formatFileSize, formatPrice, timeAgo } from "@/lib/format";
 import { getNoteById } from "@/services/notes";
 import { addToCart, checkPurchaseStatus, purchaseNote } from "@/services/purchases";
@@ -21,7 +21,7 @@ import {
     ArrowLeft,
     CheckCircle,
     Clock,
-    Download,
+    Eye,
     FileText,
     Loader2,
     Lock,
@@ -59,6 +59,7 @@ export default function NoteDetailPage() {
 
     const isOwned = purchaseStatus?.purchased === true;
     const isFree = note?.price === 0;
+    const hasFullAccess = isOwned || isFree;
 
     const handlePurchase = async () => {
         if (!isAuthenticated) {
@@ -90,13 +91,6 @@ export default function NoteDetailPage() {
             toast({ title: "Failed to add to cart", variant: "destructive" });
         } finally {
             setAddingToCart(false);
-        }
-    };
-
-    const handleDownload = () => {
-        const token = getAccessToken();
-        if (token) {
-            window.open(`${API_V1}/notes/${noteId}/content?token=${token}`, "_blank");
         }
     };
 
@@ -222,32 +216,44 @@ export default function NoteDetailPage() {
 
                             <Separator className="mb-4" />
 
-                            {/* Content area */}
-                            {isOwned || isFree ? (
-                                <div>
-                                    <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3 mb-4">
-                                        <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
-                                            <CheckCircle className="h-4 w-4" />
-                                            {isOwned
-                                                ? "You own this note — full access granted"
-                                                : "This note is free — full access"}
+                            {/* Content area — in-app PDF viewer */}
+                            {note.has_pdf ? (
+                                hasFullAccess ? (
+                                    <div>
+                                        <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3 mb-4">
+                                            <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
+                                                <CheckCircle className="h-4 w-4" />
+                                                {isOwned
+                                                    ? "You own this note — full access granted"
+                                                    : "This note is free — full access"}
+                                            </div>
                                         </div>
+                                        <PDFViewer
+                                            noteId={note.id}
+                                            mode="full"
+                                            maxHeight={700}
+                                        />
                                     </div>
-                                    {note.has_pdf && (
-                                        <Button onClick={handleDownload} className="gap-2">
-                                            <Download className="h-4 w-4" />
-                                            Download PDF
-                                        </Button>
-                                    )}
-                                </div>
+                                ) : (
+                                    <div>
+                                        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 mb-4">
+                                            <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 text-sm font-medium">
+                                                <Eye className="h-4 w-4" />
+                                                Preview — purchase to view the full document
+                                            </div>
+                                        </div>
+                                        <PDFViewer
+                                            noteId={note.id}
+                                            mode="preview"
+                                            maxHeight={500}
+                                        />
+                                    </div>
+                                )
                             ) : (
                                 <div className="bg-muted/50 border border-border rounded-md p-6 text-center">
-                                    <Lock className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                                    <p className="text-sm text-muted-foreground mb-1">
-                                        This content is locked
-                                    </p>
-                                    <p className="text-xs text-muted-foreground">
-                                        Purchase this note to unlock full content and download the PDF.
+                                    <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                                    <p className="text-sm text-muted-foreground">
+                                        No PDF content available for this note.
                                     </p>
                                 </div>
                             )}
@@ -280,20 +286,12 @@ export default function NoteDetailPage() {
                             </div>
 
                             {isOwned ? (
-                                <>
-                                    <div className="flex items-center gap-2 text-sm text-green-500">
-                                        <CheckCircle className="h-4 w-4" />
-                                        Purchased {purchaseStatus?.purchased_at
-                                            ? formatDate(purchaseStatus.purchased_at)
-                                            : ""}
-                                    </div>
-                                    {note.has_pdf && (
-                                        <Button onClick={handleDownload} className="w-full gap-2">
-                                            <Download className="h-4 w-4" />
-                                            Download PDF
-                                        </Button>
-                                    )}
-                                </>
+                                <div className="flex items-center gap-2 text-sm text-green-500">
+                                    <CheckCircle className="h-4 w-4" />
+                                    Purchased {purchaseStatus?.purchased_at
+                                        ? formatDate(purchaseStatus.purchased_at)
+                                        : ""}
+                                </div>
                             ) : (
                                 <>
                                     <Button
@@ -348,16 +346,20 @@ export default function NoteDetailPage() {
                         </CardContent>
                     </Card>
 
-                    {/* Preview section */}
+                    {/* Viewing info */}
                     <Card className="border-border">
                         <CardHeader className="py-3 px-4">
-                            <CardTitle className="text-sm font-semibold">Preview</CardTitle>
+                            <CardTitle className="text-sm font-semibold">
+                                {hasFullAccess ? "Full Access" : "Preview"}
+                            </CardTitle>
                         </CardHeader>
                         <CardContent className="px-4 pb-4 pt-0">
                             <p className="text-xs text-muted-foreground">
-                                {note.has_pdf
-                                    ? "This note contains a PDF document. Purchase to access the full content."
-                                    : "No preview available for this note."}
+                                {hasFullAccess
+                                    ? "You have full access to this document. View all pages in the reader above."
+                                    : note.has_pdf
+                                        ? "You can preview the first few pages. Purchase to view the full document."
+                                        : "No preview available for this note."}
                             </p>
                         </CardContent>
                     </Card>
