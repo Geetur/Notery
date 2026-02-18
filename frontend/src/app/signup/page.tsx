@@ -1,6 +1,7 @@
 // page.tsx — Signup page.
 "use client";
 
+import OAuthButtons from "@/components/auth/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,7 +11,6 @@ import { ApiRequestError } from "@/lib/api-client";
 import { signup } from "@/services/auth";
 import { getMyProfile } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth-store";
-import OAuthButtons from "@/components/auth/oauth-buttons";
 import { FileText, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";

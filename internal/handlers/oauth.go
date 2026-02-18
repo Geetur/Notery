@@ -9,12 +9,12 @@
 //
 // FLOW:
 //
-//	1. User clicks "Sign in with Google/GitHub" on the frontend.
-//	2. Frontend navigates to /api/v1/auth/oauth/{provider}.
-//	3. Backend redirects to the provider's consent screen with a CSRF state param.
-//	4. Provider redirects back to /api/v1/auth/oauth/{provider}/callback?code=...&state=...
-//	5. Backend exchanges the code for user info, creates or finds the user,
-//	   issues access + refresh tokens, and redirects to the frontend with tokens.
+//  1. User clicks "Sign in with Google/GitHub" on the frontend.
+//  2. Frontend navigates to /api/v1/auth/oauth/{provider}.
+//  3. Backend redirects to the provider's consent screen with a CSRF state param.
+//  4. Provider redirects back to /api/v1/auth/oauth/{provider}/callback?code=...&state=...
+//  5. Backend exchanges the code for user info, creates or finds the user,
+//     issues access + refresh tokens, and redirects to the frontend with tokens.
 //
 // SECURITY:
 //
