@@ -20,13 +20,16 @@ func TestCreateNote_HappyPath(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "test-sub",
 			"title":          "Test Note",
-			"author":         "Author",
 			"price":          499,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusCreated)
 	r := respJSON(t, w)
 	if r["id"] == nil {
 		t.Fatal("expected note id")
+	}
+	// Author should be auto-derived from the creating user's display name
+	if r["author"] == nil || r["author"] == "" {
+		t.Fatal("expected author to be auto-derived from user")
 	}
 	if r["status"] != string(models.StatusPending) {
 		t.Fatalf("new note should be pending, got %v", r["status"])
@@ -40,15 +43,14 @@ func TestCreateNote_MissingTitle(t *testing.T) {
 	w := serve("POST", "/notes", "/notes",
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "test-sub",
-			"author":         "Author",
 			"price":          499,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-func TestCreateNote_MissingAuthor(t *testing.T) {
+func TestCreateNote_AuthorAutoDerived(t *testing.T) {
 	app := testApp(t)
-	uid := seedUser(t, app.DB, "noauthor")
+	uid := seedUser(t, app.DB, "autoauthor")
 
 	w := serve("POST", "/notes", "/notes",
 		jsonBody(map[string]interface{}{
@@ -56,7 +58,13 @@ func TestCreateNote_MissingAuthor(t *testing.T) {
 			"title":          "Test",
 			"price":          100,
 		}), app.CreateNote, authMW(uid))
-	assertStatus(t, w, http.StatusBadRequest)
+	assertStatus(t, w, http.StatusCreated)
+	// Verify author was auto-set to the user's display name
+	r := respJSON(t, w)
+	author, _ := r["author"].(string)
+	if author == "" {
+		t.Fatal("author should be auto-derived, got empty")
+	}
 }
 
 func TestCreateNote_NegativePrice(t *testing.T) {
@@ -67,7 +75,6 @@ func TestCreateNote_NegativePrice(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "test-sub",
 			"title":          "Test Note",
-			"author":         "Author",
 			"price":          -1,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusBadRequest)
@@ -81,7 +88,6 @@ func TestCreateNote_ZeroPrice(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "free-sub",
 			"title":          "Free Note",
-			"author":         "Author",
 			"price":          0,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusCreated)
@@ -93,9 +99,8 @@ func TestCreateNote_MissingSubnoteryName(t *testing.T) {
 
 	w := serve("POST", "/notes", "/notes",
 		jsonBody(map[string]interface{}{
-			"title":  "Test Note",
-			"author": "Author",
-			"price":  499,
+			"title": "Test Note",
+			"price": 499,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -109,7 +114,6 @@ func TestCreateNote_AutoCreatesSubnotery(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": subName,
 			"title":          "Auto Note",
-			"author":         "Author",
 			"price":          100,
 		}), app.CreateNote, authMW(uid))
 
@@ -130,7 +134,6 @@ func TestCreateNote_CreatorBecomesAdminOfNewSubnotery(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": subName,
 			"title":          "Admin Note",
-			"author":         "Author",
 			"price":          100,
 		}), app.CreateNote, authMW(uid))
 

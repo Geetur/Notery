@@ -10,7 +10,7 @@ A full-stack Reddit-like note marketplace built with **Go** (API) and **Next.js*
 
 - **Authentication** — JWT HS256 with family-based refresh token rotation + theft detection; 15-min access tokens, 30-day refresh tokens
 - **Email Verification** — Token-based email verification with configurable mailer (SMTP / Log / Mock)
-- **Password Management** — Forgot-password / reset-password with single-use tokens (1h TTL); change-password revokes all sessions; anti-enumeration (always returns 200)
+- **Password Management** — Forgot-password / reset-password with single-use tokens (1h TTL); anti-enumeration (always returns 200)
 - **User Profiles** — Display name, bio, avatar URL, public/private visibility; partial PATCH updates with regex validation
 - **Avatar System** — Upload (JPEG/PNG/WebP/GIF, max 5 MB), magic-byte validation, Cloudflare R2 storage, 24h cached public proxy
 - **Notes** — CRUD with admin approval lifecycle (Pending → Approved → Rejected)
@@ -240,11 +240,12 @@ MEILISEARCH_HOST=http://localhost:7700
 MEILISEARCH_MASTER_KEY=yourmeilisearchkey
 MEILISEARCH_INDEX=notes
 
-# Cloudflare R2
+# Cloudflare R2 (production)
 R2_ACCOUNT_ID=your_cloudflare_account_id
 R2_ACCESS_KEY_ID=your_r2_access_key
 R2_SECRET_ACCESS_KEY=your_r2_secret_key
 R2_BUCKET_NAME=notery-pdfs
+
 
 # JWT
 JWT_SECRET=your-super-secret-key
@@ -284,7 +285,7 @@ npm run dev
 # → http://localhost:3000
 ```
 
-## API Endpoints (55 routes)
+## API Endpoints (54 routes)
 
 ### Public (11 routes)
 
@@ -313,13 +314,12 @@ npm run dev
 | GET | `/api/v1/users/:id/avatar` | Public avatar proxy (24h cache) |
 | GET | `/api/v1/search?q=&type=` | Multi-type search (notes/subnoteries/users/comments) |
 
-### Auth-Only — Requires JWT, no email verification needed (11 routes)
+### Auth-Only — Requires JWT, no email verification needed (10 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/v1/auth/logout-all` | Revoke all refresh tokens |
 | POST | `/api/v1/auth/resend-verification` | Resend verification email |
-| POST | `/api/v1/auth/change-password` | Change password (revokes all sessions) |
 | GET | `/api/v1/notes/:id` | Get note by ID |
 | GET | `/api/v1/notes/approved` | List approved notes (paginated) |
 | GET | `/api/v1/notes/:id/content` | View/stream PDF |
@@ -384,7 +384,7 @@ The `votes` table is the single source of truth. Each vote runs in a DB transact
 Family-based rotation with theft detection. Reusing a revoked token revokes the entire token family. See `models/session.go`.
 
 ### Email Verification & Password Reset
-Configurable Mailer interface (SMTP prod, LogMailer dev, MockMailer tests). Anti-enumeration on forgot-password (always returns 200). Single-use reset tokens (1h TTL). Password changes revoke all sessions.
+Configurable Mailer interface (SMTP prod, LogMailer dev, MockMailer tests). Anti-enumeration on forgot-password (always returns 200). Single-use reset tokens (1h TTL). Password changes only via forgot-password flow.
 
 ### Payment Integration
 `payment.Service` interface backed by Stripe in production, configurable mock in tests. Webhook-authoritative fulfilment. When Stripe is not configured, orders auto-fulfil. See [docs/PAYMENT_SYSTEM.md](docs/PAYMENT_SYSTEM.md).
@@ -400,7 +400,7 @@ Uploads validated with both Content-Type header and magic-byte signatures. Store
 
 ## Testing
 
-**348 tests total** — 294 Go backend + 54 frontend.
+**333 tests total** — 280 Go backend + 53 frontend.
 
 ### Backend (Go) — 294 tests across 18 test files
 
@@ -424,7 +424,7 @@ go test -v ./...
 
 | Package | Test Files | Tests |
 |---------|-----------|-------|
-| `internal/handlers` | 9 (auth, cart, comment, concurrency, feed, note, profile, purchase, subnotery) | 191 |
+| `internal/handlers` | 9 (auth, cart, comment, concurrency, feed, note, profile, purchase, subnotery) | 177 |
 | `internal/models` | 6 (user, note, comment, vote, order, session) | 62 |
 | `internal/email` | 1 | 20 |
 | `internal/middleware` | 1 | 13 |
@@ -452,9 +452,22 @@ npm run test:coverage
 | `lib/format` | 12 |
 | `stores/auth-store` | 5 |
 | `stores/feed-store` | 4 |
-| `services/auth` | 5 |
+| `services/auth` | 4 |
 | `services/notes` | 9 |
 | `services/purchases` | 10 |
+
+### Unified Test Runner
+
+```powershell
+# Run all backend + frontend tests in one command
+.\scripts\test-all.ps1
+
+# Also run E2E scripts (requires running server + Docker)
+.\scripts\test-all.ps1 -E2E
+
+# Verbose output
+.\scripts\test-all.ps1 -Verbose
+```
 
 ### E2E Scripts (require running server + Docker)
 

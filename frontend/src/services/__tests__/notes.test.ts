@@ -66,14 +66,13 @@ describe("getNoteById", () => {
 });
 
 describe("createNote", () => {
-    it("calls POST /notes with note data", async () => {
+    it("calls POST /notes with note data (no author — auto-derived)", async () => {
         const data = {
             title: "My Note",
-            author: "Author",
             subnotery_name: "Science",
             price: 499,
         };
-        mockApiPost.mockResolvedValue({ id: 1, ...data });
+        mockApiPost.mockResolvedValue({ id: 1, ...data, author: "testuser" });
         await createNote(data);
         expect(mockApiPost).toHaveBeenCalledWith("/notes", data);
     });

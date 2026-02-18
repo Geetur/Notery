@@ -77,6 +77,13 @@ Write-Host "`n========================================" -ForegroundColor Yellow
 Write-Host "   COMMENT SYSTEM TEST" -ForegroundColor Yellow
 Write-Host "========================================`n" -ForegroundColor Yellow
 
+# Helper: mark a user's email as verified directly in the database.
+# Write endpoints require verified email, so we do this after signup.
+function Verify-UserEmail {
+    param([string]$Email)
+    docker exec notery_db psql -U admin -d notery_db -qc "UPDATE users SET email_verified=true WHERE email='$Email';" 2>$null
+}
+
 # ──────────────────────────────────────────
 # STEP 1 — Create two users
 # ──────────────────────────────────────────
@@ -85,13 +92,15 @@ Write-Host "=== 1. CREATE USERS ===" -ForegroundColor Cyan
 $emailA = "commenter_a_$rand@test.com"
 $emailB = "commenter_b_$rand@test.com"
 
-Api "POST" "$base/signup" -Body @{ email=$emailA; username="alice$rand"; password="pass123!" }
-$loginA = Api "POST" "$base/login" -Body @{ email=$emailA; password="pass123!" }
+Api "POST" "$base/auth/signup" -Body @{ email=$emailA; username="alice$rand"; password="pass123!" }
+Verify-UserEmail $emailA
+$loginA = Api "POST" "$base/auth/login" -Body @{ email=$emailA; password="pass123!" }
 $tokA = $loginA.access_token
 $hdrsA = @{ Authorization = "Bearer $tokA" }
 
-Api "POST" "$base/signup" -Body @{ email=$emailB; username="bob$rand"; password="pass123!" }
-$loginB = Api "POST" "$base/login" -Body @{ email=$emailB; password="pass123!" }
+Api "POST" "$base/auth/signup" -Body @{ email=$emailB; username="bob$rand"; password="pass123!" }
+Verify-UserEmail $emailB
+$loginB = Api "POST" "$base/auth/login" -Body @{ email=$emailB; password="pass123!" }
 $tokB = $loginB.access_token
 $hdrsB = @{ Authorization = "Bearer $tokB" }
 
@@ -105,7 +114,6 @@ Write-Host "`n=== 2. CREATE + APPROVE NOTE ===" -ForegroundColor Cyan
 $note = Api "POST" "$base/notes" -Headers $hdrsA -Body @{
     subnotery_name = "comment-test-$rand"
     title          = "Comment Test Note"
-    author         = "Alice"
     price          = 0
 }
 $noteId = $note.id
@@ -344,7 +352,6 @@ Write-Host "`n=== 17. COMMENT ON PENDING NOTE ===" -ForegroundColor Cyan
 $pendingNote = Api "POST" "$base/notes" -Headers $hdrsA -Body @{
     subnotery_name = "comment-test-$rand"
     title          = "Pending Note"
-    author         = "Alice"
     price          = 0
 }
 $pendingId = $pendingNote.id

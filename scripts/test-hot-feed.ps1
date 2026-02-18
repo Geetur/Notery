@@ -15,16 +15,19 @@ Write-Host "========================================`n" -ForegroundColor Yellow
 # 1. SIGNUP
 Write-Host "=== 1. SIGNUP ===" -ForegroundColor Cyan
 $email = "hottest$rand@test.com"
-$signup = Invoke-RestMethod -Uri "$base/signup" -Method POST -ContentType "application/json" -Body (@{
+$signup = Invoke-RestMethod -Uri "$base/auth/signup" -Method POST -ContentType "application/json" -Body (@{
     email    = $email
     username = "hotuser$rand"
     password = "testpass123"
 } | ConvertTo-Json)
 Write-Host "Created user ID: $($signup.user_id)" -ForegroundColor Green
 
+# Verify email directly in DB (write endpoints require verified email)
+docker exec notery_db psql -U admin -d notery_db -qc "UPDATE users SET email_verified=true WHERE email='$email';" 2>$null
+
 # 2. LOGIN
 Write-Host "`n=== 2. LOGIN ===" -ForegroundColor Cyan
-$login = Invoke-RestMethod -Uri "$base/login" -Method POST -ContentType "application/json" -Body (@{
+$login = Invoke-RestMethod -Uri "$base/auth/login" -Method POST -ContentType "application/json" -Body (@{
     email    = $email
     password = "testpass123"
 } | ConvertTo-Json)
@@ -37,7 +40,6 @@ Write-Host "`n=== 3. CREATE NOTE ===" -ForegroundColor Cyan
 $note = Invoke-RestMethod -Uri "$base/notes" -Method POST -Headers $headers -ContentType "application/json" -Body (@{
     subnotery_name = "test-subnotery-$rand"
     title          = "Hot Test Note $rand"
-    author         = "Test Author"
     price          = 999
 } | ConvertTo-Json)
 $noteId = $note.id

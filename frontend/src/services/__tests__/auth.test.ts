@@ -11,7 +11,6 @@ jest.mock("@/lib/api-client", () => ({
 
 import { apiPost } from "@/lib/api-client";
 import {
-    changePassword,
     forgotPassword,
     login,
     resetPassword,
@@ -82,14 +81,3 @@ describe("resetPassword", () => {
     });
 });
 
-describe("changePassword", () => {
-    it("calls POST /auth/change-password", async () => {
-        mockApiPost.mockResolvedValue({ message: "ok" });
-
-        await changePassword("oldpass", "newpass");
-        expect(mockApiPost).toHaveBeenCalledWith("/auth/change-password", {
-            current_password: "oldpass",
-            new_password: "newpass",
-        });
-    });
-});

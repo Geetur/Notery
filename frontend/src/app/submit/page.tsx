@@ -1,4 +1,4 @@
-// page.tsx — Submit (create) a new note.
+// page.tsx — Submit (create) a new note. PDF is required.
 "use client";
 
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,6 @@ export default function SubmitPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [title, setTitle] = useState("");
-    const [author, setAuthor] = useState("");
     const [subnoteryName, setSubnoteryName] = useState("");
     const [price, setPrice] = useState("");
     const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -90,10 +89,10 @@ export default function SubmitPage() {
             return;
         }
 
-        if (!author.trim()) {
+        if (!pdfFile) {
             toast({
-                title: "Author required",
-                description: "Please enter an author name.",
+                title: "PDF required",
+                description: "Please upload a PDF file for your note.",
                 variant: "destructive",
             });
             return;
@@ -114,25 +113,18 @@ export default function SubmitPage() {
         try {
             const result = await createNote({
                 title: title.trim(),
-                author: author.trim(),
                 subnotery_name: subnoteryName.trim(),
                 price: priceInCents,
             });
 
             const noteId = (result as { id?: number }).id ?? (result as { ID?: number }).ID;
 
-            // Upload PDF if provided
-            if (pdfFile && noteId) {
-                try {
-                    await uploadNotePDF(noteId, pdfFile);
-                } catch {
-                    toast({
-                        title: "Note created, but PDF upload failed",
-                        description: "You can try uploading the PDF again from the note page.",
-                        variant: "destructive",
-                    });
-                }
+            if (!noteId) {
+                throw new Error("Note was created but no ID was returned.");
             }
+
+            // Upload the required PDF
+            await uploadNotePDF(noteId, pdfFile);
 
             toast({
                 title: "Note submitted!",
@@ -140,7 +132,7 @@ export default function SubmitPage() {
                     "Your note has been submitted for review. It will appear once approved.",
             });
 
-            router.push(noteId ? `/notes/${noteId}` : "/");
+            router.push(`/notes/${noteId}`);
         } catch (err: unknown) {
             const message =
                 err instanceof Error ? err.message : "Failed to create note.";
@@ -166,7 +158,7 @@ export default function SubmitPage() {
                     <CardTitle className="text-lg">Create a Note</CardTitle>
                     <p className="text-sm text-muted-foreground">
                         Share your knowledge with the community. Notes require admin
-                        approval before they appear publicly.
+                        approval before they appear publicly. A PDF file is required.
                     </p>
                 </CardHeader>
                 <CardContent>
@@ -187,21 +179,6 @@ export default function SubmitPage() {
                             <p className="text-xs text-muted-foreground text-right">
                                 {title.length}/300
                             </p>
-                        </div>
-
-                        {/* Author */}
-                        <div className="space-y-1.5">
-                            <Label htmlFor="author">
-                                Author <span className="text-destructive">*</span>
-                            </Label>
-                            <Input
-                                id="author"
-                                placeholder="Author name"
-                                value={author}
-                                onChange={(e) => setAuthor(e.target.value)}
-                                maxLength={100}
-                                required
-                            />
                         </div>
 
                         {/* Community name */}
@@ -247,9 +224,11 @@ export default function SubmitPage() {
                             </p>
                         </div>
 
-                        {/* PDF Upload */}
+                        {/* PDF Upload (required) */}
                         <div className="space-y-1.5">
-                            <Label>PDF Attachment (optional)</Label>
+                            <Label>
+                                PDF Attachment <span className="text-destructive">*</span>
+                            </Label>
                             {pdfFile ? (
                                 <div className="flex items-center gap-2 p-3 border rounded-md border-border bg-muted/50">
                                     <FileText className="h-5 w-5 text-primary shrink-0" />
@@ -277,7 +256,7 @@ export default function SubmitPage() {
                                 >
                                     <Upload className="h-8 w-8" />
                                     <span className="text-sm font-medium">
-                                        Click to upload a PDF
+                                        Click to upload a PDF (required)
                                     </span>
                                     <span className="text-xs">Max 50 MB</span>
                                 </button>
@@ -292,7 +271,7 @@ export default function SubmitPage() {
                         </div>
 
                         {/* Submit */}
-                        <Button type="submit" className="w-full" disabled={submitting}>
+                        <Button type="submit" className="w-full" disabled={submitting || !pdfFile}>
                             {submitting ? (
                                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
                             ) : null}

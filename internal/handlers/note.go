@@ -72,7 +72,6 @@ func (app *App) CreateNote(c *gin.Context) {
 	var req struct {
 		SubnoteryName string `json:"subnotery_name" binding:"required"`
 		Title         string `json:"title"`
-		Author        string `json:"author"`
 		Price         int64  `json:"price"`
 	}
 	if !helpers.BindJSON(c, &req) {
@@ -86,9 +85,9 @@ func (app *App) CreateNote(c *gin.Context) {
 	noteLog.Log("CREATE", "User identified", "userID", userID)
 
 	// Basic validation
-	if req.Title == "" || req.SubnoteryName == "" || req.Author == "" || req.Price < 0 {
+	if req.Title == "" || req.SubnoteryName == "" || req.Price < 0 {
 		noteLog.Log("CREATE", "Validation failed: missing required fields")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Title, SubnoteryName, Author, and Price are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title, SubnoteryName, and Price are required"})
 		return
 	}
 
@@ -115,28 +114,30 @@ func (app *App) CreateNote(c *gin.Context) {
 		}
 		noteLog.Log("CREATE", "Subnotery resolved", "subnoteryID", subnotery.ID)
 
+		// Fetch the creator user (needed for author name, and admin assignment if new subnotery)
+		var creator models.User
+		if err := tx.First(&creator, userID).Error; err != nil {
+			noteLog.Log("CREATE", "Failed to fetch creator", "error", err)
+			return err
+		}
+
 		// Assign creator as first admin if subnotery was just created
 		if subnoteryCreated {
-			var user models.User
-			if err := tx.First(&user, userID).Error; err != nil {
-				noteLog.Log("CREATE", "Failed to fetch user", "error", err)
-				return err
-			}
-			if err := tx.Model(&subnotery).Association("Admins").Append(&user); err != nil {
+			if err := tx.Model(&subnotery).Association("Admins").Append(&creator); err != nil {
 				noteLog.Log("CREATE", "Failed to assign admin", "error", err)
 				return err
 			}
-			if err := tx.Model(&subnotery).Association("Members").Append(&user); err != nil {
+			if err := tx.Model(&subnotery).Association("Members").Append(&creator); err != nil {
 				noteLog.Log("CREATE", "Failed to add member", "error", err)
 				return err
 			}
 			noteLog.Log("CREATE", "Creator assigned as admin/member", "subnoteryID", subnotery.ID)
 		}
 
-		// Create the note record
+		// Create the note record (author = creator's display name)
 		note = models.Note{
 			Title:       req.Title,
-			Author:      req.Author,
+			Author:      creator.DisplayName(),
 			Price:       req.Price,
 			Status:      models.StatusPending,
 			SubnoteryID: subnotery.ID,

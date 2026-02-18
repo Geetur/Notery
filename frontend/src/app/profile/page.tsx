@@ -5,7 +5,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
     Select,
@@ -18,36 +17,37 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { changePassword, resendVerification } from "@/services/auth";
+import { resendVerification } from "@/services/auth";
 import { getMyNotes } from "@/services/notes";
-import { updateMyProfile } from "@/services/profile";
+import { deleteAvatar, updateMyProfile, uploadAvatar } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Note, NoteStatus, ProfileVisibility } from "@/types";
 import {
     AlertCircle,
+    Camera,
     CheckCircle,
     Clock,
     FileText,
     Loader2,
     Mail,
+    Trash2,
     XCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export default function ProfilePage() {
     const router = useRouter();
     const { user, isAuthenticated, loading, setUser } = useAuthStore();
     const { toast } = useToast();
 
-    const [displayName, setDisplayName] = useState("");
     const [bio, setBio] = useState("");
     const [visibility, setVisibility] = useState<ProfileVisibility>("public");
     const [saving, setSaving] = useState(false);
 
-    const [currentPassword, setCurrentPassword] = useState("");
-    const [newPassword, setNewPassword] = useState("");
-    const [changingPassword, setChangingPassword] = useState(false);
+    const [uploadingAvatar, setUploadingAvatar] = useState(false);
+    const [deletingAvatar, setDeletingAvatar] = useState(false);
+    const avatarInputRef = useRef<HTMLInputElement>(null);
 
     // My Notes state
     const [myNotes, setMyNotes] = useState<Note[]>([]);
@@ -76,7 +76,6 @@ export default function ProfilePage() {
 
     useEffect(() => {
         if (user) {
-            setDisplayName(user.display_name || "");
             setBio(user.bio || "");
             setVisibility(user.profile_visibility || "public");
         }
@@ -131,7 +130,6 @@ export default function ProfilePage() {
         setSaving(true);
         try {
             const updated = await updateMyProfile({
-                display_name: displayName || undefined,
                 bio: bio || undefined,
                 profile_visibility: visibility,
             });
@@ -144,31 +142,64 @@ export default function ProfilePage() {
         }
     };
 
-    const handleChangePassword = async () => {
-        if (!currentPassword || !newPassword) return;
-        setChangingPassword(true);
-        try {
-            await changePassword(currentPassword, newPassword);
-            setCurrentPassword("");
-            setNewPassword("");
-            toast({
-                title: "Password changed",
-                description: "All sessions have been revoked. Please log in again.",
-            });
-            router.push("/login");
-        } catch {
-            toast({ title: "Failed to change password", variant: "destructive" });
-        } finally {
-            setChangingPassword(false);
-        }
-    };
-
     const handleResendVerification = async () => {
         try {
             await resendVerification();
             toast({ title: "Verification email sent" });
         } catch {
             toast({ title: "Failed to resend verification", variant: "destructive" });
+        }
+    };
+
+    const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+        if (!allowedTypes.includes(file.type)) {
+            toast({
+                title: "Invalid file type",
+                description: "Only JPEG, PNG, WebP, and GIF images are allowed.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+            toast({
+                title: "File too large",
+                description: "Maximum avatar size is 5 MB.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        setUploadingAvatar(true);
+        try {
+            const result = await uploadAvatar(file);
+            // Re-fetch profile to get updated avatar_url
+            setUser({ ...user, avatar_url: result.avatar_url });
+            toast({ title: "Avatar updated" });
+        } catch {
+            toast({ title: "Failed to upload avatar", variant: "destructive" });
+        } finally {
+            setUploadingAvatar(false);
+            if (avatarInputRef.current) {
+                avatarInputRef.current.value = "";
+            }
+        }
+    };
+
+    const handleAvatarDelete = async () => {
+        setDeletingAvatar(true);
+        try {
+            await deleteAvatar();
+            setUser({ ...user, avatar_url: "" });
+            toast({ title: "Avatar removed" });
+        } catch {
+            toast({ title: "Failed to delete avatar", variant: "destructive" });
+        } finally {
+            setDeletingAvatar(false);
         }
     };
 
@@ -217,15 +248,36 @@ export default function ProfilePage() {
                             <CardTitle className="text-sm">Profile Information</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            {/* Avatar */}
+                            {/* Avatar with upload/delete controls */}
                             <div className="flex items-center gap-4">
-                                <Avatar className="h-16 w-16">
-                                    <AvatarImage src={user.avatar_url} />
-                                    <AvatarFallback className="text-lg">
-                                        {user.username[0]?.toUpperCase()}
-                                    </AvatarFallback>
-                                </Avatar>
-                                <div>
+                                <div className="relative group">
+                                    <Avatar className="h-16 w-16">
+                                        <AvatarImage src={user.avatar_url} />
+                                        <AvatarFallback className="text-lg">
+                                            {user.username[0]?.toUpperCase()}
+                                        </AvatarFallback>
+                                    </Avatar>
+                                    <button
+                                        type="button"
+                                        onClick={() => avatarInputRef.current?.click()}
+                                        disabled={uploadingAvatar}
+                                        className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                    >
+                                        {uploadingAvatar ? (
+                                            <Loader2 className="h-5 w-5 text-white animate-spin" />
+                                        ) : (
+                                            <Camera className="h-5 w-5 text-white" />
+                                        )}
+                                    </button>
+                                    <input
+                                        ref={avatarInputRef}
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,image/gif"
+                                        onChange={handleAvatarUpload}
+                                        className="hidden"
+                                    />
+                                </div>
+                                <div className="flex-1">
                                     <p className="font-medium">{user.username}</p>
                                     <p className="text-xs text-muted-foreground">{user.email}</p>
                                     {user.email_verified && (
@@ -233,23 +285,42 @@ export default function ProfilePage() {
                                             <CheckCircle className="h-3 w-3" /> Verified
                                         </span>
                                     )}
+                                    <div className="flex items-center gap-2 mt-1.5">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 text-xs"
+                                            onClick={() => avatarInputRef.current?.click()}
+                                            disabled={uploadingAvatar}
+                                        >
+                                            {uploadingAvatar ? (
+                                                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                            ) : (
+                                                <Camera className="h-3 w-3 mr-1" />
+                                            )}
+                                            {user.avatar_url ? "Change Avatar" : "Upload Avatar"}
+                                        </Button>
+                                        {user.avatar_url && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs text-destructive hover:text-destructive"
+                                                onClick={handleAvatarDelete}
+                                                disabled={deletingAvatar}
+                                            >
+                                                {deletingAvatar ? (
+                                                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                                ) : (
+                                                    <Trash2 className="h-3 w-3 mr-1" />
+                                                )}
+                                                Remove
+                                            </Button>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
                             <Separator />
-
-                            {/* Display name */}
-                            <div>
-                                <Label htmlFor="displayName">Display Name</Label>
-                                <Input
-                                    id="displayName"
-                                    value={displayName}
-                                    onChange={(e) => setDisplayName(e.target.value)}
-                                    placeholder="Your display name"
-                                    maxLength={50}
-                                />
-                                <p className="text-xs text-muted-foreground mt-1">2-50 characters</p>
-                            </div>
 
                             {/* Bio */}
                             <div>
@@ -285,43 +356,6 @@ export default function ProfilePage() {
                             <Button onClick={handleSaveProfile} disabled={saving}>
                                 {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                                 Save Changes
-                            </Button>
-                        </CardContent>
-                    </Card>
-
-                    {/* Change password */}
-                    <Card className="border-border">
-                        <CardHeader>
-                            <CardTitle className="text-sm">Change Password</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div>
-                                <Label htmlFor="currentPassword">Current Password</Label>
-                                <Input
-                                    id="currentPassword"
-                                    type="password"
-                                    value={currentPassword}
-                                    onChange={(e) => setCurrentPassword(e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <Label htmlFor="newPassword">New Password</Label>
-                                <Input
-                                    id="newPassword"
-                                    type="password"
-                                    value={newPassword}
-                                    onChange={(e) => setNewPassword(e.target.value)}
-                                    minLength={8}
-                                />
-                                <p className="text-xs text-muted-foreground mt-1">Minimum 8 characters</p>
-                            </div>
-                            <Button
-                                onClick={handleChangePassword}
-                                disabled={changingPassword || !currentPassword || !newPassword}
-                                variant="outline"
-                            >
-                                {changingPassword && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                                Change Password
                             </Button>
                         </CardContent>
                     </Card>

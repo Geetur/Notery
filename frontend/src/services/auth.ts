@@ -3,7 +3,6 @@ import { apiPost, clearTokens, getRefreshToken, setTokens } from "@/lib/api-clie
 import type {
     AuthRequest,
     AuthResponse,
-    ChangePasswordRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
 } from "@/types";
@@ -84,17 +83,6 @@ export function resetPassword(
         token,
         new_password: newPassword,
     } satisfies ResetPasswordRequest);
-}
-
-/** POST /auth/change-password — Change password (requires auth). */
-export function changePassword(
-    currentPassword: string,
-    newPassword: string
-): Promise<{ message: string }> {
-    return apiPost("/auth/change-password", {
-        current_password: currentPassword,
-        new_password: newPassword,
-    } satisfies ChangePasswordRequest);
 }
 
 /** POST /auth/resend-verification — Resend email verification link. */

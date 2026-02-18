@@ -116,11 +116,6 @@ export interface ResetPasswordRequest {
     new_password: string;
 }
 
-export interface ChangePasswordRequest {
-    current_password: string;
-    new_password: string;
-}
-
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
 export interface SelfProfile {
@@ -147,7 +142,6 @@ export interface PublicProfile {
 }
 
 export interface UpdateProfileRequest {
-    display_name?: string;
     bio?: string;
     avatar_url?: string;
     profile_visibility?: ProfileVisibility;
@@ -216,7 +210,6 @@ export interface VoteResponse {
 
 export interface CreateNoteRequest {
     title: string;
-    author: string;
     subnotery_name: string;
     price: number; // cents
 }
