@@ -147,8 +147,13 @@ func (app *App) Signup(c *gin.Context) {
 		return
 	}
 
-	// Send verification email (best-effort — don't block signup on email failure)
-	app.sendVerificationEmail(uint64(user.ID), user.Email)
+	// Dev mode (no SMTP): auto-verify user. Production: send verification email.
+	if _, isLog := app.Mailer.(*email.LogMailer); isLog {
+		app.DB.Model(user).Update("email_verified", true)
+		authLog.Log("SIGNUP", "Dev mode — auto-verified user", "userID", user.ID)
+	} else {
+		app.sendVerificationEmail(uint64(user.ID), user.Email)
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":       "User created successfully",

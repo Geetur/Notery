@@ -116,6 +116,11 @@ export interface ResetPasswordRequest {
     new_password: string;
 }
 
+export interface OAuthProviders {
+    google: boolean;
+    github: boolean;
+}
+
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
 export interface SelfProfile {

@@ -1,9 +1,11 @@
 // auth.ts — Auth API service. Wraps all /auth/* endpoints.
-import { apiPost, clearTokens, getRefreshToken, setTokens } from "@/lib/api-client";
+import { apiGet, apiPost, clearTokens, getRefreshToken, setTokens } from "@/lib/api-client";
+import { API_V1 } from "@/lib/config";
 import type {
     AuthRequest,
     AuthResponse,
     ForgotPasswordRequest,
+    OAuthProviders,
     ResetPasswordRequest,
 } from "@/types";
 
@@ -88,4 +90,19 @@ export function resetPassword(
 /** POST /auth/resend-verification — Resend email verification link. */
 export function resendVerification(): Promise<{ message: string }> {
     return apiPost("/auth/resend-verification");
+}
+
+/** GET /auth/oauth/providers — Check which OAuth providers are available. */
+export function getOAuthProviders(): Promise<OAuthProviders> {
+    return apiGet<OAuthProviders>("/auth/oauth/providers");
+}
+
+/** Get the URL to start Google OAuth login. */
+export function getGoogleOAuthURL(): string {
+    return `${API_V1}/auth/oauth/google`;
+}
+
+/** Get the URL to start GitHub OAuth login. */
+export function getGitHubOAuthURL(): string {
+    return `${API_V1}/auth/oauth/github`;
 }

@@ -26,6 +26,8 @@ type User struct {
 	ProfileVisibility ProfileVisibility `json:"profile_visibility" gorm:"default:'public'"`
 	ProfileUpdatedAt *time.Time      `json:"profile_updated_at"`
 	EmailVerified    bool            `json:"email_verified" gorm:"default:false"`
+	OAuthProvider    string          `json:"-" gorm:"column:oauth_provider;default:''"` // "google", "github", or "" for email/password
+	OAuthID          string          `json:"-" gorm:"column:oauth_id;default:''"` // Provider's unique user ID
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }

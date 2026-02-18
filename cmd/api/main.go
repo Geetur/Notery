@@ -72,15 +72,20 @@ func main() {
 
 	// ── App Handler (all dependencies injected) ────────────────────────────
 	app := handlers.NewApp(handlers.AppConfig{
-		DB:          db,
-		Redis:       redisClient,
-		R2:          r2Client,
-		Meilisearch: meiliClient,
-		SearchIndex: meiliIndex,
-		JWTSecret:   cfg.JWTSecret,
-		Payment:     paymentService,
-		Mailer:      mailer,
-		BaseURL:     cfg.BaseURL,
+		DB:                 db,
+		Redis:              redisClient,
+		R2:                 r2Client,
+		Meilisearch:        meiliClient,
+		SearchIndex:        meiliIndex,
+		JWTSecret:          cfg.JWTSecret,
+		Payment:            paymentService,
+		Mailer:             mailer,
+		BaseURL:            cfg.BaseURL,
+		FrontendURL:        cfg.FrontendURL,
+		GoogleClientID:     cfg.GoogleClientID,
+		GoogleClientSecret: cfg.GoogleClientSecret,
+		GitHubClientID:     cfg.GitHubClientID,
+		GitHubClientSecret: cfg.GitHubClientSecret,
 	})
 
 	// ── Health ─────────────────────────────────────────────────────────────
@@ -102,6 +107,13 @@ func main() {
 	auth.POST("/forgot-password", app.ForgotPassword)
 	auth.POST("/reset-password", app.ResetPassword)
 	auth.GET("/verify-email", app.VerifyEmail)
+
+	// OAuth routes (public, no auth required)
+	auth.GET("/oauth/providers", app.OAuthProviders)
+	auth.GET("/oauth/google", app.OAuthGoogle)
+	auth.GET("/oauth/google/callback", app.OAuthGoogleCallback)
+	auth.GET("/oauth/github", app.OAuthGitHub)
+	auth.GET("/oauth/github/callback", app.OAuthGitHubCallback)
 
 	// Auth endpoints requiring login (not verification)
 	authProtected := auth.Group("", middleware.RequireAuth(cfg.JWTSecret))

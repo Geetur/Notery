@@ -10,6 +10,7 @@ import { ApiRequestError } from "@/lib/api-client";
 import { login } from "@/services/auth";
 import { getMyProfile } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth-store";
+import OAuthButtons from "@/components/auth/oauth-buttons";
 import { FileText, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -56,6 +57,7 @@ export default function LoginPage() {
                     <CardTitle className="text-lg">Log In</CardTitle>
                 </CardHeader>
                 <CardContent>
+                    <OAuthButtons action="Log in" />
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
                             <Label htmlFor="email">Email</Label>

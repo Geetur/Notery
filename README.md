@@ -287,18 +287,23 @@ npm run dev
 
 ## API Endpoints (54 routes)
 
-### Public (11 routes)
+### Public (17 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| POST | `/api/v1/auth/signup` | Register + issue tokens + send verification email |
+| POST | `/api/v1/auth/signup` | Register + issue tokens (auto-verifies in dev mode) |
 | POST | `/api/v1/auth/login` | Authenticate + issue tokens |
 | POST | `/api/v1/auth/refresh` | Rotate refresh token |
 | POST | `/api/v1/auth/logout` | Revoke refresh token |
 | POST | `/api/v1/auth/forgot-password` | Request password reset email |
 | POST | `/api/v1/auth/reset-password` | Reset password with token |
 | GET | `/api/v1/auth/verify-email` | Verify email via token |
+| GET | `/api/v1/auth/oauth/providers` | List configured OAuth providers |
+| GET | `/api/v1/auth/oauth/google` | Start Google OAuth flow |
+| GET | `/api/v1/auth/oauth/google/callback` | Google OAuth callback |
+| GET | `/api/v1/auth/oauth/github` | Start GitHub OAuth flow |
+| GET | `/api/v1/auth/oauth/github/callback` | GitHub OAuth callback |
 | POST | `/api/v1/signup` | Register (legacy) |
 | POST | `/api/v1/login` | Authenticate (legacy) |
 | POST | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
