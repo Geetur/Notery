@@ -1,6 +1,10 @@
 // pdf-viewer.tsx — In-app PDF viewer using react-pdf.
 // Renders PDFs inline with page navigation. Supports preview (truncated) and full modes.
 // No download functionality — all viewing is in-app only.
+//
+// IMPORTANT: This module uses react-pdf which requires browser APIs (canvas, DOM).
+// It MUST be loaded with next/dynamic({ ssr: false }) to avoid SSR crashes.
+// The default export is the dynamic wrapper; the named export is the raw component.
 "use client";
 
 import { Button } from "@/components/ui/button";
@@ -14,21 +18,56 @@ import {
     ZoomIn,
     ZoomOut,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import dynamic from "next/dynamic";
+import {
+    Component,
+    type ErrorInfo,
+    type ReactNode,
+    useMemo,
+    useState,
+} from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
-// Configure the PDF.js worker from the CDN matching the installed version.
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Configure the PDF.js worker from a local copy in public/ for reliability.
+// This avoids CDN issues and version mismatches with pdfjs-dist v5.
+if (typeof window !== "undefined") {
+    pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+}
 
-interface PDFViewerProps {
+export interface PDFViewerProps {
     /** Note ID to fetch PDF for */
     noteId: number;
     /** "preview" uses the truncated preview endpoint; "full" uses the full content endpoint */
     mode: "preview" | "full";
     /** Max height of the viewer container (default: 600px) */
     maxHeight?: number;
+}
+
+/** React error boundary to catch react-pdf rendering crashes gracefully. */
+interface EBProps {
+    children: ReactNode;
+    fallback: ReactNode;
+}
+interface EBState {
+    hasError: boolean;
+}
+class PDFErrorBoundary extends Component<EBProps, EBState> {
+    constructor(props: EBProps) {
+        super(props);
+        this.state = { hasError: false };
+    }
+    static getDerivedStateFromError(): EBState {
+        return { hasError: true };
+    }
+    componentDidCatch(error: Error, info: ErrorInfo) {
+        console.error("PDFViewer error boundary caught:", error, info);
+    }
+    render() {
+        if (this.state.hasError) return this.props.fallback;
+        return this.props.children;
+    }
 }
 
 /**
@@ -38,43 +77,41 @@ interface PDFViewerProps {
  * - preview mode: GET /notes/:id/preview (truncated, first ~5 pages)
  * - full mode:    GET /notes/:id/content?token=... (full PDF, requires purchase)
  */
-export function PDFViewer({ noteId, mode, maxHeight = 600 }: PDFViewerProps) {
+function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFViewerProps) {
     const [numPages, setNumPages] = useState<number>(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [scale, setScale] = useState(1.0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const pdfUrl = useCallback(() => {
+    // Memoize the file URL so react-pdf's Document doesn't treat it as a new
+    // document on every render (which causes infinite reload loops).
+    const fileUrl = useMemo(() => {
         const token = getAccessToken();
         if (mode === "preview") {
-            // Preview endpoint is under OptionalAuth — token optional but helpful
             return token
                 ? `${API_V1}/notes/${noteId}/preview?token=${token}`
                 : `${API_V1}/notes/${noteId}/preview`;
         }
-        // Full content requires auth
         return `${API_V1}/notes/${noteId}/content?token=${token}`;
     }, [noteId, mode]);
 
-    const onDocumentLoadSuccess = useCallback(
-        ({ numPages: total }: { numPages: number }) => {
-            setNumPages(total);
-            setCurrentPage(1);
-            setLoading(false);
-            setError(null);
-        },
-        []
-    );
+    const onDocumentLoadSuccess = ({ numPages: total }: { numPages: number }) => {
+        setNumPages(total);
+        setCurrentPage(1);
+        setLoading(false);
+        setError(null);
+    };
 
-    const onDocumentLoadError = useCallback((err: Error) => {
+    const onDocumentLoadError = (err: Error) => {
         console.error("PDF load error:", err);
         setLoading(false);
         setError("Failed to load PDF. Please try again.");
-    }, []);
+    };
 
     const goToPrevPage = () => setCurrentPage((p) => Math.max(1, p - 1));
-    const goToNextPage = () => setCurrentPage((p) => Math.min(numPages, p + 1));
+    const goToNextPage = () =>
+        setCurrentPage((p) => Math.min(numPages, p + 1));
     const zoomIn = () => setScale((s) => Math.min(2.0, s + 0.2));
     const zoomOut = () => setScale((s) => Math.max(0.5, s - 0.2));
 
@@ -97,88 +134,139 @@ export function PDFViewer({ noteId, mode, maxHeight = 600 }: PDFViewerProps) {
     }
 
     return (
-        <div className="flex flex-col items-center w-full">
-            {/* Toolbar */}
-            {!loading && numPages > 0 && (
-                <div className="flex items-center gap-2 mb-2 p-2 bg-muted/50 rounded-md w-full justify-center flex-wrap">
+        <PDFErrorBoundary
+            fallback={
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <p className="text-sm text-destructive mb-2">
+                        PDF viewer encountered an error. Please refresh the page.
+                    </p>
                     <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
-                        onClick={goToPrevPage}
-                        disabled={currentPage <= 1}
+                        onClick={() => window.location.reload()}
                     >
-                        <ChevronLeft className="h-4 w-4" />
+                        Refresh
                     </Button>
-                    <span className="text-xs text-muted-foreground min-w-[80px] text-center">
-                        Page {currentPage} of {numPages}
-                    </span>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={goToNextPage}
-                        disabled={currentPage >= numPages}
-                    >
-                        <ChevronRight className="h-4 w-4" />
-                    </Button>
-                    <div className="w-px h-5 bg-border mx-1" />
-                    <Button variant="ghost" size="sm" onClick={zoomOut} disabled={scale <= 0.5}>
-                        <ZoomOut className="h-4 w-4" />
-                    </Button>
-                    <span className="text-xs text-muted-foreground min-w-[40px] text-center">
-                        {Math.round(scale * 100)}%
-                    </span>
-                    <Button variant="ghost" size="sm" onClick={zoomIn} disabled={scale >= 2.0}>
-                        <ZoomIn className="h-4 w-4" />
-                    </Button>
-                    {mode === "preview" && (
-                        <span className="text-xs text-yellow-500 font-medium ml-2">
-                            Preview
-                        </span>
-                    )}
                 </div>
-            )}
-
-            {/* PDF Document */}
-            <div
-                className="overflow-auto border rounded-md bg-muted/20 w-full"
-                style={{ maxHeight }}
-            >
-                {loading && (
-                    <div className="flex flex-col items-center justify-center py-12">
-                        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
-                        <p className="text-xs text-muted-foreground">Loading PDF...</p>
+            }
+        >
+            <div className="flex flex-col items-center w-full">
+                {/* Toolbar */}
+                {!loading && numPages > 0 && (
+                    <div className="flex items-center gap-2 mb-2 p-2 bg-muted/50 rounded-md w-full justify-center flex-wrap">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={goToPrevPage}
+                            disabled={currentPage <= 1}
+                        >
+                            <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-xs text-muted-foreground min-w-[80px] text-center">
+                            Page {currentPage} of {numPages}
+                        </span>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={goToNextPage}
+                            disabled={currentPage >= numPages}
+                        >
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
+                        <div className="w-px h-5 bg-border mx-1" />
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={zoomOut}
+                            disabled={scale <= 0.5}
+                        >
+                            <ZoomOut className="h-4 w-4" />
+                        </Button>
+                        <span className="text-xs text-muted-foreground min-w-[40px] text-center">
+                            {Math.round(scale * 100)}%
+                        </span>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={zoomIn}
+                            disabled={scale >= 2.0}
+                        >
+                            <ZoomIn className="h-4 w-4" />
+                        </Button>
+                        {mode === "preview" && (
+                            <span className="text-xs text-yellow-500 font-medium ml-2">
+                                Preview
+                            </span>
+                        )}
                     </div>
                 )}
-                <Document
-                    file={pdfUrl()}
-                    onLoadSuccess={onDocumentLoadSuccess}
-                    onLoadError={onDocumentLoadError}
-                    loading={
-                        <div className="flex items-center justify-center py-12">
-                            <Skeleton className="h-[400px] w-[300px]" />
-                        </div>
-                    }
-                >
-                    <div className="flex justify-center p-4">
-                        <Page
-                            pageNumber={currentPage}
-                            scale={scale}
-                            renderTextLayer={true}
-                            renderAnnotationLayer={true}
-                            loading={
-                                <Skeleton className="h-[400px] w-[300px]" />
-                            }
-                        />
-                    </div>
-                </Document>
-            </div>
 
-            {/* Preview watermark */}
-            {mode === "preview" && !loading && numPages > 0 && (
-                <p className="text-xs text-muted-foreground mt-2 text-center">
-                    This is a preview of the first few pages. Purchase to view the full document.
-                </p>
-            )}
-        </div>
+                {/* PDF Document */}
+                <div
+                    className="overflow-auto border rounded-md bg-muted/20 w-full"
+                    style={{ maxHeight }}
+                >
+                    {loading && (
+                        <div className="flex flex-col items-center justify-center py-12">
+                            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
+                            <p className="text-xs text-muted-foreground">
+                                Loading PDF...
+                            </p>
+                        </div>
+                    )}
+                    <Document
+                        file={fileUrl}
+                        onLoadSuccess={onDocumentLoadSuccess}
+                        onLoadError={onDocumentLoadError}
+                        loading={
+                            <div className="flex items-center justify-center py-12">
+                                <Skeleton className="h-[400px] w-[300px]" />
+                            </div>
+                        }
+                    >
+                        <div className="flex justify-center p-4">
+                            <Page
+                                pageNumber={currentPage}
+                                scale={scale}
+                                renderTextLayer={true}
+                                renderAnnotationLayer={true}
+                                loading={
+                                    <Skeleton className="h-[400px] w-[300px]" />
+                                }
+                            />
+                        </div>
+                    </Document>
+                </div>
+
+                {/* Preview watermark */}
+                {mode === "preview" && !loading && numPages > 0 && (
+                    <p className="text-xs text-muted-foreground mt-2 text-center">
+                        This is a preview of the first few pages. Purchase to
+                        view the full document.
+                    </p>
+                )}
+            </div>
+        </PDFErrorBoundary>
     );
 }
+
+/**
+ * Dynamically imported PDFViewer — prevents SSR crashes from react-pdf's
+ * browser-only dependencies (canvas, pdfjs-dist).
+ *
+ * Usage: `import { PDFViewer } from "@/components/pdf-viewer";`
+ */
+export const PDFViewer = dynamic(
+    () => Promise.resolve(PDFViewerInner),
+    {
+        ssr: false,
+        loading: () => (
+            <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-2" />
+                <p className="text-xs text-muted-foreground">
+                    Loading PDF viewer...
+                </p>
+            </div>
+        ),
+    }
+);

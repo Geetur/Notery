@@ -140,11 +140,13 @@ export default function CommunityDetailPage() {
 
     if (loading) {
         return (
-            <div className="flex max-w-[1200px] mx-auto px-4 py-4 gap-4">
-                <aside className="hidden lg:block w-56 shrink-0">
-                    <LeftSidebar />
+            <div className="flex px-0 py-0">
+                <aside className="hidden md:block w-56 shrink-0 border-r border-border">
+                    <div className="sticky top-12 h-[calc(100vh-48px)] overflow-y-auto">
+                        <LeftSidebar />
+                    </div>
                 </aside>
-                <main className="flex-1 min-w-0 space-y-4">
+                <main className="flex-1 min-w-0 px-4 py-4 space-y-4">
                     <Skeleton className="h-32 w-full rounded-lg" />
                     <Skeleton className="h-64 w-full rounded-lg" />
                 </main>
@@ -154,11 +156,13 @@ export default function CommunityDetailPage() {
 
     if (error || !community) {
         return (
-            <div className="flex max-w-[1200px] mx-auto px-4 py-4 gap-4">
-                <aside className="hidden lg:block w-56 shrink-0">
-                    <LeftSidebar />
+            <div className="flex px-0 py-0">
+                <aside className="hidden md:block w-56 shrink-0 border-r border-border">
+                    <div className="sticky top-12 h-[calc(100vh-48px)] overflow-y-auto">
+                        <LeftSidebar />
+                    </div>
                 </aside>
-                <main className="flex-1 min-w-0">
+                <main className="flex-1 min-w-0 px-4 py-4">
                     <Card className="p-6 text-center text-destructive">
                         {error || "Community not found"}
                     </Card>
@@ -168,11 +172,13 @@ export default function CommunityDetailPage() {
     }
 
     return (
-        <div className="flex max-w-[1200px] mx-auto px-4 py-4 gap-4">
-            <aside className="hidden lg:block w-56 shrink-0">
-                <LeftSidebar />
+        <div className="flex px-0 py-0">
+            <aside className="hidden md:block w-56 shrink-0 border-r border-border">
+                <div className="sticky top-12 h-[calc(100vh-48px)] overflow-y-auto">
+                    <LeftSidebar />
+                </div>
             </aside>
-            <main className="flex-1 min-w-0">
+            <main className="flex-1 min-w-0 px-4 py-4">
                 {/* Community header */}
                 <Card className="p-6 mb-4">
                     <div className="flex items-start justify-between">
@@ -367,9 +373,7 @@ export default function CommunityDetailPage() {
                     )}
                 </Tabs>
             </main>
-            <aside className="hidden xl:block w-80 shrink-0">
-                <RightSidebar />
-            </aside>
+            <RightSidebar />
         </div>
     );
 }

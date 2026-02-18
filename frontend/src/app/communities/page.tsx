@@ -39,11 +39,14 @@ export default function CommunitiesPage() {
     const totalPages = Math.ceil(total / PAGE_SIZE);
 
     return (
-        <div className="flex max-w-[1200px] mx-auto px-4 py-4 gap-4">
-            <aside className="hidden lg:block w-56 shrink-0">
-                <LeftSidebar />
+        <div className="flex px-0 py-0">
+            <aside className="hidden md:block w-56 shrink-0 border-r border-border">
+                <div className="sticky top-12 h-[calc(100vh-48px)] overflow-y-auto">
+                    <LeftSidebar />
+                </div>
             </aside>
-            <main className="flex-1 min-w-0">
+            <main className="flex-1 min-w-0 px-4 py-4">
+                <div className="max-w-3xl mx-auto">
                 <h1 className="text-2xl font-bold mb-4">Communities</h1>
                 <p className="text-muted-foreground mb-6">
                     Browse all communities. Communities are auto-created when a note is
@@ -133,10 +136,9 @@ export default function CommunitiesPage() {
                         </Button>
                     </div>
                 )}
+                </div>
             </main>
-            <aside className="hidden xl:block w-80 shrink-0">
-                <RightSidebar />
-            </aside>
+            <RightSidebar />
         </div>
     );
 }

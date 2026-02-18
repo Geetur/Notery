@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { formatDate, formatFileSize, formatPrice, timeAgo } from "@/lib/format";
+import { formatDate, formatFileSize, formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
 import { getNoteById } from "@/services/notes";
 import { addToCart, checkPurchaseStatus, purchaseNote } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
@@ -165,10 +165,10 @@ export default function NoteDetailPage() {
                             {/* Meta */}
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                                 <Link
-                                    href={`/n/${note.subnotery_id}`}
+                                    href={`/communities/${note.subnotery_id}`}
                                     className="font-semibold text-foreground hover:underline"
                                 >
-                                    n/{note.subnotery_id}
+                                    n/{note.subnotery_name || note.subnotery_id}
                                 </Link>
                                 <span>•</span>
                                 <span>Posted by</span>
@@ -213,6 +213,25 @@ export default function NoteDetailPage() {
                                     {note.status}
                                 </Badge>
                             </div>
+
+                            {/* Description */}
+                            {note.description && (
+                                <p className="text-sm text-muted-foreground leading-relaxed mb-4 whitespace-pre-wrap">
+                                    {note.description}
+                                </p>
+                            )}
+
+                            {/* Thumbnail */}
+                            {note.has_thumbnail && note.thumbnail_url && (
+                                <div className="mb-4 rounded-md overflow-hidden border border-border">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                        src={thumbnailUrl(note.id, note.thumbnail_url)}
+                                        alt={`Thumbnail for ${note.title}`}
+                                        className="w-full max-h-[400px] object-contain bg-muted/30"
+                                    />
+                                </div>
+                            )}
 
                             <Separator className="mb-4" />
 

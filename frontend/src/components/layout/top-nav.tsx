@@ -30,21 +30,26 @@ import {
 import { useTheme } from "next-themes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { LeftSidebar } from "./left-sidebar";
+import { SearchAutocomplete } from "./search-autocomplete";
 
 export function TopNav() {
     const router = useRouter();
     const { theme, setTheme } = useTheme();
     const { user, isAuthenticated, logout } = useAuthStore();
     const [searchQuery, setSearchQuery] = useState("");
+    const [showAutocomplete, setShowAutocomplete] = useState(false);
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
         if (searchQuery.trim()) {
+            setShowAutocomplete(false);
             router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
         }
     };
+
+    const closeAutocomplete = useCallback(() => setShowAutocomplete(false), []);
 
     const handleLogout = async () => {
         await logout();
@@ -87,7 +92,18 @@ export function TopNav() {
                             placeholder="Search Notery"
                             className="pl-8 h-9 bg-muted/50 border-none focus-visible:ring-1 focus-visible:ring-primary rounded-full"
                             value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onChange={(e) => {
+                                setSearchQuery(e.target.value);
+                                setShowAutocomplete(e.target.value.trim().length > 0);
+                            }}
+                            onFocus={() => {
+                                if (searchQuery.trim()) setShowAutocomplete(true);
+                            }}
+                        />
+                        <SearchAutocomplete
+                            query={searchQuery}
+                            visible={showAutocomplete}
+                            onClose={closeAutocomplete}
                         />
                     </div>
                 </form>

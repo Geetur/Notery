@@ -17,8 +17,8 @@ export function RightSidebar({ children }: RightSidebarProps) {
     const { isAuthenticated } = useAuthStore();
 
     return (
-        <aside className="hidden lg:block w-80 shrink-0">
-            <div className="sticky top-14 flex flex-col gap-4">
+        <aside className="hidden lg:block w-72 shrink-0 border-l border-border">
+            <div className="sticky top-12 h-[calc(100vh-48px)] overflow-y-auto p-4 flex flex-col gap-4">
                 {children}
 
                 {/* About card */}

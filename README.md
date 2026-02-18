@@ -321,6 +321,7 @@ npm run dev
 | GET | `/api/v1/subnoteries` | List all subnoteries (paginated) |
 | GET | `/api/v1/subnoteries/:id` | Get subnotery detail (admins, member count) |
 | GET | `/api/v1/subnoteries/:id/notes` | List approved notes in subnotery (paginated) |
+| GET | `/api/v1/notes/:id/thumbnail` | Get note thumbnail image (public, cached 24h) |
 
 ### Auth-Only — Requires JWT, no email verification needed (10 routes)
 
@@ -346,6 +347,8 @@ npm run dev
 |--------|----------|-------------|
 | POST | `/api/v1/notes` | Create note |
 | POST | `/api/v1/notes/:id/content` | Upload PDF |
+| POST | `/api/v1/notes/:id/thumbnail` | Upload thumbnail image (creator only) |
+| DELETE | `/api/v1/notes/:id/thumbnail` | Delete thumbnail (creator only) |
 | POST | `/api/v1/notes/:id/upvote` | Upvote note |
 | POST | `/api/v1/notes/:id/downvote` | Downvote note |
 | POST | `/api/v1/cart` | Add to cart |

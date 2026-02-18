@@ -115,3 +115,40 @@ export function approveNote(id: number): Promise<{ message: string }> {
 export function rejectNote(id: number): Promise<{ message: string }> {
     return apiPatch(`/notes/${id}/reject`);
 }
+
+/** POST /notes/:id/thumbnail — Upload a thumbnail image for a note. */
+export async function uploadNoteThumbnail(
+    noteId: number,
+    file: File
+): Promise<{ message: string; thumbnail_url: string }> {
+    const formData = new FormData();
+    formData.append("thumbnail", file);
+    const token = getAccessToken();
+    const res = await fetch(`${API_V1}/notes/${noteId}/thumbnail`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Thumbnail upload failed");
+    }
+    return res.json();
+}
+
+/** DELETE /notes/:id/thumbnail — Delete a note's thumbnail. */
+export function deleteNoteThumbnail(id: number): Promise<{ message: string }> {
+    return apiDelete(`/notes/${id}/thumbnail`);
+}
+
+/** GET /users/:id/notes — List a user's approved notes (public, paginated). */
+export function getUserNotes(
+    userId: number,
+    params?: PaginationParams
+): Promise<NotesListResponse> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return apiGet(`/users/${userId}/notes${qs ? `?${qs}` : ""}`);
+}

@@ -88,3 +88,16 @@ export function avatarUrl(
     if (!avatarKey) return undefined;
     return `${API_V1}/users/${userId}/avatar?v=${encodeURIComponent(avatarKey)}`;
 }
+
+/**
+ * Build the thumbnail proxy URL for a note.
+ * Returns undefined if the note has no thumbnail.
+ * Appends a cache-bust `v` param to force reload after upload.
+ */
+export function thumbnailUrl(
+    noteId: number,
+    thumbnailKey: string | undefined | null
+): string | undefined {
+    if (!thumbnailKey) return undefined;
+    return `${API_V1}/notes/${noteId}/thumbnail?v=${encodeURIComponent(thumbnailKey)}`;
+}

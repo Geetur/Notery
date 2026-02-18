@@ -72,6 +72,7 @@ func (app *App) CreateNote(c *gin.Context) {
 	var req struct {
 		SubnoteryName string `json:"subnotery_name" binding:"required"`
 		Title         string `json:"title"`
+		Description   string `json:"description"`
 		Price         int64  `json:"price"`
 	}
 	if !helpers.BindJSON(c, &req) {
@@ -140,6 +141,7 @@ func (app *App) CreateNote(c *gin.Context) {
 		// Create the note record (author = creator's display name)
 		note = models.Note{
 			Title:       req.Title,
+			Description: req.Description,
 			Author:      creator.DisplayName(),
 			Price:       req.Price,
 			Status:      models.StatusPending,
@@ -158,6 +160,13 @@ func (app *App) CreateNote(c *gin.Context) {
 	}
 
 	noteLog.Log("CREATE", "Note created successfully", "noteID", note.ID)
+
+	// Populate subnotery name for the response
+	var sub models.Subnotery
+	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+		note.SubnoteryName = sub.Name
+	}
+
 	c.JSON(http.StatusCreated, note)
 }
 
@@ -214,6 +223,11 @@ func (app *App) DeleteNote(c *gin.Context) {
 	// Cleanup PDF from R2 if exists
 	if note.HasPDF {
 		app.deletePDFFromR2(c.Request.Context(), note.ID)
+	}
+
+	// Cleanup thumbnail from R2 if exists
+	if note.HasThumbnail && note.ThumbnailURL != "" {
+		app.deleteThumbnailFromR2(c.Request.Context(), note.ThumbnailURL)
 	}
 
 	noteLog.Log("DELETE", "Note deleted successfully", "noteID", note.ID)
@@ -279,6 +293,11 @@ func (app *App) RejectNote(c *gin.Context) {
 	// Cleanup PDF from R2 if exists
 	if note.HasPDF {
 		app.deletePDFFromR2(c.Request.Context(), note.ID)
+	}
+
+	// Cleanup thumbnail from R2 if exists
+	if note.HasThumbnail && note.ThumbnailURL != "" {
+		app.deleteThumbnailFromR2(c.Request.Context(), note.ThumbnailURL)
 	}
 
 	noteLog.Log("REJECT", "Note rejected and deleted successfully", "noteID", note.ID)
@@ -379,6 +398,13 @@ func (app *App) GetNoteByID(c *gin.Context) {
 	}
 
 	noteLog.Log("GET", "Note retrieved", "noteID", note.ID)
+
+	// Populate subnotery name
+	var sub models.Subnotery
+	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+		note.SubnoteryName = sub.Name
+	}
+
 	c.JSON(http.StatusOK, note)
 }
 
@@ -431,6 +457,10 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 	}
 
 	noteLog.Log("PENDING", "Pending notes retrieved", "count", len(notes), "total", total)
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
 		"total": total,
@@ -471,6 +501,10 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 	}
 
 	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes), "total", total)
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
 		"total": total,
@@ -525,6 +559,10 @@ func (app *App) GetMyNotes(c *gin.Context) {
 	}
 
 	noteLog.Log("MY_NOTES", "Notes retrieved", "count", len(notes), "total", total, "userID", userID)
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
 		"total": total,
@@ -568,4 +606,55 @@ func (app *App) removeNoteFromIndex(noteID uint) error {
 		noteLog.Log("INDEX", "Note removed from index", "noteID", noteID)
 	}
 	return err
+}
+
+// GetUserNotes returns a paginated list of approved notes created by a specific user.
+//
+// Public endpoint. Only returns approved notes so unapproved content is not leaked.
+// Paginated with total count for frontend display on user profile pages.
+//
+// DB: COUNT + SELECT from notes WHERE creator_id AND status = Approved. Paginated.
+// Technologies: PostgreSQL (GORM).
+// Helpers: helpers.ParsePagination.
+//
+// Route: GET /api/v1/users/:id/notes
+func (app *App) GetUserNotes(c *gin.Context) {
+	noteLog.Log("USER_NOTES", "Processing get user notes request")
+
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	pag := helpers.ParsePagination(c)
+
+	var notes []models.Note
+	var total int64
+
+	query := app.DB.Model(&models.Note{}).
+		Where("creator_id = ? AND status = ?", userID, models.StatusApproved)
+
+	if err := query.Count(&total).Error; err != nil {
+		noteLog.Log("USER_NOTES", "Failed to count notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user notes"})
+		return
+	}
+
+	if err := query.Offset(pag.Offset).Limit(pag.Limit).Order("created_at DESC").Find(&notes).Error; err != nil {
+		noteLog.Log("USER_NOTES", "Failed to fetch notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user notes"})
+		return
+	}
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
+	noteLog.Log("USER_NOTES", "User notes retrieved", "userID", userID, "count", len(notes), "total", total)
+	c.JSON(http.StatusOK, gin.H{
+		"notes": notes,
+		"total": total,
+		"page":  pag.Page,
+		"limit": pag.Limit,
+	})
 }

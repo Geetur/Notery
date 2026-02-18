@@ -31,6 +31,7 @@ import {
     MoreHorizontal,
     Trash2,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 interface CommentThreadProps {
@@ -149,7 +150,14 @@ export function CommentThread({
                 </button>
 
                 <span className="font-semibold text-foreground">
-                    {isDeleted ? "[deleted]" : comment.username}
+                    {isDeleted ? "[deleted]" : (
+                        <Link
+                            href={`/user/${comment.user_id}`}
+                            className="hover:underline"
+                        >
+                            {comment.username}
+                        </Link>
+                    )}
                 </span>
                 <span className="text-muted-foreground">•</span>
                 <span className="text-muted-foreground">

@@ -308,7 +308,37 @@ func (app *App) fetchNotes(noteIDs []string) []models.Note {
 		}
 	}
 
+	// Populate subnotery names
+	app.populateSubnoteryNames(ordered)
+
 	return ordered
+}
+
+// populateSubnoteryNames batch-fetches subnotery names and populates SubnoteryName on each note.
+func (app *App) populateSubnoteryNames(notes []models.Note) {
+	if len(notes) == 0 {
+		return
+	}
+	// Collect unique subnotery IDs
+	idSet := make(map[uint]struct{})
+	for _, n := range notes {
+		idSet[n.SubnoteryID] = struct{}{}
+	}
+	ids := make([]uint, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	// Batch fetch names
+	var subs []models.Subnotery
+	app.DB.Select("id, name").Where("id IN ?", ids).Find(&subs)
+	nameMap := make(map[uint]string, len(subs))
+	for _, s := range subs {
+		nameMap[s.ID] = s.Name
+	}
+	// Populate
+	for i := range notes {
+		notes[i].SubnoteryName = nameMap[notes[i].SubnoteryID]
+	}
 }
 
 // Upvote handles upvoting a note. Delegates to the unified voteNote handler.

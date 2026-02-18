@@ -135,6 +135,8 @@ func main() {
 	api.GET("/search", optAuth, app.SearchAll)
 	api.GET("/users/:id/profile", app.GetUserProfile)
 	api.GET("/users/:id/avatar", app.GetAvatar)
+	api.GET("/users/:id/notes", app.GetUserNotes)
+	api.GET("/notes/:id/thumbnail", app.GetThumbnail)
 
 	// Subnotery browsing (public)
 	api.GET("/subnoteries", app.ListSubnoteries)
@@ -169,6 +171,8 @@ func main() {
 	// Notes
 	write.POST("/notes", app.CreateNote)
 	write.POST("/notes/:id/content", app.UploadNotePDF)
+	write.POST("/notes/:id/thumbnail", app.UploadThumbnail)
+	write.DELETE("/notes/:id/thumbnail", app.DeleteThumbnail)
 	write.POST("/notes/:id/upvote", app.Upvote)
 	write.POST("/notes/:id/downvote", app.Downvote)
 

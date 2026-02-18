@@ -280,6 +280,10 @@ func (app *App) GetSubnoteryNotes(c *gin.Context) {
 	}
 
 	subnoteryLog.Log("NOTES", "Subnotery notes listed", "subnoteryID", subnoteryID, "count", len(notes), "total", total)
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
 		"total": total,

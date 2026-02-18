@@ -1,29 +1,36 @@
-// page.tsx — Submit (create) a new note. PDF is required.
+// page.tsx — Submit (create) a new note. PDF is required; description and thumbnail are optional.
 "use client";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { createNote, uploadNotePDF } from "@/services/notes";
+import { createNote, uploadNotePDF, uploadNoteThumbnail } from "@/services/notes";
 import { useAuthStore } from "@/stores/auth-store";
-import { ArrowLeft, FileText, Loader2, Upload, X } from "lucide-react";
+import { ArrowLeft, FileText, ImageIcon, Loader2, Upload, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 const MAX_PDF_SIZE = 50 * 1024 * 1024; // 50 MB
+const MAX_THUMBNAIL_SIZE = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 export default function SubmitPage() {
     const router = useRouter();
     const { isAuthenticated, loading } = useAuthStore();
     const { toast } = useToast();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const thumbnailInputRef = useRef<HTMLInputElement>(null);
 
     const [title, setTitle] = useState("");
+    const [description, setDescription] = useState("");
     const [subnoteryName, setSubnoteryName] = useState("");
     const [price, setPrice] = useState("");
     const [pdfFile, setPdfFile] = useState<File | null>(null);
+    const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
+    const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
@@ -65,6 +72,43 @@ export default function SubmitPage() {
         setPdfFile(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
+        }
+    };
+
+    const handleThumbnailChange = (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+            toast({
+                title: "Invalid file",
+                description: "Only JPEG, PNG, WebP, and GIF images are allowed.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        if (file.size > MAX_THUMBNAIL_SIZE) {
+            toast({
+                title: "File too large",
+                description: "Maximum thumbnail size is 5 MB.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        setThumbnailFile(file);
+        setThumbnailPreview(URL.createObjectURL(file));
+    };
+
+    const removeThumbnail = () => {
+        setThumbnailFile(null);
+        if (thumbnailPreview) {
+            URL.revokeObjectURL(thumbnailPreview);
+            setThumbnailPreview(null);
+        }
+        if (thumbnailInputRef.current) {
+            thumbnailInputRef.current.value = "";
         }
     };
 
@@ -113,6 +157,7 @@ export default function SubmitPage() {
         try {
             const result = await createNote({
                 title: title.trim(),
+                description: description.trim() || undefined,
                 subnotery_name: subnoteryName.trim(),
                 price: priceInCents,
             });
@@ -125,6 +170,20 @@ export default function SubmitPage() {
 
             // Upload the required PDF
             await uploadNotePDF(noteId, pdfFile);
+
+            // Upload optional thumbnail
+            if (thumbnailFile) {
+                try {
+                    await uploadNoteThumbnail(noteId, thumbnailFile);
+                } catch {
+                    // Non-fatal: note is created, just thumbnail failed
+                    toast({
+                        title: "Thumbnail upload failed",
+                        description: "Note was created but thumbnail could not be uploaded.",
+                        variant: "destructive",
+                    });
+                }
+            }
 
             toast({
                 title: "Note submitted!",
@@ -159,6 +218,7 @@ export default function SubmitPage() {
                     <p className="text-sm text-muted-foreground">
                         Share your knowledge with the community. Notes require admin
                         approval before they appear publicly. A PDF file is required.
+                        You can optionally add a description and thumbnail image.
                     </p>
                 </CardHeader>
                 <CardContent>
@@ -178,6 +238,22 @@ export default function SubmitPage() {
                             />
                             <p className="text-xs text-muted-foreground text-right">
                                 {title.length}/300
+                            </p>
+                        </div>
+
+                        {/* Description */}
+                        <div className="space-y-1.5">
+                            <Label htmlFor="description">Description</Label>
+                            <Textarea
+                                id="description"
+                                placeholder="Describe what your note covers, key topics, etc. (optional)"
+                                value={description}
+                                onChange={(e) => setDescription(e.target.value)}
+                                maxLength={2000}
+                                rows={4}
+                            />
+                            <p className="text-xs text-muted-foreground text-right">
+                                {description.length}/2000
                             </p>
                         </div>
 
@@ -266,6 +342,57 @@ export default function SubmitPage() {
                                 type="file"
                                 accept="application/pdf"
                                 onChange={handleFileChange}
+                                className="hidden"
+                            />
+                        </div>
+
+                        {/* Thumbnail Upload (optional) */}
+                        <div className="space-y-1.5">
+                            <Label>Thumbnail Image</Label>
+                            {thumbnailFile ? (
+                                <div className="flex items-center gap-3 p-3 border rounded-md border-border bg-muted/50">
+                                    {thumbnailPreview && (
+                                        /* eslint-disable-next-line @next/next/no-img-element */
+                                        <img
+                                            src={thumbnailPreview}
+                                            alt="Thumbnail preview"
+                                            className="rounded object-cover w-20 h-20"
+                                        />
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium truncate">{thumbnailFile.name}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {(thumbnailFile.size / (1024 * 1024)).toFixed(2)} MB
+                                        </p>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 w-7 p-0"
+                                        onClick={removeThumbnail}
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => thumbnailInputRef.current?.click()}
+                                    className="w-full flex flex-col items-center gap-2 p-4 border-2 border-dashed rounded-lg border-muted-foreground/25 hover:border-primary/50 transition-colors text-muted-foreground hover:text-primary cursor-pointer"
+                                >
+                                    <ImageIcon className="h-6 w-6" />
+                                    <span className="text-sm font-medium">
+                                        Click to upload a thumbnail (optional)
+                                    </span>
+                                    <span className="text-xs">JPEG, PNG, WebP, GIF — Max 5 MB</span>
+                                </button>
+                            )}
+                            <input
+                                ref={thumbnailInputRef}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                onChange={handleThumbnailChange}
                                 className="hidden"
                             />
                         </div>

@@ -19,12 +19,16 @@ export interface Note {
     creator_id: number;
     title: string;
     author: string;
+    description: string;
     status: NoteStatus;
     subnotery_id: number;
+    subnotery_name: string;
     price: number; // cents
     has_pdf: boolean;
     pdf_size: number;
     pdf_uploaded_at: string | null;
+    has_thumbnail: boolean;
+    thumbnail_url: string;
     upvotes: number;
     downvotes: number;
     hotness: number;
@@ -242,6 +246,7 @@ export interface VoteResponse {
 
 export interface CreateNoteRequest {
     title: string;
+    description?: string;
     subnotery_name: string;
     price: number; // cents
 }

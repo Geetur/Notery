@@ -1,11 +1,12 @@
 // note-card.tsx — Reddit-style post card for the feed.
 // Supports both "card" (expanded) and "compact" (dense list) view modes.
+// Shows optional thumbnail when available.
 "use client";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { formatPrice, timeAgo } from "@/lib/format";
+import { formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { addBookmark, removeBookmark } from "@/services/bookmarks";
 import { useAuthStore } from "@/stores/auth-store";
@@ -76,7 +77,7 @@ export function NoteCard({ note, viewMode, purchased, bookmarked: initialBookmar
                             href={`/communities/${note.subnotery_id}`}
                             className="font-semibold text-foreground hover:underline"
                         >
-                            n/{note.subnotery_id}
+                            n/{note.subnotery_name || note.subnotery_id}
                         </Link>
                         <span>•</span>
                         <span>Posted by</span>
@@ -100,6 +101,25 @@ export function NoteCard({ note, viewMode, purchased, bookmarked: initialBookmar
                             {note.title}
                         </h3>
                     </Link>
+
+                    {/* Thumbnail preview (card mode only) */}
+                    {!isCompact && note.has_thumbnail && note.thumbnail_url && (
+                        <Link href={`/notes/${note.id}`} className="block mt-2">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                                src={thumbnailUrl(note.id, note.thumbnail_url)}
+                                alt={`Thumbnail for ${note.title}`}
+                                className="w-full max-h-48 object-cover rounded-md border border-border"
+                            />
+                        </Link>
+                    )}
+
+                    {/* Description snippet (card mode only) */}
+                    {!isCompact && note.description && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                            {note.description}
+                        </p>
+                    )}
 
                     {/* Card mode extras */}
                     {!isCompact && (
