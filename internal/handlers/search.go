@@ -162,8 +162,8 @@ func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination
 		Sort:   meiliSort,
 	})
 	if err != nil {
-		searchLog.Log("SEARCH", "meilisearch error", "query", query, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
+		searchLog.Log("SEARCH", "meilisearch error, falling back to DB", "query", query, "error", err)
+		app.searchNotesDB(c, query, pag, sort)
 		return
 	}
 

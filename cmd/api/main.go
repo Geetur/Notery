@@ -108,12 +108,16 @@ func main() {
 	auth.POST("/reset-password", app.ResetPassword)
 	auth.GET("/verify-email", app.VerifyEmail)
 
-	// OAuth routes (public, no auth required)
-	auth.GET("/oauth/providers", app.OAuthProviders)
-	auth.GET("/oauth/google", app.OAuthGoogle)
-	auth.GET("/oauth/google/callback", app.OAuthGoogleCallback)
-	auth.GET("/oauth/github", app.OAuthGitHub)
-	auth.GET("/oauth/github/callback", app.OAuthGitHubCallback)
+	// OAuth routes (public, separate rate limit — each flow uses 2 requests)
+	oauth := api.Group("/auth")
+	if redisClient != nil {
+		oauth.Use(middleware.RateLimit(redisClient, middleware.DefaultOAuthRateLimit, "oauth:"))
+	}
+	oauth.GET("/oauth/providers", app.OAuthProviders)
+	oauth.GET("/oauth/google", app.OAuthGoogle)
+	oauth.GET("/oauth/google/callback", app.OAuthGoogleCallback)
+	oauth.GET("/oauth/github", app.OAuthGitHub)
+	oauth.GET("/oauth/github/callback", app.OAuthGitHubCallback)
 
 	// Auth endpoints requiring login (not verification)
 	authProtected := auth.Group("", middleware.RequireAuth(cfg.JWTSecret))

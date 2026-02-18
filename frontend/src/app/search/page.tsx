@@ -224,9 +224,12 @@ function SearchPageContent() {
                     ))}
                 </div>
             ) : isError ? (
-                <p className="text-sm text-destructive py-4">
-                    Search failed. Please try again.
-                </p>
+                <div className="text-center py-12">
+                    <p className="text-muted-foreground">
+                        No results found for &ldquo;{searchQuery}&rdquo;
+                        {type !== "all" ? ` in ${type}` : ""}.
+                    </p>
+                </div>
             ) : type === "all" ? (
                 <AllResults
                     notes={allNotes.data}

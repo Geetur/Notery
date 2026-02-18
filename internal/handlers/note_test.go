@@ -159,11 +159,18 @@ func TestGetNoteByID_Approved(t *testing.T) {
 
 func TestGetNoteByID_Pending(t *testing.T) {
 	app := testApp(t)
-	uid := seedUser(t, app.DB, "pendgetter")
-	noteID := seedPendingNote(t, app.DB, uid)
+	creator := seedUser(t, app.DB, "pendcreator")
+	noteID := seedPendingNote(t, app.DB, creator)
 
+	// Creator can view their own pending note
 	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
-		nil, app.GetNoteByID, authMW(uid))
+		nil, app.GetNoteByID, authMW(creator))
+	assertStatus(t, w, http.StatusOK)
+
+	// Another user cannot view someone else's pending note
+	other := seedUser(t, app.DB, "pendother")
+	w = serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID, authMW(other))
 	assertStatus(t, w, http.StatusForbidden)
 }
 
