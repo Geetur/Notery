@@ -2,9 +2,9 @@
 // Validates: unified expanded layout (no compact mode), status badge colours,
 // price badges, PDF info, description rendering, lock icon logic, thumbnail.
 
+import type { Note } from "@/types";
 import { render, screen } from "@testing-library/react";
 import React from "react";
-import type { Note } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Mocks

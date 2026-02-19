@@ -164,198 +164,198 @@ export default function CommunityDetailPage() {
         <div className="flex">
             <main className="flex-1 min-w-0 px-6 py-4">
                 <div className="max-w-3xl mx-auto">
-                {/* Community header */}
-                <Card className="p-6 mb-4">
-                    <div className="flex items-start justify-between">
-                        <div>
-                            <h1 className="text-2xl font-bold">n/{community.name}</h1>
-                            <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                                <span className="flex items-center gap-1">
-                                    <Users className="h-4 w-4" />
-                                    {community.member_count}{" "}
-                                    {community.member_count === 1 ? "member" : "members"}
-                                </span>
-                                <span>
-                                    Created {timeAgo(community.created_at)}
-                                </span>
+                    {/* Community header */}
+                    <Card className="p-6 mb-4">
+                        <div className="flex items-start justify-between">
+                            <div>
+                                <h1 className="text-2xl font-bold">n/{community.name}</h1>
+                                <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                                    <span className="flex items-center gap-1">
+                                        <Users className="h-4 w-4" />
+                                        {community.member_count}{" "}
+                                        {community.member_count === 1 ? "member" : "members"}
+                                    </span>
+                                    <span>
+                                        Created {timeAgo(community.created_at)}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-2">
+                                    <Shield className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-sm text-muted-foreground">Admins:</span>
+                                    {community.admins.map((admin) => (
+                                        <Badge key={admin.id} variant="secondary">
+                                            {admin.username}
+                                        </Badge>
+                                    ))}
+                                </div>
                             </div>
-                            <div className="flex items-center gap-2 mt-2">
-                                <Shield className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm text-muted-foreground">Admins:</span>
-                                {community.admins.map((admin) => (
-                                    <Badge key={admin.id} variant="secondary">
-                                        {admin.username}
+                            <div className="flex gap-2">
+                                {user && (
+                                    <Button
+                                        variant="outline"
+                                        onClick={handleJoin}
+                                        disabled={joining}
+                                    >
+                                        {joining ? "Joining..." : "Join"}
+                                    </Button>
+                                )}
+                                {isAdmin && (
+                                    <Badge variant="default" className="h-8 flex items-center">
+                                        <Shield className="h-3 w-3 mr-1" />
+                                        Admin
                                     </Badge>
-                                ))}
+                                )}
                             </div>
                         </div>
-                        <div className="flex gap-2">
-                            {user && (
-                                <Button
-                                    variant="outline"
-                                    onClick={handleJoin}
-                                    disabled={joining}
-                                >
-                                    {joining ? "Joining..." : "Join"}
-                                </Button>
-                            )}
-                            {isAdmin && (
-                                <Badge variant="default" className="h-8 flex items-center">
-                                    <Shield className="h-3 w-3 mr-1" />
-                                    Admin
-                                </Badge>
-                            )}
-                        </div>
-                    </div>
-                </Card>
+                    </Card>
 
-                {/* Tabs: Notes + Admin (if applicable) */}
-                <Tabs value={activeTab} onValueChange={setActiveTab}>
-                    <TabsList>
-                        <TabsTrigger value="notes">
-                            Notes ({notesTotal})
-                        </TabsTrigger>
-                        {isAdmin && (
-                            <TabsTrigger value="pending">
-                                Pending ({pendingNotes.length})
+                    {/* Tabs: Notes + Admin (if applicable) */}
+                    <Tabs value={activeTab} onValueChange={setActiveTab}>
+                        <TabsList>
+                            <TabsTrigger value="notes">
+                                Notes ({notesTotal})
                             </TabsTrigger>
-                        )}
-                    </TabsList>
+                            {isAdmin && (
+                                <TabsTrigger value="pending">
+                                    Pending ({pendingNotes.length})
+                                </TabsTrigger>
+                            )}
+                        </TabsList>
 
-                    {/* Approved notes tab */}
-                    <TabsContent value="notes" className="mt-4">
-                        {notes.length === 0 ? (
-                            <Card className="p-6 text-center text-muted-foreground">
-                                No approved notes in this community yet.
-                            </Card>
-                        ) : (
-                            <div className="space-y-4">
-                                {notes.map((note) => (
-                                    <NoteCard
-                                        key={note.id}
-                                        note={note}
-                                    />
-                                ))}
-                            </div>
-                        )}
-
-                        {notesTotalPages > 1 && (
-                            <div className="flex items-center justify-center gap-4 mt-6">
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={notesPage <= 1}
-                                    onClick={() =>
-                                        setNotesPage((p) => Math.max(1, p - 1))
-                                    }
-                                >
-                                    <ChevronLeft className="h-4 w-4 mr-1" />
-                                    Previous
-                                </Button>
-                                <span className="text-sm text-muted-foreground">
-                                    Page {notesPage} of {notesTotalPages}
-                                </span>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={notesPage >= notesTotalPages}
-                                    onClick={() => setNotesPage((p) => p + 1)}
-                                >
-                                    Next
-                                    <ChevronRight className="h-4 w-4 ml-1" />
-                                </Button>
-                            </div>
-                        )}
-                    </TabsContent>
-
-                    {/* Pending notes tab (admin only) */}
-                    {isAdmin && (
-                        <TabsContent value="pending" className="mt-4">
-                            {pendingNotes.length === 0 ? (
+                        {/* Approved notes tab */}
+                        <TabsContent value="notes" className="mt-4">
+                            {notes.length === 0 ? (
                                 <Card className="p-6 text-center text-muted-foreground">
-                                    No pending notes to review.
+                                    No approved notes in this community yet.
                                 </Card>
                             ) : (
-                                <div className="space-y-3">
-                                    {pendingNotes.map((note) => (
-                                        <Card key={note.id} className="p-4">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex-1 min-w-0">
-                                                    <h3 className="font-medium">
-                                                        {note.title}
-                                                    </h3>
-                                                    <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
-                                                        <span>by {note.author}</span>
-                                                        <span>
-                                                            {timeAgo(note.created_at)}
-                                                        </span>
-                                                        {note.has_pdf ? (
-                                                            <span className="flex items-center gap-1 text-green-500">
-                                                                <FileText className="h-3 w-3" />
-                                                                PDF uploaded
-                                                            </span>
-                                                        ) : (
-                                                            <span className="flex items-center gap-1 text-yellow-500">
-                                                                <FileText className="h-3 w-3" />
-                                                                No PDF
-                                                            </span>
-                                                        )}
-                                                        <Badge variant="outline">
-                                                            {note.price === 0
-                                                                ? "Free"
-                                                                : `$${(note.price / 100).toFixed(2)}`}
-                                                        </Badge>
-                                                    </div>
-                                                </div>
-                                                <div className="flex gap-2 shrink-0 ml-4">
-                                                    <Button
-                                                        size="sm"
-                                                        variant="outline"
-                                                        asChild
-                                                    >
-                                                        <Link
-                                                            href={`/notes/${note.id}`}
-                                                            title="View note details"
-                                                        >
-                                                            <Eye className="h-4 w-4 mr-1" />
-                                                            View
-                                                        </Link>
-                                                    </Button>
-                                                    <Button
-                                                        size="sm"
-                                                        variant="default"
-                                                        onClick={() =>
-                                                            handleApprove(note.id)
-                                                        }
-                                                        disabled={!note.has_pdf}
-                                                        title={
-                                                            !note.has_pdf
-                                                                ? "PDF required before approval"
-                                                                : "Approve this note"
-                                                        }
-                                                    >
-                                                        <CheckCircle className="h-4 w-4 mr-1" />
-                                                        Approve
-                                                    </Button>
-                                                    <Button
-                                                        size="sm"
-                                                        variant="destructive"
-                                                        onClick={() =>
-                                                            handleReject(note.id)
-                                                        }
-                                                    >
-                                                        <XCircle className="h-4 w-4 mr-1" />
-                                                        Reject
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        </Card>
+                                <div className="space-y-4">
+                                    {notes.map((note) => (
+                                        <NoteCard
+                                            key={note.id}
+                                            note={note}
+                                        />
                                     ))}
                                 </div>
                             )}
+
+                            {notesTotalPages > 1 && (
+                                <div className="flex items-center justify-center gap-4 mt-6">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={notesPage <= 1}
+                                        onClick={() =>
+                                            setNotesPage((p) => Math.max(1, p - 1))
+                                        }
+                                    >
+                                        <ChevronLeft className="h-4 w-4 mr-1" />
+                                        Previous
+                                    </Button>
+                                    <span className="text-sm text-muted-foreground">
+                                        Page {notesPage} of {notesTotalPages}
+                                    </span>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={notesPage >= notesTotalPages}
+                                        onClick={() => setNotesPage((p) => p + 1)}
+                                    >
+                                        Next
+                                        <ChevronRight className="h-4 w-4 ml-1" />
+                                    </Button>
+                                </div>
+                            )}
                         </TabsContent>
-                    )}
-                </Tabs>
+
+                        {/* Pending notes tab (admin only) */}
+                        {isAdmin && (
+                            <TabsContent value="pending" className="mt-4">
+                                {pendingNotes.length === 0 ? (
+                                    <Card className="p-6 text-center text-muted-foreground">
+                                        No pending notes to review.
+                                    </Card>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {pendingNotes.map((note) => (
+                                            <Card key={note.id} className="p-4">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex-1 min-w-0">
+                                                        <h3 className="font-medium">
+                                                            {note.title}
+                                                        </h3>
+                                                        <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
+                                                            <span>by {note.author}</span>
+                                                            <span>
+                                                                {timeAgo(note.created_at)}
+                                                            </span>
+                                                            {note.has_pdf ? (
+                                                                <span className="flex items-center gap-1 text-green-500">
+                                                                    <FileText className="h-3 w-3" />
+                                                                    PDF uploaded
+                                                                </span>
+                                                            ) : (
+                                                                <span className="flex items-center gap-1 text-yellow-500">
+                                                                    <FileText className="h-3 w-3" />
+                                                                    No PDF
+                                                                </span>
+                                                            )}
+                                                            <Badge variant="outline">
+                                                                {note.price === 0
+                                                                    ? "Free"
+                                                                    : `$${(note.price / 100).toFixed(2)}`}
+                                                            </Badge>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-2 shrink-0 ml-4">
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            asChild
+                                                        >
+                                                            <Link
+                                                                href={`/notes/${note.id}`}
+                                                                title="View note details"
+                                                            >
+                                                                <Eye className="h-4 w-4 mr-1" />
+                                                                View
+                                                            </Link>
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="default"
+                                                            onClick={() =>
+                                                                handleApprove(note.id)
+                                                            }
+                                                            disabled={!note.has_pdf}
+                                                            title={
+                                                                !note.has_pdf
+                                                                    ? "PDF required before approval"
+                                                                    : "Approve this note"
+                                                            }
+                                                        >
+                                                            <CheckCircle className="h-4 w-4 mr-1" />
+                                                            Approve
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="destructive"
+                                                            onClick={() =>
+                                                                handleReject(note.id)
+                                                            }
+                                                        >
+                                                            <XCircle className="h-4 w-4 mr-1" />
+                                                            Reject
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            </Card>
+                                        ))}
+                                    </div>
+                                )}
+                            </TabsContent>
+                        )}
+                    </Tabs>
                 </div>
             </main>
             <RightSidebar />

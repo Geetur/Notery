@@ -1,9 +1,9 @@
 // search-autocomplete.test.tsx — Tests for search autocomplete dropdown.
 // Validates: no author name shown, subnotery name (not ID), loading/empty states.
 
-import { render, screen, waitFor, act } from "@testing-library/react";
-import React from "react";
 import type { Note, Subnotery } from "@/types";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import React from "react";
 
 // ---------------------------------------------------------------------------
 // Mocks
