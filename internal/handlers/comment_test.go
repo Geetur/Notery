@@ -46,6 +46,7 @@ func testApp(t *testing.T) *App {
 		&models.RefreshToken{},
 		&models.EmailVerification{},
 		&models.PasswordReset{},
+		&models.KarmaLedger{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

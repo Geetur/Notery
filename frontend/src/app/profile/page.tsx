@@ -649,6 +649,17 @@ export default function ProfilePage() {
                                     </p>
                                 </div>
                             </div>
+                            <Separator />
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                    <p className="font-semibold text-foreground">Post Notoriety</p>
+                                    <p className="text-muted-foreground">{Math.round(user.post_karma ?? 0)}</p>
+                                </div>
+                                <div>
+                                    <p className="font-semibold text-foreground">Comment Notoriety</p>
+                                    <p className="text-muted-foreground">{Math.round(user.comment_karma ?? 0)}</p>
+                                </div>
+                            </div>
                             {user.email_verified && (
                                 <div className="flex items-center gap-1 text-xs text-green-500">
                                     <CheckCircle className="h-3 w-3" />

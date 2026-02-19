@@ -78,6 +78,13 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    // Preview page limit: 1 preview page per 5 total pages (minimum 1).
+    const maxPreviewPages =
+        mode === "preview" && numPages > 0
+            ? Math.max(1, Math.floor(numPages / 5))
+            : numPages;
+    const displayPages = mode === "preview" ? maxPreviewPages : numPages;
+
     // Memoize the file URL so react-pdf's Document doesn't treat it as a new
     // document on every render (which causes infinite reload loops).
     const fileUrl = useMemo(() => {
@@ -105,7 +112,7 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
 
     const goToPrevPage = () => setCurrentPage((p) => Math.max(1, p - 1));
     const goToNextPage = () =>
-        setCurrentPage((p) => Math.min(numPages, p + 1));
+        setCurrentPage((p) => Math.min(displayPages, p + 1));
     const zoomIn = () => setScale((s) => Math.min(2.0, s + 0.2));
     const zoomOut = () => setScale((s) => Math.max(0.5, s - 0.2));
 
@@ -157,13 +164,13 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
                             <ChevronLeft className="h-4 w-4" />
                         </Button>
                         <span className="text-xs text-muted-foreground min-w-[80px] text-center">
-                            Page {currentPage} of {numPages}
+                            Page {currentPage} of {displayPages}
                         </span>
                         <Button
                             variant="ghost"
                             size="sm"
                             onClick={goToNextPage}
-                            disabled={currentPage >= numPages}
+                            disabled={currentPage >= displayPages}
                         >
                             <ChevronRight className="h-4 w-4" />
                         </Button>
@@ -235,8 +242,8 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
                 {/* Preview watermark */}
                 {mode === "preview" && !loading && numPages > 0 && (
                     <p className="text-xs text-muted-foreground mt-2 text-center">
-                        This is a preview of the first few pages. Purchase to
-                        view the full document.
+                        Preview: showing {displayPages} of {numPages} page{numPages !== 1 ? "s" : ""}.
+                        Purchase to view the full document.
                     </p>
                 )}
             </div>

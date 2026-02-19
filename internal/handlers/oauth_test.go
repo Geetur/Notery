@@ -166,6 +166,71 @@ func TestSanitizeUsername_TooLong(t *testing.T) {
 	}
 }
 
+// ===== OAUTH DUPLICATE USERNAME =====
+
+func TestOAuthFindOrCreate_DuplicateUsername(t *testing.T) {
+	app := testApp(t)
+
+	// Create a user with username "TestUser"
+	seedUser(t, app.DB, "TestUser")
+
+	// OAuth user with same display name should get a suffixed username
+	user, err := app.oauthFindOrCreateUser("google", "goog-dup1", "dup1@test.com", "TestUser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if user.Username == "TestUser" {
+		t.Fatal("expected different username from TestUser, got same")
+	}
+	if user.Username != "TestUser1" {
+		t.Fatalf("expected TestUser1, got %s", user.Username)
+	}
+}
+
+func TestOAuthFindOrCreate_MultipleDuplicates(t *testing.T) {
+	app := testApp(t)
+
+	// Create TestDup and TestDup1
+	seedUser(t, app.DB, "TestDup")
+	app.DB.Create(&models.User{Email: "dup1seed@test.com", Username: "TestDup1"})
+
+	// Should get TestDup2
+	user, err := app.oauthFindOrCreateUser("github", "gh-dup2", "dup2@test.com", "TestDup")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if user.Username != "TestDup2" {
+		t.Fatalf("expected TestDup2, got %s", user.Username)
+	}
+}
+
+// ===== SIGNUP DUPLICATE USERNAME =====
+
+func TestSignup_DuplicateUsername(t *testing.T) {
+	app := testApp(t)
+	app.JWTSecret = "test-secret-key"
+	app.BaseURL = "http://localhost:8080"
+	app.Mailer = &email.LogMailer{}
+
+	// First signup
+	w := serve("POST", "/signup", "/signup",
+		jsonBody(map[string]string{
+			"email":    "first@test.com",
+			"password": "securepass123",
+			"username": "dupname",
+		}), app.Signup)
+	assertStatus(t, w, http.StatusCreated)
+
+	// Second signup with same username should fail
+	w2 := serve("POST", "/signup", "/signup",
+		jsonBody(map[string]string{
+			"email":    "second@test.com",
+			"password": "securepass123",
+			"username": "dupname",
+		}), app.Signup)
+	assertStatus(t, w2, http.StatusConflict)
+}
+
 // ===== DEV MODE AUTO-VERIFY =====
 
 func TestSignup_DevModeAutoVerify(t *testing.T) {

@@ -214,6 +214,17 @@ export default function UserProfilePage() {
                                     </div>
                                 </div>
                             </div>
+                            <Separator />
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                    <p className="font-semibold text-foreground">Post Notoriety</p>
+                                    <p className="text-muted-foreground">{Math.round(profile.post_karma ?? 0)}</p>
+                                </div>
+                                <div>
+                                    <p className="font-semibold text-foreground">Comment Notoriety</p>
+                                    <p className="text-muted-foreground">{Math.round(profile.comment_karma ?? 0)}</p>
+                                </div>
+                            </div>
                         </CardContent>
                     </Card>
                 </div>

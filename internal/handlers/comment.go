@@ -329,6 +329,27 @@ func (app *App) CreateComment(c *gin.Context) {
 		return
 	}
 
+	// Enforce minimum comment notoriety for the subnotery (skip for admins)
+	var subnotery models.Subnotery
+	if err := app.DB.Select("id", "min_comment_notoriety").First(&subnotery, note.SubnoteryID).Error; err == nil {
+		if subnotery.MinCommentNotoriety > 0 {
+			var commenter models.User
+			if err := app.DB.Select("id", "comment_karma", "is_global_admin").First(&commenter, userID).Error; err == nil {
+				isAdmin := commenter.IsGlobalAdmin || app.isNoteAdmin(userID, note.SubnoteryID)
+				if !isAdmin && commenter.CommentKarma < subnotery.MinCommentNotoriety {
+					commentLog.Log("CREATE", "Insufficient comment notoriety",
+						"userID", userID, "karma", commenter.CommentKarma, "required", subnotery.MinCommentNotoriety)
+					c.JSON(http.StatusForbidden, gin.H{
+						"error":    "Insufficient notoriety to comment in this community",
+						"required": subnotery.MinCommentNotoriety,
+						"current":  commenter.CommentKarma,
+					})
+					return
+				}
+			}
+		}
+	}
+
 	// Determine depth and parent path (if replying)
 	depth := 0
 	parentPath := "" // materialized path of parent, empty for top-level
@@ -705,6 +726,9 @@ func (app *App) VoteComment(c *gin.Context) {
 			// Existing vote found
 			if existing.Value == req.Value {
 				// Toggle off: remove vote
+				// 1. Reverse prior karma ledger entry
+				app.reverseCommentKarmaLedger(tx, existing.ID, comment.UserID)
+
 				if err := tx.Delete(&existing).Error; err != nil {
 					return err
 				}
@@ -721,6 +745,9 @@ func (app *App) VoteComment(c *gin.Context) {
 				commentLog.Log("VOTE", "toggled off", "comment_id", commentID, "user_id", userID, "was", req.Value)
 			} else {
 				// Switch vote direction
+				// 1. Reverse prior karma ledger entry
+				app.reverseCommentKarmaLedger(tx, existing.ID, comment.UserID)
+
 				if err := tx.Model(&existing).Update("value", req.Value).Error; err != nil {
 					return err
 				}
@@ -741,6 +768,33 @@ func (app *App) VoteComment(c *gin.Context) {
 						return err
 					}
 				}
+
+				// Re-read for accurate counts
+				var updated models.Comment
+				if err := tx.First(&updated, commentID).Error; err != nil {
+					return err
+				}
+
+				// Apply karma for new direction
+				v := int(req.Value)
+				delta := models.CalculateCommentKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+				ledger := models.KarmaLedger{
+					AuthorID:  comment.UserID,
+					VoterID:   userID,
+					VoteType:  models.KarmaComment,
+					VoteID:    existing.ID,
+					TargetID:  uint64(commentID),
+					KarmaType: models.KarmaComment,
+					Delta:     delta,
+				}
+				if err := tx.Create(&ledger).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&models.User{}).Where("id = ?", comment.UserID).
+					Update("comment_karma", gorm.Expr("comment_karma + ?", delta)).Error; err != nil {
+					return err
+				}
+
 				resultVote = req.Value
 				commentLog.Log("VOTE", "switched", "comment_id", commentID, "user_id", userID, "to", req.Value)
 			}
@@ -763,6 +817,33 @@ func (app *App) VoteComment(c *gin.Context) {
 					return err
 				}
 			}
+
+			// Re-read for accurate counts
+			var updated models.Comment
+			if err := tx.First(&updated, commentID).Error; err != nil {
+				return err
+			}
+
+			// Apply karma
+			v := int(req.Value)
+			delta := models.CalculateCommentKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+			ledger := models.KarmaLedger{
+				AuthorID:  comment.UserID,
+				VoterID:   userID,
+				VoteType:  models.KarmaComment,
+				VoteID:    vote.ID,
+				TargetID:  uint64(commentID),
+				KarmaType: models.KarmaComment,
+				Delta:     delta,
+			}
+			if err := tx.Create(&ledger).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.User{}).Where("id = ?", comment.UserID).
+				Update("comment_karma", gorm.Expr("comment_karma + ?", delta)).Error; err != nil {
+				return err
+			}
+
 			resultVote = req.Value
 			commentLog.Log("VOTE", "created", "comment_id", commentID, "user_id", userID, "value", req.Value)
 		} else {
@@ -836,6 +917,9 @@ func (app *App) RemoveCommentVote(c *gin.Context) {
 			}
 			return err
 		}
+
+		// Reverse karma ledger entry
+		app.reverseCommentKarmaLedger(tx, existing.ID, comment.UserID)
 
 		// Remove the vote and decrement the appropriate counter
 		if err := tx.Delete(&existing).Error; err != nil {
@@ -1395,4 +1479,19 @@ func (app *App) isNoteAdmin(userID uint64, subnoteryID uint) bool {
 		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
 		Count(&count)
 	return count > 0
+}
+
+// reverseCommentKarmaLedger finds the most recent karma ledger entry for a comment vote
+// and reverses its delta from the author's comment_karma.
+func (app *App) reverseCommentKarmaLedger(tx *gorm.DB, voteID uint, authorID uint64) {
+	var ledger models.KarmaLedger
+	if err := tx.Where("vote_type = ? AND vote_id = ?", models.KarmaComment, voteID).
+		Order("created_at DESC").First(&ledger).Error; err != nil {
+		return // no ledger entry found — nothing to reverse
+	}
+	// Reverse the delta
+	tx.Model(&models.User{}).Where("id = ?", authorID).
+		Update("comment_karma", gorm.Expr("comment_karma - ?", ledger.Delta))
+	// Delete the ledger entry
+	tx.Delete(&ledger)
 }

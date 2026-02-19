@@ -1,12 +1,13 @@
-// subnotery.go — HTTP handlers for subnotery management (browse, join, admin).
+// subnotery.go — HTTP handlers for subnotery management (browse, join, leave, admin).
 //
 // ENDPOINTS:
 //
-//	GET  /subnoteries                       List all subnoteries (paginated)
-//	GET  /subnoteries/:subnotery_id         Get a single subnotery with admin/member info
-//	GET  /subnoteries/:subnotery_id/notes   List approved notes in a subnotery (paginated)
-//	POST /subnoteries/:subnotery_id/join    Join a subnotery as a member
-//	POST /subnoteries/:subnotery_id/admins  Grant admin privileges to a user
+//	GET  /subnoteries                        List all subnoteries (paginated)
+//	GET  /subnoteries/:subnotery_id          Get a single subnotery with admin/member info
+//	GET  /subnoteries/:subnotery_id/notes    List approved notes in a subnotery (paginated)
+//	POST /subnoteries/:subnotery_id/join     Join a subnotery as a member
+//	POST /subnoteries/:subnotery_id/leave    Leave a subnotery as a member
+//	POST /subnoteries/:subnotery_id/admins   Grant admin privileges to a user
 //
 // DESIGN:
 //
@@ -137,6 +138,60 @@ func (app *App) JoinSubnotery(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Joined subnotery successfully"})
 }
 
+// LeaveSubnotery removes the authenticated user from a subnotery's member list.
+//
+// Admins cannot leave their own subnotery (they must be removed by another admin
+// or global admin). Regular members can leave at any time. Leaving a subnotery
+// the user is not a member of is a no-op.
+//
+// DB: SELECT from subnoteries + users, DELETE from user_memberships (GORM association).
+// Technologies: PostgreSQL (GORM many-to-many association delete).
+// Helpers: helpers.MustParseSubnoteryID, helpers.FetchSubnotery, helpers.GetUserID, helpers.FetchUser.
+//
+// Route: POST /api/v1/subnoteries/:subnotery_id/leave
+func (app *App) LeaveSubnotery(c *gin.Context) {
+	subnoteryLog.Log("LEAVE", "Processing leave subnotery request")
+
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+
+	userID := helpers.GetUserID(c)
+	subnoteryLog.Log("LEAVE", "User identified", "userID", userID, "subnoteryID", subnoteryID)
+
+	subnotery, ok := helpers.FetchSubnotery(c, app.DB, subnoteryID)
+	if !ok {
+		return
+	}
+
+	user, ok := helpers.FetchUser(c, app.DB, userID)
+	if !ok {
+		subnoteryLog.Log("LEAVE", "User not found", "userID", userID)
+		return
+	}
+
+	// Prevent admins from leaving (they must be removed by another admin)
+	var adminCount int64
+	app.DB.Table("user_admins").
+		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
+		Count(&adminCount)
+	if adminCount > 0 {
+		subnoteryLog.Log("LEAVE", "Admin cannot leave", "userID", userID, "subnoteryID", subnoteryID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admins cannot leave their subnotery"})
+		return
+	}
+
+	if err := app.DB.Model(subnotery).Association("Members").Delete(user); err != nil {
+		subnoteryLog.Log("LEAVE", "Failed to remove member", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to leave subnotery"})
+		return
+	}
+
+	subnoteryLog.Log("LEAVE", "User left successfully", "userID", userID, "subnoteryID", subnoteryID)
+	c.JSON(http.StatusOK, gin.H{"message": "Left subnotery successfully"})
+}
+
 // ListSubnoteries returns a paginated list of all subnoteries with member and admin counts.
 //
 // Public endpoint. Returns subnoteries ordered by creation time descending with
@@ -231,17 +286,32 @@ func (app *App) GetSubnoteryDetail(c *gin.Context) {
 		admins[i] = adminInfo{ID: a.ID, Username: a.Username}
 	}
 
+	// Check if the requesting user is a member (if authenticated)
+	isMember := false
+	if uid, exists := c.Get("user_id"); exists {
+		userID := uid.(uint64)
+		for _, m := range subnotery.Members {
+			if uint64(m.ID) == userID {
+				isMember = true
+				break
+			}
+		}
+	}
+
 	subnoteryLog.Log("DETAIL", "Subnotery detail retrieved", "subnoteryID", subnoteryID)
 	c.JSON(http.StatusOK, gin.H{
-		"id":           subnotery.ID,
-		"name":         subnotery.Name,
-		"description":  subnotery.Description,
-		"content_type": subnotery.ContentType,
-		"rules":        subnotery.Rules,
-		"admins":       admins,
-		"member_count": len(subnotery.Members),
-		"created_at":   subnotery.CreatedAt,
-		"updated_at":   subnotery.UpdatedAt,
+		"id":                    subnotery.ID,
+		"name":                  subnotery.Name,
+		"description":           subnotery.Description,
+		"content_type":          subnotery.ContentType,
+		"rules":                 subnotery.Rules,
+		"min_post_notoriety":    subnotery.MinPostNotoriety,
+		"min_comment_notoriety": subnotery.MinCommentNotoriety,
+		"admins":                admins,
+		"member_count":          len(subnotery.Members),
+		"is_member":             isMember,
+		"created_at":            subnotery.CreatedAt,
+		"updated_at":            subnotery.UpdatedAt,
 	})
 }
 
@@ -381,9 +451,11 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 
 	// Bind request
 	var req struct {
-		Description *string `json:"description"`
-		ContentType *string `json:"content_type"`
-		Rules       *string `json:"rules"`
+		Description         *string  `json:"description"`
+		ContentType         *string  `json:"content_type"`
+		Rules               *string  `json:"rules"`
+		MinPostNotoriety    *float64 `json:"min_post_notoriety"`
+		MinCommentNotoriety *float64 `json:"min_comment_notoriety"`
 	}
 	if !helpers.BindJSON(c, &req) {
 		return
@@ -399,6 +471,12 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 	}
 	if req.Rules != nil {
 		updates["rules"] = *req.Rules
+	}
+	if req.MinPostNotoriety != nil {
+		updates["min_post_notoriety"] = *req.MinPostNotoriety
+	}
+	if req.MinCommentNotoriety != nil {
+		updates["min_comment_notoriety"] = *req.MinCommentNotoriety
 	}
 
 	if len(updates) == 0 {

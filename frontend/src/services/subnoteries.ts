@@ -44,6 +44,13 @@ export function joinSubnotery(
     return apiPost(`/subnoteries/${subnoteryId}/join`);
 }
 
+/** POST /subnoteries/:id/leave — Leave a subnotery. */
+export function leaveSubnotery(
+    subnoteryId: number
+): Promise<{ message: string }> {
+    return apiPost(`/subnoteries/${subnoteryId}/leave`);
+}
+
 /** POST /subnoteries/:id/admins — Add admin to subnotery (admin only). */
 export function addAdminToSubnotery(
     subnoteryId: number,
@@ -55,7 +62,7 @@ export function addAdminToSubnotery(
 /** PATCH /subnoteries/:id/settings — Update subnotery settings (admin only). */
 export function updateSubnoterySettings(
     subnoteryId: number,
-    settings: { description?: string; content_type?: string; rules?: string }
+    settings: { description?: string; content_type?: string; rules?: string; min_post_notoriety?: number; min_comment_notoriety?: number }
 ): Promise<{ message: string }> {
     return apiPatch(`/subnoteries/${subnoteryId}/settings`, settings);
 }

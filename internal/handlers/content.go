@@ -426,16 +426,12 @@ func (app *App) DeleteNotePDF(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "PDF deleted successfully"})
 }
 
-// previewMaxBytes is the maximum number of bytes served for a preview.
-// 512 KB typically covers the first 3–5 pages of a normal PDF, which is
-// enough for a meaningful preview without leaking the full document.
-const previewMaxBytes int64 = 512 * 1024
-
-// GetNotePreview serves a truncated PDF preview for any authenticated user.
+// GetNotePreview serves a PDF preview for any authenticated user.
 //
-// Only approved notes with a PDF are previewable. The response contains at most
-// previewMaxBytes of the original PDF, which is enough for a PDF viewer to
-// render the first few pages. This prevents full content leakage for non-purchased notes.
+// Only approved notes with a PDF are previewable. The full PDF is served to the
+// client — the frontend enforces page-based preview limits (1 page per 5 total)
+// using react-pdf. This avoids raw byte truncation which produces an invalid PDF
+// that PDF.js cannot parse due to broken xref tables / trailers.
 //
 // Admins, creators, and users who purchased the note get the full PDF via
 // GetNotePDFContent instead. This endpoint is specifically for the free preview.
@@ -485,24 +481,22 @@ func (app *App) GetNotePreview(c *gin.Context) {
 	}
 	defer pdfContent.Close()
 
-	// Determine how many bytes to serve
-	serveBytes := contentLength
-	if serveBytes > previewMaxBytes {
-		serveBytes = previewMaxBytes
-	}
-
+	// Serve the full PDF — the frontend enforces page-based preview limits
+	// (1 page per 5 total). Raw byte truncation produces an invalid PDF
+	// (broken xref/trailer) that PDF.js cannot parse, so we send the
+	// complete file and let the viewer restrict navigation.
 	c.Header("Content-Type", "application/pdf")
 	c.Header("Content-Disposition", "inline")
-	c.Header("Content-Length", strconv.FormatInt(serveBytes, 10))
+	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
 	c.Header("Cache-Control", "public, max-age=3600") // previews can be cached
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("X-Frame-Options", "SAMEORIGIN")
 	c.Header("X-Notery-Access", "preview")
 
 	c.Status(http.StatusOK)
-	if _, err := io.CopyN(c.Writer, pdfContent, serveBytes); err != nil {
+	if _, err := io.Copy(c.Writer, pdfContent); err != nil {
 		contentLog.Log("PREVIEW", "stream failed", "note_id", noteID, "error", err)
 	}
 
-	contentLog.Log("PREVIEW", "served successfully", "note_id", noteID, "bytes", serveBytes)
+	contentLog.Log("PREVIEW", "served successfully", "note_id", noteID, "bytes", contentLength)
 }

@@ -25,6 +25,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -116,11 +117,33 @@ func (app *App) CreateNote(c *gin.Context) {
 		}
 		noteLog.Log("CREATE", "Subnotery resolved", "subnoteryID", subnotery.ID)
 
-		// Fetch the creator user (needed for author name, and admin assignment if new subnotery)
+		// Fetch the creator user (needed for author name, notoriety check, and admin assignment)
 		var creator models.User
 		if err := tx.First(&creator, userID).Error; err != nil {
 			noteLog.Log("CREATE", "Failed to fetch creator", "error", err)
 			return err
+		}
+
+		// Enforce minimum post notoriety (skip for admins and new subnoteries)
+		if !subnoteryCreated && subnotery.MinPostNotoriety > 0 {
+			isAdmin := creator.IsGlobalAdmin
+			if !isAdmin {
+				var adminCount int64
+				tx.Table("user_admins").
+					Where("user_id = ? AND subnotery_id = ?", userID, subnotery.ID).
+					Count(&adminCount)
+				isAdmin = adminCount > 0
+			}
+			if !isAdmin && creator.PostKarma < subnotery.MinPostNotoriety {
+				noteLog.Log("CREATE", "Insufficient post notoriety",
+					"userID", userID, "karma", creator.PostKarma, "required", subnotery.MinPostNotoriety)
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":    "Insufficient notoriety to post in this community",
+					"required": subnotery.MinPostNotoriety,
+					"current":  creator.PostKarma,
+				})
+				return fmt.Errorf("insufficient notoriety")
+			}
 		}
 
 		// Assign creator as first admin if subnotery was just created
@@ -155,6 +178,10 @@ func (app *App) CreateNote(c *gin.Context) {
 		}
 		return nil
 	}); err != nil {
+		// If the response was already written (e.g., notoriety check), don't overwrite it
+		if c.Writer.Written() {
+			return
+		}
 		noteLog.Log("CREATE", "Transaction failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to internally create note"})
 		return

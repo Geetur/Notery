@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { timeAgo } from "@/lib/format";
 import { approveNote, deleteNote, getPendingNotes, rejectNote } from "@/services/notes";
-import { getSubnotery, getSubnoteryNotes, joinSubnotery, updateSubnoterySettings } from "@/services/subnoteries";
+import { getSubnotery, getSubnoteryNotes, joinSubnotery, leaveSubnotery, updateSubnoterySettings } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useFeedStore } from "@/stores/feed-store";
 import type { Note, SubnoteryDetail } from "@/types";
@@ -49,12 +49,15 @@ export default function CommunityDetailPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [joining, setJoining] = useState(false);
+    const [leaving, setLeaving] = useState(false);
     const [activeTab, setActiveTab] = useState("notes");
 
     // Settings form state (admin only)
     const [settingsDescription, setSettingsDescription] = useState("");
     const [settingsContentType, setSettingsContentType] = useState("");
     const [settingsRules, setSettingsRules] = useState("");
+    const [settingsMinPostNotoriety, setSettingsMinPostNotoriety] = useState(0);
+    const [settingsMinCommentNotoriety, setSettingsMinCommentNotoriety] = useState(0);
     const [savingSettings, setSavingSettings] = useState(false);
 
     const isAdmin =
@@ -75,6 +78,8 @@ export default function CommunityDetailPage() {
                 setSettingsDescription(data.description || "");
                 setSettingsContentType(data.content_type || "");
                 setSettingsRules(data.rules || "");
+                setSettingsMinPostNotoriety(data.min_post_notoriety ?? 0);
+                setSettingsMinCommentNotoriety(data.min_comment_notoriety ?? 0);
             })
             .catch((err) => setError(err.message || "Failed to load community"))
             .finally(() => setLoading(false));
@@ -123,6 +128,21 @@ export default function CommunityDetailPage() {
             toast({ title: "Error", description: msg, variant: "destructive" });
         } finally {
             setJoining(false);
+        }
+    };
+
+    const handleLeave = async () => {
+        setLeaving(true);
+        try {
+            await leaveSubnotery(communityId);
+            toast({ title: "Left", description: "You are no longer a member." });
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to leave";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setLeaving(false);
         }
     };
 
@@ -190,6 +210,8 @@ export default function CommunityDetailPage() {
                 description: settingsDescription,
                 content_type: settingsContentType,
                 rules: settingsRules,
+                min_post_notoriety: settingsMinPostNotoriety,
+                min_comment_notoriety: settingsMinCommentNotoriety,
             });
             toast({ title: "Saved", description: "Community settings updated." });
             // Refresh community data
@@ -258,14 +280,24 @@ export default function CommunityDetailPage() {
                                 </div>
                             </div>
                             <div className="flex gap-2">
-                                {user && (
-                                    <Button
-                                        variant="outline"
-                                        onClick={handleJoin}
-                                        disabled={joining}
-                                    >
-                                        {joining ? "Joining..." : "Join"}
-                                    </Button>
+                                {user && !isAdmin && (
+                                    community?.is_member ? (
+                                        <Button
+                                            variant="outline"
+                                            onClick={handleLeave}
+                                            disabled={leaving}
+                                        >
+                                            {leaving ? "Leaving..." : "Leave"}
+                                        </Button>
+                                    ) : (
+                                        <Button
+                                            variant="outline"
+                                            onClick={handleJoin}
+                                            disabled={joining}
+                                        >
+                                            {joining ? "Joining..." : "Join"}
+                                        </Button>
+                                    )
                                 )}
                                 {isAdmin && (
                                     <Badge variant="default" className="h-8 flex items-center">
@@ -468,6 +500,35 @@ export default function CommunityDetailPage() {
                                             value={settingsRules}
                                             onChange={(e) => setSettingsRules(e.target.value)}
                                         />
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1">Min Post Notoriety</label>
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                min="0"
+                                                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                                placeholder="0 = no restriction"
+                                                value={settingsMinPostNotoriety}
+                                                onChange={(e) => setSettingsMinPostNotoriety(parseFloat(e.target.value) || 0)}
+                                            />
+                                            <p className="text-xs text-muted-foreground mt-1">Minimum post notoriety to create notes. 0 = no restriction.</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1">Min Comment Notoriety</label>
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                min="0"
+                                                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                                placeholder="0 = no restriction"
+                                                value={settingsMinCommentNotoriety}
+                                                onChange={(e) => setSettingsMinCommentNotoriety(parseFloat(e.target.value) || 0)}
+                                            />
+                                            <p className="text-xs text-muted-foreground mt-1">Minimum comment notoriety to post comments. 0 = no restriction.</p>
+                                        </div>
                                     </div>
 
                                     <Button

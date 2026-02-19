@@ -14,10 +14,10 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate, formatFileSize, formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
-import { getNoteById } from "@/services/notes";
+import { getNoteById, approveNote, rejectNote } from "@/services/notes";
 import { addToCart, checkPurchaseStatus, purchaseNote } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     ArrowLeft,
     CheckCircle,
@@ -28,6 +28,7 @@ import {
     Lock,
     ShoppingCart,
     User,
+    XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -37,10 +38,13 @@ export default function NoteDetailPage() {
     const params = useParams();
     const router = useRouter();
     const { toast } = useToast();
-    const { isAuthenticated } = useAuthStore();
+    const { isAuthenticated, user: currentUser } = useAuthStore();
     const noteId = Number(params.id);
     const [purchasing, setPurchasing] = useState(false);
     const [addingToCart, setAddingToCart] = useState(false);
+    const [approving, setApproving] = useState(false);
+    const [rejecting, setRejecting] = useState(false);
+    const queryClient = useQueryClient();
 
     const {
         data: note,
@@ -312,12 +316,61 @@ export default function NoteDetailPage() {
                             </div>
                         )}
 
-                        {/* Pending note admin banner */}
+                        {/* Pending note admin banner with approve/reject */}
                         {isPending && (
                             <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 mb-4">
-                                <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 text-sm font-medium">
-                                    <Eye className="h-4 w-4" />
-                                    Admin review — viewing full document
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 text-sm font-medium">
+                                        <Eye className="h-4 w-4" />
+                                        Admin review — viewing full document
+                                    </div>
+                                    {currentUser && (
+                                        <div className="flex gap-2">
+                                            <Button
+                                                size="sm"
+                                                variant="default"
+                                                disabled={approving || !note?.has_pdf}
+                                                title={!note?.has_pdf ? "PDF required before approval" : "Approve this note"}
+                                                onClick={async () => {
+                                                    setApproving(true);
+                                                    try {
+                                                        await approveNote(noteId);
+                                                        toast({ title: "Approved", description: "Note has been approved." });
+                                                        queryClient.invalidateQueries({ queryKey: ["note", noteId] });
+                                                    } catch (err: unknown) {
+                                                        const msg = err instanceof Error ? err.message : "Failed to approve";
+                                                        toast({ title: "Error", description: msg, variant: "destructive" });
+                                                    } finally {
+                                                        setApproving(false);
+                                                    }
+                                                }}
+                                            >
+                                                {approving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <CheckCircle className="h-4 w-4 mr-1" />}
+                                                Approve
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="destructive"
+                                                disabled={rejecting}
+                                                onClick={async () => {
+                                                    setRejecting(true);
+                                                    try {
+                                                        await rejectNote(noteId);
+                                                        toast({ title: "Rejected", description: "Note has been rejected." });
+                                                        router.back();
+                                                    } catch (err: unknown) {
+                                                        const msg = err instanceof Error ? err.message : "Failed to reject";
+                                                        toast({ title: "Error", description: msg, variant: "destructive" });
+                                                    } finally {
+                                                        setRejecting(false);
+                                                    }
+                                                }}
+                                            >
+                                                {rejecting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <XCircle className="h-4 w-4 mr-1" />}
+                                                Reject
+                                            </Button>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}

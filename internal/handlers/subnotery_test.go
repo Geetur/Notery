@@ -330,3 +330,96 @@ func TestGetSubnoteryNotes_Pagination(t *testing.T) {
 		t.Fatalf("expected total 5, got %v", r["total"])
 	}
 }
+
+// ===== LeaveSubnotery TESTS =====
+
+func TestLeaveSubnotery_HappyPath(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "leaver")
+	sub := models.Subnotery{Name: "leave-sub"}
+	app.DB.Create(&sub)
+
+	// Join first
+	var user models.User
+	app.DB.First(&user, uid)
+	app.DB.Model(&sub).Association("Members").Append(&user)
+
+	// Verify membership
+	var count int64
+	app.DB.Table("user_memberships").Where("user_id = ? AND subnotery_id = ?", uid, sub.ID).Count(&count)
+	if count != 1 {
+		t.Fatal("expected user to be a member before leaving")
+	}
+
+	// Leave
+	w := serve("POST", "/subnoteries/:subnotery_id/leave", "/subnoteries/"+strconv.Itoa(int(sub.ID))+"/leave",
+		nil, app.LeaveSubnotery, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify no longer a member
+	app.DB.Table("user_memberships").Where("user_id = ? AND subnotery_id = ?", uid, sub.ID).Count(&count)
+	if count != 0 {
+		t.Fatal("expected user to be removed from memberships after leaving")
+	}
+}
+
+func TestLeaveSubnotery_AdminCannotLeave(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "adminleaver")
+	sub := models.Subnotery{Name: "admin-leave-sub"}
+	app.DB.Create(&sub)
+
+	var user models.User
+	app.DB.First(&user, uid)
+	app.DB.Model(&sub).Association("Admins").Append(&user)
+	app.DB.Model(&sub).Association("Members").Append(&user)
+
+	w := serve("POST", "/subnoteries/:subnotery_id/leave", "/subnoteries/"+strconv.Itoa(int(sub.ID))+"/leave",
+		nil, app.LeaveSubnotery, authMW(uid))
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestLeaveSubnotery_SubnoteryNotFound(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "leavebad")
+
+	w := serve("POST", "/subnoteries/:subnotery_id/leave", "/subnoteries/99999/leave",
+		nil, app.LeaveSubnotery, authMW(uid))
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// ===== GetSubnoteryDetail is_member TESTS =====
+
+func TestGetSubnoteryDetail_IsMember(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "membdetail")
+	sub := models.Subnotery{Name: "detail-member-sub"}
+	app.DB.Create(&sub)
+
+	var user models.User
+	app.DB.First(&user, uid)
+	app.DB.Model(&sub).Association("Members").Append(&user)
+
+	w := serve("GET", "/subnoteries/:subnotery_id", "/subnoteries/"+strconv.Itoa(int(sub.ID)),
+		nil, app.GetSubnoteryDetail, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	if r["is_member"] != true {
+		t.Fatalf("expected is_member=true, got %v", r["is_member"])
+	}
+}
+
+func TestGetSubnoteryDetail_NotMember(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "nonmembdetail")
+	sub := models.Subnotery{Name: "detail-nonmemb-sub"}
+	app.DB.Create(&sub)
+
+	w := serve("GET", "/subnoteries/:subnotery_id", "/subnoteries/"+strconv.Itoa(int(sub.ID)),
+		nil, app.GetSubnoteryDetail, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	if r["is_member"] != false {
+		t.Fatalf("expected is_member=false, got %v", r["is_member"])
+	}
+}

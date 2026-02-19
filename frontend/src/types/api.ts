@@ -67,8 +67,11 @@ export interface SubnoteryDetail {
     description: string;
     content_type: string;
     rules: string;
+    min_post_notoriety: number;
+    min_comment_notoriety: number;
     admins: { id: number; username: string }[];
     member_count: number;
+    is_member: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -173,6 +176,8 @@ export interface SelfProfile {
     profile_visibility: ProfileVisibility;
     profile_updated_at: string | null;
     email_verified: boolean;
+    post_karma: number;
+    comment_karma: number;
     created_at: string;
     updated_at: string;
 }
@@ -181,6 +186,8 @@ export interface PublicProfile {
     id: number;
     username: string;
     display_name: string;
+    post_karma: number;
+    comment_karma: number;
     created_at: string;
     bio?: string;
     avatar_url?: string;

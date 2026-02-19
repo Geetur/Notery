@@ -28,6 +28,7 @@ import {
     User,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
@@ -76,7 +77,7 @@ export function TopNav() {
                     href="/"
                     className="flex items-center gap-1.5 font-bold text-lg text-foreground hover:text-primary transition-colors mr-2"
                 >
-                    <FileText className="h-5 w-5 text-primary" />
+                    <Image src="/notery-logo.png" alt="Notery" width={24} height={24} className="h-6 w-6" />
                     <span className="hidden sm:inline">notery</span>
                 </Link>
 

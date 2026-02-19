@@ -140,7 +140,7 @@ func main() {
 
 	// Subnotery browsing (public)
 	api.GET("/subnoteries", app.ListSubnoteries)
-	api.GET("/subnoteries/:subnotery_id", app.GetSubnoteryDetail)
+	api.GET("/subnoteries/:subnotery_id", optAuth, app.GetSubnoteryDetail)
 	api.GET("/subnoteries/:subnotery_id/notes", optAuth, app.GetSubnoteryNotes)
 
 	// ── Authenticated Read-Only (login required, no verification) ──────────
@@ -198,6 +198,7 @@ func main() {
 	// Orders & Subnoteries
 	write.POST("/orders/:order_id/confirm", app.ConfirmOrder)
 	write.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
+	write.POST("/subnoteries/:subnotery_id/leave", app.LeaveSubnotery)
 	write.PATCH("/subnoteries/:subnotery_id/settings", app.UpdateSubnoterySettings)
 
 	// Bookmarks

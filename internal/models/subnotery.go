@@ -30,6 +30,11 @@ type Subnotery struct {
 	Description string    `json:"description" gorm:"type:text"`
 	ContentType string    `json:"content_type" gorm:"type:varchar(100)"`
 	Rules       string    `json:"rules" gorm:"type:text"`
+
+	// Minimum notoriety (karma) required to post/comment. 0 = no restriction.
+	MinPostNotoriety    float64 `json:"min_post_notoriety" gorm:"default:0;not null"`
+	MinCommentNotoriety float64 `json:"min_comment_notoriety" gorm:"default:0;not null"`
+
 	Admins      []User    `json:"admins" gorm:"many2many:user_admins;"`
 	Members     []User    `json:"members" gorm:"many2many:user_memberships;"`
 	CreatedAt   time.Time `json:"created_at"`

@@ -473,6 +473,9 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		if err == nil {
 			if existing.Direction == direction {
 				// Toggle off: remove vote in the same direction.
+				// 1. Reverse prior karma ledger entry
+				app.reverseNoteKarmaLedger(tx, existing.ID, note.CreatorID)
+
 				if err := tx.Delete(&existing).Error; err != nil {
 					return err
 				}
@@ -486,6 +489,9 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 				feedLog.Log("VOTE", "toggled off", "user_id", userID, "note_id", noteID, "was", action)
 			} else {
 				// Switch direction.
+				// 1. Reverse prior karma ledger entry
+				app.reverseNoteKarmaLedger(tx, existing.ID, note.CreatorID)
+
 				if err := tx.Model(&existing).Update("direction", direction).Error; err != nil {
 					return err
 				}
@@ -501,6 +507,36 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 				if err := tx.Model(&note).Update(addCol, gorm.Expr(addCol+" + 1")).Error; err != nil {
 					return err
 				}
+
+				// 2. Re-read note to get accurate counts for karma calc
+				var updated models.Note
+				if err := tx.First(&updated, note.ID).Error; err != nil {
+					return err
+				}
+
+				// 3. Calculate and apply new karma
+				v := 1
+				if direction == models.VoteDown {
+					v = -1
+				}
+				delta := models.CalculatePostKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+				ledger := models.KarmaLedger{
+					AuthorID:  note.CreatorID,
+					VoterID:   userID,
+					VoteType:  models.KarmaPost,
+					VoteID:    existing.ID,
+					TargetID:  noteIDUint,
+					KarmaType: models.KarmaPost,
+					Delta:     delta,
+				}
+				if err := tx.Create(&ledger).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&models.User{}).Where("id = ?", note.CreatorID).
+					Update("post_karma", gorm.Expr("post_karma + ?", delta)).Error; err != nil {
+					return err
+				}
+
 				feedLog.Log("VOTE", "switched", "user_id", userID, "note_id", noteID,
 					"from", string(opposite), "to", action)
 			}
@@ -517,6 +553,36 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 			if err := tx.Model(&note).Update(col, gorm.Expr(col+" + 1")).Error; err != nil {
 				return err
 			}
+
+			// Re-read note to get accurate counts for karma calc
+			var updated models.Note
+			if err := tx.First(&updated, note.ID).Error; err != nil {
+				return err
+			}
+
+			// Calculate and apply karma
+			v := 1
+			if direction == models.VoteDown {
+				v = -1
+			}
+			delta := models.CalculatePostKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+			ledger := models.KarmaLedger{
+				AuthorID:  note.CreatorID,
+				VoterID:   userID,
+				VoteType:  models.KarmaPost,
+				VoteID:    vote.ID,
+				TargetID:  noteIDUint,
+				KarmaType: models.KarmaPost,
+				Delta:     delta,
+			}
+			if err := tx.Create(&ledger).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.User{}).Where("id = ?", note.CreatorID).
+				Update("post_karma", gorm.Expr("post_karma + ?", delta)).Error; err != nil {
+				return err
+			}
+
 			feedLog.Log("VOTE", "created", "user_id", userID, "note_id", noteID, "direction", action)
 		}
 		return nil
@@ -555,4 +621,19 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		"downvotes": note.Downvotes,
 		"hotness":   note.Hotness,
 	})
+}
+
+// reverseNoteKarmaLedger finds the most recent karma ledger entry for a note vote
+// and reverses its delta from the author's post_karma.
+func (app *App) reverseNoteKarmaLedger(tx *gorm.DB, voteID uint, authorID uint64) {
+	var ledger models.KarmaLedger
+	if err := tx.Where("vote_type = ? AND vote_id = ?", models.KarmaPost, voteID).
+		Order("created_at DESC").First(&ledger).Error; err != nil {
+		return // no ledger entry found — nothing to reverse
+	}
+	// Reverse the delta
+	tx.Model(&models.User{}).Where("id = ?", authorID).
+		Update("post_karma", gorm.Expr("post_karma - ?", ledger.Delta))
+	// Delete the ledger entry
+	tx.Delete(&ledger)
 }

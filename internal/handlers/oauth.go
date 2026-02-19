@@ -132,8 +132,22 @@ func (app *App) oauthFindOrCreateUser(provider, oauthID, email, displayName stri
 		return &user, nil
 	}
 
-	// Create new user
-	username := sanitizeUsername(displayName)
+	// Create new user — resolve duplicate usernames by appending numeric suffix
+	baseUsername := sanitizeUsername(displayName)
+	username := baseUsername
+	for i := 1; ; i++ {
+		var count int64
+		app.DB.Model(&models.User{}).Where("username = ?", username).Count(&count)
+		if count == 0 {
+			break
+		}
+		username = fmt.Sprintf("%s%d", baseUsername, i)
+		// Ensure suffixed name doesn't exceed max length
+		if len(username) > models.MaxUsernameLength {
+			baseUsername = baseUsername[:models.MaxUsernameLength-len(fmt.Sprintf("%d", i))]
+			username = fmt.Sprintf("%s%d", baseUsername, i)
+		}
+	}
 	user = models.User{
 		Email:            email,
 		Username:         username,
@@ -146,7 +160,7 @@ func (app *App) oauthFindOrCreateUser(provider, oauthID, email, displayName stri
 	if result := app.DB.Create(&user); result.Error != nil {
 		return nil, result.Error
 	}
-	oauthLog.Log("CREATE", "OAuth user created", "provider", provider, "userID", user.ID, "email", email)
+	oauthLog.Log("CREATE", "OAuth user created", "provider", provider, "userID", user.ID, "email", email, "username", username)
 	return &user, nil
 }
 
