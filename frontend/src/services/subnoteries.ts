@@ -23,14 +23,16 @@ export function getSubnotery(subnoteryId: number): Promise<SubnoteryDetail> {
     return apiGet(`/subnoteries/${subnoteryId}`);
 }
 
-/** GET /subnoteries/:id/notes — List approved notes in a subnotery (paginated). */
+/** GET /subnoteries/:id/notes — List approved notes in a subnotery (paginated, sortable). */
 export function getSubnoteryNotes(
     subnoteryId: number,
-    params?: PaginationParams
+    params?: PaginationParams & { sort?: string; time?: string }
 ): Promise<NotesListResponse> {
     const query = new URLSearchParams();
     if (params?.page) query.set("page", String(params.page));
     if (params?.limit) query.set("limit", String(params.limit));
+    if (params?.sort) query.set("sort", params.sort);
+    if (params?.time) query.set("time", params.time);
     const qs = query.toString();
     return apiGet(`/subnoteries/${subnoteryId}/notes${qs ? `?${qs}` : ""}`);
 }

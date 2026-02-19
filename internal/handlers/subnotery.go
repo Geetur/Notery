@@ -19,6 +19,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -259,10 +260,31 @@ func (app *App) GetSubnoteryNotes(c *gin.Context) {
 	}
 
 	pag := helpers.ParsePagination(c)
+	sortParam := c.DefaultQuery("sort", "new")
+	timeParam := c.DefaultQuery("time", "all")
 
 	var total int64
 	query := app.DB.Model(&models.Note{}).
 		Where("subnotery_id = ? AND status = ?", subnoteryID, models.StatusApproved)
+
+	// Apply time filter for top/controversial sorts
+	if (sortParam == "top" || sortParam == "controversial") && timeParam != "all" {
+		var since time.Time
+		now := time.Now()
+		switch timeParam {
+		case "day":
+			since = now.AddDate(0, 0, -1)
+		case "week":
+			since = now.AddDate(0, 0, -7)
+		case "month":
+			since = now.AddDate(0, -1, 0)
+		case "year":
+			since = now.AddDate(-1, 0, 0)
+		}
+		if !since.IsZero() {
+			query = query.Where("created_at >= ?", since)
+		}
+	}
 
 	if err := query.Count(&total).Error; err != nil {
 		subnoteryLog.Log("NOTES", "Failed to count notes", "error", err)
@@ -270,19 +292,35 @@ func (app *App) GetSubnoteryNotes(c *gin.Context) {
 		return
 	}
 
+	// Apply sort order
+	switch sortParam {
+	case "top":
+		query = query.Order("(upvotes - downvotes) DESC, created_at DESC")
+	case "controversial":
+		query = query.Order("(upvotes + downvotes) * 1.0 / CASE WHEN ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) < 1 THEN 1 ELSE ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) END DESC, created_at DESC")
+	case "hot":
+		query = query.Order("hotness DESC, created_at DESC")
+	default: // "new"
+		query = query.Order("created_at DESC")
+	}
+
 	var notes []models.Note
 	if err := query.Offset(pag.Offset).Limit(pag.Limit).
-		Order("created_at DESC").
 		Find(&notes).Error; err != nil {
 		subnoteryLog.Log("NOTES", "Failed to fetch notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch notes"})
 		return
 	}
 
-	subnoteryLog.Log("NOTES", "Subnotery notes listed", "subnoteryID", subnoteryID, "count", len(notes), "total", total)
+	subnoteryLog.Log("NOTES", "Subnotery notes listed", "subnoteryID", subnoteryID, "count", len(notes), "total", total, "sort", sortParam, "time", timeParam)
 
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
+
+	// Populate user votes if authenticated (endpoint is public, so check optionally)
+	if userID, authenticated := helpers.TryGetUserID(c); authenticated {
+		app.populateUserVotes(userID, notes)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,

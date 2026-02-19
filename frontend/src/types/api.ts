@@ -32,6 +32,8 @@ export interface Note {
     upvotes: number;
     downvotes: number;
     hotness: number;
+    /** Current user's vote direction: "up", "down", or "" (no vote). */
+    user_vote: string;
     created_at: string;
     updated_at: string;
 }

@@ -26,13 +26,15 @@ export function getHotFeed(params?: PaginationParams): Promise<FeedResponse> {
     return apiGet(`/feed/hot${qs ? `?${qs}` : ""}`);
 }
 
-/** GET /notes/approved — Paginated list of approved notes. */
+/** GET /notes/approved — Paginated list of approved notes with sort and time filter. */
 export function getApprovedNotes(
-    params?: PaginationParams
+    params?: PaginationParams & { sort?: string; time?: string }
 ): Promise<NotesListResponse> {
     const query = new URLSearchParams();
     if (params?.page) query.set("page", String(params.page));
     if (params?.limit) query.set("limit", String(params.limit));
+    if (params?.sort) query.set("sort", params.sort);
+    if (params?.time) query.set("time", params.time);
     const qs = query.toString();
     return apiGet(`/notes/approved${qs ? `?${qs}` : ""}`);
 }

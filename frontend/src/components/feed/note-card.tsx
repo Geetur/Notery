@@ -59,6 +59,8 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked }: Not
                         noteId={note.id}
                         upvotes={note.upvotes}
                         downvotes={note.downvotes}
+                        initialUserVote={note.user_vote}
+                        noteStatus={note.status}
                         orientation="vertical"
                     />
                 </div>

@@ -6,6 +6,7 @@ import { formatVotes, netScore } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { downvoteNote, upvoteNote } from "@/services/notes";
 import { useAuthStore } from "@/stores/auth-store";
+import type { NoteStatus } from "@/types";
 import { ArrowBigDown, ArrowBigUp } from "lucide-react";
 import { useState } from "react";
 
@@ -13,6 +14,10 @@ interface VoteButtonsProps {
     noteId: number;
     upvotes: number;
     downvotes: number;
+    /** The user's existing vote direction from the API ("up", "down", or ""/undefined). */
+    initialUserVote?: string;
+    /** Note status — voting is disabled for non-approved notes. */
+    noteStatus?: NoteStatus;
     /** Direction of user orientation ("vertical" for feed cards, "horizontal" for compact). */
     orientation?: "vertical" | "horizontal";
     className?: string;
@@ -22,6 +27,8 @@ export function VoteButtons({
     noteId,
     upvotes: initialUpvotes,
     downvotes: initialDownvotes,
+    initialUserVote,
+    noteStatus,
     orientation = "vertical",
     className,
 }: VoteButtonsProps) {
@@ -29,16 +36,28 @@ export function VoteButtons({
     const { toast } = useToast();
     const [upvotes, setUpvotes] = useState(initialUpvotes);
     const [downvotes, setDownvotes] = useState(initialDownvotes);
-    const [userVote, setUserVote] = useState<"up" | "down" | null>(null);
+    const [userVote, setUserVote] = useState<"up" | "down" | null>(
+        initialUserVote === "up" ? "up" : initialUserVote === "down" ? "down" : null
+    );
     const [loading, setLoading] = useState(false);
 
     const score = netScore(upvotes, downvotes);
+    const isDisabled = noteStatus != null && noteStatus !== "Approved";
 
     const handleVote = async (direction: "up" | "down") => {
         if (!isAuthenticated) {
             toast({
                 title: "Login required",
                 description: "You need to log in to vote.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        if (isDisabled) {
+            toast({
+                title: "Cannot vote",
+                description: "Voting is only available on approved notes.",
                 variant: "destructive",
             });
             return;
@@ -76,9 +95,10 @@ export function VoteButtons({
         >
             <button
                 onClick={() => handleVote("up")}
-                disabled={loading}
+                disabled={loading || isDisabled}
                 className={cn(
                     "p-1 rounded hover:bg-accent transition-colors",
+                    isDisabled && "opacity-50 cursor-not-allowed",
                     userVote === "up" ? "text-orange-500" : "text-muted-foreground hover:text-foreground"
                 )}
                 aria-label="Upvote"
@@ -101,9 +121,10 @@ export function VoteButtons({
 
             <button
                 onClick={() => handleVote("down")}
-                disabled={loading}
+                disabled={loading || isDisabled}
                 className={cn(
                     "p-1 rounded hover:bg-accent transition-colors",
+                    isDisabled && "opacity-50 cursor-not-allowed",
                     userVote === "down" ? "text-blue-500" : "text-muted-foreground hover:text-foreground"
                 )}
                 aria-label="Downvote"

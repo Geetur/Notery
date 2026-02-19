@@ -59,6 +59,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         } catch {
             // Best-effort — clear local state regardless
         }
+        clearTokens();
         set({ user: null, isAuthenticated: false, loading: false });
     },
 
@@ -68,6 +69,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         } catch {
             // Best-effort
         }
+        clearTokens();
         set({ user: null, isAuthenticated: false, loading: false });
     },
 

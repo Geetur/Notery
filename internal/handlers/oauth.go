@@ -216,7 +216,7 @@ func (app *App) OAuthGoogle(c *gin.Context) {
 	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
 
 	cfg := app.googleOAuthConfig()
-	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "select_account"))
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
@@ -306,7 +306,7 @@ func (app *App) OAuthGitHub(c *gin.Context) {
 	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
 
 	cfg := app.githubOAuthConfig()
-	url := cfg.AuthCodeURL(state)
+	url := cfg.AuthCodeURL(state, oauth2.SetAuthURLParam("prompt", "select_account"))
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 

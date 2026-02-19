@@ -19,7 +19,7 @@ interface NoteFeedProps {
 }
 
 export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
-    const { sort, setSort } = useFeedStore();
+    const { sort, timeFilter, setSort } = useFeedStore();
     const loadMoreRef = useRef<HTMLDivElement>(null);
 
     // Sync initial sort from route if provided
@@ -40,13 +40,19 @@ export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
         isError,
         error,
     } = useInfiniteQuery({
-        queryKey: ["feed", sort],
+        queryKey: ["feed", sort, sort === "top" || sort === "new" ? timeFilter : null],
         queryFn: async ({ pageParam = 1 }) => {
-            // Use hot feed for "hot" sort, approved notes for others
             if (sort === "hot") {
                 return getHotFeed({ page: pageParam, limit: 25 });
             }
-            return getApprovedNotes({ page: pageParam, limit: 25 });
+            // For "new", "top", and any other sort: use the approved notes endpoint
+            // with the sort param. Time filter only applies to "top".
+            return getApprovedNotes({
+                page: pageParam,
+                limit: 25,
+                sort: sort,
+                time: sort === "top" ? timeFilter : undefined,
+            });
         },
         getNextPageParam: (lastPage, allPages) => {
             // Hot feed doesn't return total, so check if we got a full page

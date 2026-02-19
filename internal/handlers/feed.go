@@ -200,6 +200,11 @@ func (app *App) GetHotFeed(c *gin.Context) {
 	// Fetch full note data from database
 	notes := app.fetchNotes(noteIDs)
 
+	// Populate user votes if authenticated
+	if authenticated {
+		app.populateUserVotes(userID, notes)
+	}
+
 	duration := time.Since(start)
 	feedLog.Log("GET_FEED", "served", "count", len(notes), "page", pag.Page, "duration_ms", duration.Milliseconds())
 
@@ -341,6 +346,32 @@ func (app *App) populateSubnoteryNames(notes []models.Note) {
 	}
 }
 
+// populateUserVotes batch-fetches a user's vote directions for a slice of notes
+// and populates the UserVote field on each note ("up", "down", or "").
+func (app *App) populateUserVotes(userID uint64, notes []models.Note) {
+	if len(notes) == 0 {
+		return
+	}
+	noteIDs := make([]uint64, 0, len(notes))
+	for _, n := range notes {
+		noteIDs = append(noteIDs, uint64(n.ID))
+	}
+
+	var votes []models.Vote
+	if err := app.DB.Where("user_id = ? AND note_id IN ?", userID, noteIDs).Find(&votes).Error; err != nil {
+		feedLog.Log("HELPER", "failed to batch-fetch user votes", "error", err, "user_id", userID)
+		return
+	}
+
+	voteMap := make(map[uint64]string, len(votes))
+	for _, v := range votes {
+		voteMap[v.NoteID] = string(v.Direction)
+	}
+	for i := range notes {
+		notes[i].UserVote = voteMap[uint64(notes[i].ID)]
+	}
+}
+
 // Upvote handles upvoting a note. Delegates to the unified voteNote handler.
 //
 // Route: POST /api/v1/notes/:id/upvote
@@ -382,6 +413,13 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 	if err := app.DB.First(&note, noteID).Error; err != nil {
 		feedLog.Log("VOTE", "note not found", "note_id", noteID, "error", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+		return
+	}
+
+	// Only approved notes can be voted on
+	if note.Status != models.StatusApproved {
+		feedLog.Log("VOTE", "vote rejected — note not approved", "note_id", noteID, "status", note.Status)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot vote on a note that is not approved"})
 		return
 	}
 

@@ -27,6 +27,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/meilisearch/meilisearch-go"
@@ -283,6 +284,18 @@ func (app *App) RejectNote(c *gin.Context) {
 		}
 	}
 
+	// Delete any admin review comments and their votes before deleting the note.
+	var rejectCommentIDs []uint
+	app.DB.Model(&models.Comment{}).Where("note_id = ?", note.ID).Pluck("id", &rejectCommentIDs)
+	if len(rejectCommentIDs) > 0 {
+		app.DB.Where("comment_id IN ?", rejectCommentIDs).Delete(&models.CommentVote{})
+		app.DB.Where("note_id = ?", note.ID).Delete(&models.Comment{})
+		noteLog.Log("REJECT", "Deleted admin review comments", "noteID", note.ID, "count", len(rejectCommentIDs))
+	}
+
+	// Also delete any note votes before deleting the note.
+	app.DB.Where("note_id = ?", uint64(note.ID)).Delete(&models.Vote{})
+
 	// Delete the note from database
 	if err := app.DB.Delete(note).Error; err != nil {
 		noteLog.Log("REJECT", "Failed to delete note", "noteID", note.ID, "error", err)
@@ -372,6 +385,22 @@ func (app *App) ApproveNote(c *gin.Context) {
 		noteLog.Log("APPROVE", "Failed to add to feed", "noteID", note.ID, "error", err)
 	}
 
+	// Delete any admin review comments left on the note while it was pending.
+	// These comments are for admin discussion only and should not be visible to users.
+	// Delete associated comment votes first, then the comments themselves.
+	var commentIDs []uint
+	app.DB.Model(&models.Comment{}).Where("note_id = ?", note.ID).Pluck("id", &commentIDs)
+	if len(commentIDs) > 0 {
+		if result := app.DB.Where("comment_id IN ?", commentIDs).Delete(&models.CommentVote{}); result.Error != nil {
+			noteLog.Log("APPROVE", "Failed to delete comment votes", "noteID", note.ID, "error", result.Error)
+		}
+		if result := app.DB.Where("note_id = ?", note.ID).Delete(&models.Comment{}); result.Error != nil {
+			noteLog.Log("APPROVE", "Failed to delete admin comments", "noteID", note.ID, "error", result.Error)
+		} else {
+			noteLog.Log("APPROVE", "Deleted admin review comments", "noteID", note.ID, "count", result.RowsAffected)
+		}
+	}
+
 	noteLog.Log("APPROVE", "Note approved successfully", "noteID", note.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Note approved successfully"})
 }
@@ -432,6 +461,12 @@ func (app *App) GetNoteByID(c *gin.Context) {
 	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
 		note.SubnoteryName = sub.Name
 	}
+
+	// Populate user vote
+	viewerID := helpers.GetUserID(c)
+	notes := []models.Note{*note}
+	app.populateUserVotes(viewerID, notes)
+	note.UserVote = notes[0].UserVote
 
 	c.JSON(http.StatusOK, note)
 }
@@ -499,22 +534,52 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 
 // GetApprovedNotes returns a paginated list of all approved notes.
 //
-// Public endpoint (requires auth but no admin). Returns notes ordered by
-// creation time descending with total count for frontend pagination.
+// Supports sort and time query parameters for Reddit-style sorting:
+//   - sort=new (default): ORDER BY created_at DESC
+//   - sort=top: ORDER BY (upvotes - downvotes) DESC, with optional time filter
+//   - sort=controversial: ORDER BY controversy score DESC, with optional time filter
+//   - sort=hot: ORDER BY hotness DESC
+//
+// Time filter (only for top/controversial):
+//   - time=day|week|month|year|all (default: all)
 //
 // DB: COUNT + SELECT from notes WHERE status = Approved. Paginated with OFFSET/LIMIT.
 // Technologies: PostgreSQL (GORM).
-// Helpers: helpers.ParsePagination.
+// Helpers: helpers.ParsePagination, helpers.GetUserID.
 //
 // Route: GET /api/v1/notes/approved
 func (app *App) GetApprovedNotes(c *gin.Context) {
 	noteLog.Log("APPROVED", "Processing get approved notes request")
 	pag := helpers.ParsePagination(c)
 
+	sortParam := c.DefaultQuery("sort", "new")
+	timeParam := c.DefaultQuery("time", "all")
+
 	var notes []models.Note
 	var total int64
 
 	query := app.DB.Model(&models.Note{}).Where("status = ?", models.StatusApproved)
+
+	// Apply time filter for top/controversial sorts
+	if (sortParam == "top" || sortParam == "controversial") && timeParam != "all" {
+		var since time.Time
+		now := time.Now()
+		switch timeParam {
+		case "day":
+			since = now.AddDate(0, 0, -1)
+		case "week":
+			since = now.AddDate(0, 0, -7)
+		case "month":
+			since = now.AddDate(0, -1, 0)
+		case "year":
+			since = now.AddDate(-1, 0, 0)
+		default:
+			// "all" — no time filter
+		}
+		if !since.IsZero() {
+			query = query.Where("created_at >= ?", since)
+		}
+	}
 
 	if err := query.Count(&total).Error; err != nil {
 		noteLog.Log("APPROVED", "Failed to count approved notes", "error", err)
@@ -522,16 +587,32 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 		return
 	}
 
-	if err := query.Offset(pag.Offset).Limit(pag.Limit).Order("created_at DESC").Find(&notes).Error; err != nil {
+	// Apply sort order
+	switch sortParam {
+	case "top":
+		query = query.Order("(upvotes - downvotes) DESC, created_at DESC")
+	case "controversial":
+		query = query.Order("(upvotes + downvotes) * 1.0 / CASE WHEN ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) < 1 THEN 1 ELSE ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) END DESC, created_at DESC")
+	case "hot":
+		query = query.Order("hotness DESC, created_at DESC")
+	default: // "new"
+		query = query.Order("created_at DESC")
+	}
+
+	if err := query.Offset(pag.Offset).Limit(pag.Limit).Find(&notes).Error; err != nil {
 		noteLog.Log("APPROVED", "Failed to fetch approved notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
 		return
 	}
 
-	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes), "total", total)
+	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes), "total", total, "sort", sortParam, "time", timeParam)
 
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
+
+	// Populate user votes for the current user
+	userID := helpers.GetUserID(c)
+	app.populateUserVotes(userID, notes)
 
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
@@ -590,6 +671,9 @@ func (app *App) GetMyNotes(c *gin.Context) {
 
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
+
+	// Populate user votes
+	app.populateUserVotes(userID, notes)
 
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
@@ -677,6 +761,11 @@ func (app *App) GetUserNotes(c *gin.Context) {
 
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
+
+	// Populate user votes if viewer is authenticated
+	if viewerID, authenticated := helpers.TryGetUserID(c); authenticated {
+		app.populateUserVotes(viewerID, notes)
+	}
 
 	noteLog.Log("USER_NOTES", "User notes retrieved", "userID", userID, "count", len(notes), "total", total)
 	c.JSON(http.StatusOK, gin.H{

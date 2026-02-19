@@ -135,13 +135,13 @@ func main() {
 	api.GET("/search", optAuth, app.SearchAll)
 	api.GET("/users/:id/profile", app.GetUserProfile)
 	api.GET("/users/:id/avatar", app.GetAvatar)
-	api.GET("/users/:id/notes", app.GetUserNotes)
+	api.GET("/users/:id/notes", optAuth, app.GetUserNotes)
 	api.GET("/notes/:id/thumbnail", app.GetThumbnail)
 
 	// Subnotery browsing (public)
 	api.GET("/subnoteries", app.ListSubnoteries)
 	api.GET("/subnoteries/:subnotery_id", app.GetSubnoteryDetail)
-	api.GET("/subnoteries/:subnotery_id/notes", app.GetSubnoteryNotes)
+	api.GET("/subnoteries/:subnotery_id/notes", optAuth, app.GetSubnoteryNotes)
 
 	// ── Authenticated Read-Only (login required, no verification) ──────────
 	// Unverified users can browse, view profile, check purchases — read-only.

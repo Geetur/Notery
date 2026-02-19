@@ -82,4 +82,8 @@ type Note struct {
 	// ----- Computed (non-DB) Fields -----
 	// SubnoteryName is populated at query time — not stored in the database.
 	SubnoteryName string `json:"subnotery_name" gorm:"-"`
+
+	// UserVote is the current user's vote direction ("up", "down", or "").
+	// Populated at query time for authenticated requests — not stored in the database.
+	UserVote string `json:"user_vote" gorm:"-"`
 }

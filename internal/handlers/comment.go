@@ -136,7 +136,16 @@ func (app *App) GetNoteComments(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
-	if note.Status != models.StatusApproved {
+	if note.Status == models.StatusApproved {
+		// Anyone can view comments on approved notes
+	} else if note.Status == models.StatusPending {
+		// Only admins can view comments on pending notes
+		userID, authenticated := helpers.TryGetUserID(c)
+		if !authenticated || !app.isNoteAdmin(userID, note.SubnoteryID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Comments are not available for this note"})
+			return
+		}
+	} else {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Comments are not available for this note"})
 		return
 	}
@@ -297,7 +306,7 @@ func (app *App) CreateComment(c *gin.Context) {
 		return
 	}
 
-	// Verify note exists and is approved
+	// Verify note exists and is approved (or pending — admins can comment on pending)
 	var note models.Note
 	if err := app.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -307,7 +316,15 @@ func (app *App) CreateComment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
-	if note.Status != models.StatusApproved {
+	if note.Status == models.StatusApproved {
+		// Anyone can comment on approved notes — proceed
+	} else if note.Status == models.StatusPending {
+		// Only admins (global or subnotery-scoped) may comment on pending notes
+		if !app.isNoteAdmin(userID, note.SubnoteryID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot comment on this note"})
+			return
+		}
+	} else {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot comment on this note"})
 		return
 	}
@@ -1361,4 +1378,21 @@ func filterDescendantsOfRoots(comments []models.Comment, rootIDs []uint) []model
 // materialized paths are not available.
 func filterExactSubtree(comments []models.Comment, targetID uint) []models.Comment {
 	return filterDescendantsOfRoots(comments, []uint{targetID})
+}
+
+// isNoteAdmin checks whether the given user is a global admin or a scoped admin
+// for the subnotery owning the note. Used for admin-only operations on pending notes.
+func (app *App) isNoteAdmin(userID uint64, subnoteryID uint) bool {
+	var user models.User
+	if err := app.DB.Select("id, is_global_admin").First(&user, userID).Error; err != nil {
+		return false
+	}
+	if user.IsGlobalAdmin {
+		return true
+	}
+	var count int64
+	app.DB.Table("user_admins").
+		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
+		Count(&count)
+	return count > 0
 }

@@ -156,6 +156,8 @@ export default function NoteDetailPage() {
                             noteId={note.id}
                             upvotes={note.upvotes}
                             downvotes={note.downvotes}
+                            initialUserVote={note.user_vote}
+                            noteStatus={note.status}
                         />
                     </div>
 

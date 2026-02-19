@@ -3,6 +3,7 @@
 "use client";
 
 import { NoteCard } from "@/components/feed";
+import { SortTabs } from "@/components/feed/sort-tabs";
 import { RightSidebar } from "@/components/layout/right-sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { timeAgo } from "@/lib/format";
 import { approveNote, getPendingNotes, rejectNote } from "@/services/notes";
 import { getSubnotery, getSubnoteryNotes, joinSubnotery } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
+import { useFeedStore } from "@/stores/feed-store";
 import type { Note, SubnoteryDetail } from "@/types";
 import {
     CheckCircle,
@@ -35,6 +37,7 @@ export default function CommunityDetailPage() {
     const params = useParams();
     const communityId = Number(params.id);
     const { user } = useAuthStore();
+    const { sort, timeFilter } = useFeedStore();
     const { toast } = useToast();
 
     const [community, setCommunity] = useState<SubnoteryDetail | null>(null);
@@ -68,13 +71,18 @@ export default function CommunityDetailPage() {
     // Load approved notes
     useEffect(() => {
         if (!communityId || isNaN(communityId)) return;
-        getSubnoteryNotes(communityId, { page: notesPage, limit: PAGE_SIZE })
+        getSubnoteryNotes(communityId, {
+            page: notesPage,
+            limit: PAGE_SIZE,
+            sort: sort,
+            time: sort === "top" ? timeFilter : undefined,
+        })
             .then((res) => {
                 setNotes(res.notes ?? []);
                 setNotesTotal(res.total);
             })
             .catch(() => { });
-    }, [communityId, notesPage]);
+    }, [communityId, notesPage, sort, timeFilter]);
 
     // Load pending notes (admin only, scoped to this subnotery)
     const loadPending = useCallback(() => {
@@ -112,7 +120,12 @@ export default function CommunityDetailPage() {
             toast({ title: "Approved", description: "Note has been approved." });
             loadPending();
             // Refresh approved notes
-            getSubnoteryNotes(communityId, { page: notesPage, limit: PAGE_SIZE })
+            getSubnoteryNotes(communityId, {
+                page: notesPage,
+                limit: PAGE_SIZE,
+                sort: sort,
+                time: sort === "top" ? timeFilter : undefined,
+            })
                 .then((res) => {
                     setNotes(res.notes ?? []);
                     setNotesTotal(res.total);
@@ -224,6 +237,7 @@ export default function CommunityDetailPage() {
 
                         {/* Approved notes tab */}
                         <TabsContent value="notes" className="mt-4">
+                            <SortTabs />
                             {notes.length === 0 ? (
                                 <Card className="p-6 text-center text-muted-foreground">
                                     No approved notes in this community yet.
