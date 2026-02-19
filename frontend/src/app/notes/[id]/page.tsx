@@ -14,7 +14,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate, formatFileSize, formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
-import { getNoteById, approveNote, rejectNote } from "@/services/notes";
+import { approveNote, getNoteById, rejectNote } from "@/services/notes";
 import { addToCart, checkPurchaseStatus, purchaseNote } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
