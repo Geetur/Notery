@@ -5,7 +5,6 @@
 
 import { NoteCard } from "@/components/feed/note-card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -20,36 +19,35 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { avatarUrl, formatDate } from "@/lib/format";
+import { avatarUrl, formatDate, timeAgo } from "@/lib/format";
 import { resendVerification } from "@/services/auth";
+import { getMyComments } from "@/services/comments";
 import { getMyNotes } from "@/services/notes";
 import { deleteAvatar, updateMyProfile, uploadAvatar } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth-store";
-import type { Note, NoteStatus, ProfileVisibility } from "@/types";
+import type { MyComment, Note, NoteStatus, ProfileVisibility } from "@/types";
 import {
     AlertCircle,
     Camera,
     CheckCircle,
-    Clock,
-    Eye,
     FileText,
     Loader2,
     Mail,
+    MessageSquare,
     Settings,
     Trash2,
-    XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type ProfileTab = "overview" | "posts" | "settings";
+type ProfileTab = "all" | "posts" | "comments" | "settings";
 
 export default function ProfilePage() {
     const router = useRouter();
     const { user, isAuthenticated, loading, setUser } = useAuthStore();
     const { toast } = useToast();
-    const [activeTab, setActiveTab] = useState<ProfileTab>("overview");
+    const [activeTab, setActiveTab] = useState<ProfileTab>("all");
 
     const [bio, setBio] = useState("");
     const [visibility, setVisibility] = useState<ProfileVisibility>("public");
@@ -66,6 +64,12 @@ export default function ProfilePage() {
     const [notesLoading, setNotesLoading] = useState(false);
     const [statusFilter, setStatusFilter] = useState<NoteStatus | "all">("all");
 
+    // My Comments state
+    const [myComments, setMyComments] = useState<MyComment[]>([]);
+    const [commentsTotal, setCommentsTotal] = useState(0);
+    const [commentsPage, setCommentsPage] = useState(1);
+    const [commentsLoading, setCommentsLoading] = useState(false);
+
     const fetchMyNotes = useCallback(async (page: number, status: NoteStatus | "all") => {
         setNotesLoading(true);
         try {
@@ -81,6 +85,19 @@ export default function ProfilePage() {
             toast({ title: "Failed to load your notes", variant: "destructive" });
         } finally {
             setNotesLoading(false);
+        }
+    }, [toast]);
+
+    const fetchMyComments = useCallback(async (page: number) => {
+        setCommentsLoading(true);
+        try {
+            const res = await getMyComments({ page, limit: 10 });
+            setMyComments(res.comments || []);
+            setCommentsTotal(res.total);
+        } catch {
+            toast({ title: "Failed to load your comments", variant: "destructive" });
+        } finally {
+            setCommentsLoading(false);
         }
     }, [toast]);
 
@@ -103,37 +120,18 @@ export default function ProfilePage() {
         }
     }, [isAuthenticated, notesPage, statusFilter, fetchMyNotes]);
 
+    useEffect(() => {
+        if (isAuthenticated) {
+            fetchMyComments(commentsPage);
+        }
+    }, [isAuthenticated, commentsPage, fetchMyComments]);
+
     if (!isAuthenticated || !user) {
         return null;
     }
 
     const totalPages = Math.ceil(notesTotal / 10);
-
-    const statusBadge = (status: NoteStatus) => {
-        switch (status) {
-            case "Approved":
-                return (
-                    <Badge className="bg-green-500/15 text-green-500 border-green-500/30 hover:bg-green-500/20">
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        Approved
-                    </Badge>
-                );
-            case "Pending":
-                return (
-                    <Badge className="bg-yellow-500/15 text-yellow-500 border-yellow-500/30 hover:bg-yellow-500/20">
-                        <Clock className="h-3 w-3 mr-1" />
-                        Pending
-                    </Badge>
-                );
-            case "Rejected":
-                return (
-                    <Badge variant="destructive" className="bg-red-500/15 text-red-500 border-red-500/30 hover:bg-red-500/20">
-                        <XCircle className="h-3 w-3 mr-1" />
-                        Rejected
-                    </Badge>
-                );
-        }
-    };
+    const commentsTotalPages = Math.ceil(commentsTotal / 10);
 
     const handleSaveProfile = async () => {
         setSaving(true);
@@ -209,8 +207,9 @@ export default function ProfilePage() {
     };
 
     const tabs: { key: ProfileTab; label: string; icon: React.ReactNode }[] = [
-        { key: "overview", label: "Overview", icon: null },
+        { key: "all", label: "All", icon: null },
         { key: "posts", label: "Posts", icon: <FileText className="h-4 w-4" /> },
+        { key: "comments", label: "Comments", icon: <MessageSquare className="h-4 w-4" /> },
         { key: "settings", label: "Settings", icon: <Settings className="h-4 w-4" /> },
     ];
 
@@ -292,21 +291,23 @@ export default function ProfilePage() {
                         ))}
                     </div>
 
-                    {/* ─── Overview Tab ─── */}
-                    {activeTab === "overview" && (
-                        <div className="space-y-3 px-2">
+                    {/* ─── All Tab ─── */}
+                    {activeTab === "all" && (
+                        <div className="space-y-4 px-2">
                             {user.bio && (
                                 <Card className="border-border p-4">
                                     <p className="text-sm">{user.bio}</p>
                                 </Card>
                             )}
+
+                            {/* Recent posts */}
                             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
                                 Recent Posts
                             </h2>
                             {notesLoading ? (
-                                <div className="space-y-2">
+                                <div className="space-y-3">
                                     {Array.from({ length: 3 }).map((_, i) => (
-                                        <Skeleton key={i} className="h-24 w-full" />
+                                        <Skeleton key={i} className="h-32 w-full" />
                                     ))}
                                 </div>
                             ) : myNotes.length === 0 ? (
@@ -320,16 +321,65 @@ export default function ProfilePage() {
                                     </Button>
                                 </Card>
                             ) : (
-                                myNotes.slice(0, 5).map((note) => (
-                                    <NoteCard key={note.id} note={note} viewMode="card" />
-                                ))
+                                <div className="space-y-4">
+                                    {myNotes.slice(0, 5).map((note) => (
+                                        <NoteCard key={note.id} note={note} />
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Recent comments */}
+                            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mt-6">
+                                Recent Comments
+                            </h2>
+                            {commentsLoading ? (
+                                <div className="space-y-3">
+                                    {Array.from({ length: 3 }).map((_, i) => (
+                                        <Skeleton key={i} className="h-20 w-full" />
+                                    ))}
+                                </div>
+                            ) : myComments.length === 0 ? (
+                                <Card className="border-border p-6 text-center">
+                                    <MessageSquare className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                                    <p className="text-sm text-muted-foreground">
+                                        You haven&apos;t posted any comments yet.
+                                    </p>
+                                </Card>
+                            ) : (
+                                <div className="space-y-3">
+                                    {myComments.slice(0, 5).map((comment) => (
+                                        <Card key={comment.id} className="border-border">
+                                            <CardContent className="p-3">
+                                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+                                                    <MessageSquare className="h-3 w-3" />
+                                                    <span>Comment on</span>
+                                                    <Link
+                                                        href={`/notes/${comment.note_id}`}
+                                                        className="font-semibold text-foreground hover:underline"
+                                                    >
+                                                        {comment.note_title || `Note #${comment.note_id}`}
+                                                    </Link>
+                                                    <span>•</span>
+                                                    <span>{timeAgo(comment.created_at)}</span>
+                                                </div>
+                                                <p className="text-sm line-clamp-3 whitespace-pre-wrap">
+                                                    {comment.body}
+                                                </p>
+                                                <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                                                    <span>{comment.upvotes} upvotes</span>
+                                                    <span>{comment.downvotes} downvotes</span>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    ))}
+                                </div>
                             )}
                         </div>
                     )}
 
                     {/* ─── Posts Tab ─── */}
                     {activeTab === "posts" && (
-                        <div className="space-y-3 px-2">
+                        <div className="space-y-4 px-2">
                             <div className="flex items-center gap-2">
                                 <Label className="text-sm whitespace-nowrap">Filter:</Label>
                                 <Select
@@ -366,43 +416,9 @@ export default function ProfilePage() {
                                 </Card>
                             ) : (
                                 <>
-                                    <div className="space-y-2">
+                                    <div className="space-y-4">
                                         {myNotes.map((note) => (
-                                            <Card key={note.id} className="border-border">
-                                                <CardContent className="flex items-center justify-between p-3">
-                                                    <div className="flex-1 min-w-0">
-                                                        <Link
-                                                            href={`/notes/${note.id}`}
-                                                            className="font-medium text-sm truncate hover:text-primary block"
-                                                        >
-                                                            {note.title}
-                                                        </Link>
-                                                        <p className="text-xs text-muted-foreground">
-                                                            by {note.author} &middot;{" "}
-                                                            {new Date(note.created_at).toLocaleDateString()}
-                                                            {note.price > 0 && (
-                                                                <> &middot; ${(note.price / 100).toFixed(2)}</>
-                                                            )}
-                                                        </p>
-                                                    </div>
-                                                    <div className="flex items-center gap-2 ml-3 shrink-0">
-                                                        {statusBadge(note.status)}
-                                                        {note.has_pdf && note.status === "Approved" && (
-                                                            <Button
-                                                                variant="outline"
-                                                                size="sm"
-                                                                className="h-7 gap-1 text-xs"
-                                                                asChild
-                                                            >
-                                                                <Link href={`/notes/${note.id}`}>
-                                                                    <Eye className="h-3 w-3" />
-                                                                    View
-                                                                </Link>
-                                                            </Button>
-                                                        )}
-                                                    </div>
-                                                </CardContent>
-                                            </Card>
+                                            <NoteCard key={note.id} note={note} />
                                         ))}
                                     </div>
 
@@ -424,6 +440,78 @@ export default function ProfilePage() {
                                                 variant="outline"
                                                 disabled={notesPage >= totalPages}
                                                 onClick={() => setNotesPage((p) => p + 1)}
+                                            >
+                                                Next
+                                            </Button>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ─── Comments Tab ─── */}
+                    {activeTab === "comments" && (
+                        <div className="space-y-4 px-2">
+                            {commentsLoading ? (
+                                <div className="flex justify-center py-8">
+                                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                </div>
+                            ) : myComments.length === 0 ? (
+                                <Card className="border-border p-6 text-center">
+                                    <MessageSquare className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                                    <p className="text-sm text-muted-foreground">
+                                        You haven&apos;t posted any comments yet.
+                                    </p>
+                                </Card>
+                            ) : (
+                                <>
+                                    <div className="space-y-3">
+                                        {myComments.map((comment) => (
+                                            <Card key={comment.id} className="border-border">
+                                                <CardContent className="p-3">
+                                                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+                                                        <MessageSquare className="h-3 w-3" />
+                                                        <span>Comment on</span>
+                                                        <Link
+                                                            href={`/notes/${comment.note_id}`}
+                                                            className="font-semibold text-foreground hover:underline"
+                                                        >
+                                                            {comment.note_title || `Note #${comment.note_id}`}
+                                                        </Link>
+                                                        <span>•</span>
+                                                        <span>{timeAgo(comment.created_at)}</span>
+                                                    </div>
+                                                    <p className="text-sm line-clamp-3 whitespace-pre-wrap">
+                                                        {comment.body}
+                                                    </p>
+                                                    <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                                                        <span>{comment.upvotes} upvotes</span>
+                                                        <span>{comment.downvotes} downvotes</span>
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+                                        ))}
+                                    </div>
+
+                                    {commentsTotalPages > 1 && (
+                                        <div className="flex items-center justify-center gap-2 pt-2">
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={commentsPage <= 1}
+                                                onClick={() => setCommentsPage((p) => p - 1)}
+                                            >
+                                                Previous
+                                            </Button>
+                                            <span className="text-xs text-muted-foreground">
+                                                Page {commentsPage} of {commentsTotalPages}
+                                            </span>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={commentsPage >= commentsTotalPages}
+                                                onClick={() => setCommentsPage((p) => p + 1)}
                                             >
                                                 Next
                                             </Button>

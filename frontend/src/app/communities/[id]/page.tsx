@@ -140,7 +140,7 @@ export default function CommunityDetailPage() {
     if (loading) {
         return (
             <div className="flex">
-                <main className="flex-1 min-w-0 px-4 py-4 space-y-4">
+                <main className="flex-1 min-w-0 px-6 py-4 space-y-4">
                     <Skeleton className="h-32 w-full rounded-lg" />
                     <Skeleton className="h-64 w-full rounded-lg" />
                 </main>
@@ -151,7 +151,7 @@ export default function CommunityDetailPage() {
     if (error || !community) {
         return (
             <div className="flex">
-                <main className="flex-1 min-w-0 px-4 py-4">
+                <main className="flex-1 min-w-0 px-6 py-4">
                     <Card className="p-6 text-center text-destructive">
                         {error || "Community not found"}
                     </Card>
@@ -162,7 +162,8 @@ export default function CommunityDetailPage() {
 
     return (
         <div className="flex">
-            <main className="flex-1 min-w-0 px-4 py-4">
+            <main className="flex-1 min-w-0 px-6 py-4">
+                <div className="max-w-3xl mx-auto">
                 {/* Community header */}
                 <Card className="p-6 mb-4">
                     <div className="flex items-start justify-between">
@@ -228,12 +229,11 @@ export default function CommunityDetailPage() {
                                 No approved notes in this community yet.
                             </Card>
                         ) : (
-                            <div className="space-y-2">
+                            <div className="space-y-4">
                                 {notes.map((note) => (
                                     <NoteCard
                                         key={note.id}
                                         note={note}
-                                        viewMode="card"
                                     />
                                 ))}
                             </div>
@@ -356,6 +356,7 @@ export default function CommunityDetailPage() {
                         </TabsContent>
                     )}
                 </Tabs>
+                </div>
             </main>
             <RightSidebar />
         </div>

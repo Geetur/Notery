@@ -347,6 +347,12 @@ func (app *App) ApproveNote(c *gin.Context) {
 		noteLog.Log("APPROVE", "Status updated to Approved", "noteID", note.ID)
 	}
 
+	// Populate SubnoteryName for Meilisearch index
+	var sub models.Subnotery
+	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+		note.SubnoteryName = sub.Name
+	}
+
 	// Index note in Meilisearch for search
 	if err := app.indexNote(*note); err != nil {
 		noteLog.Log("APPROVE", "Failed to index note", "noteID", note.ID, "error", err)

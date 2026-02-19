@@ -19,7 +19,7 @@ interface NoteFeedProps {
 }
 
 export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
-    const { sort, viewMode, setSort } = useFeedStore();
+    const { sort, setSort } = useFeedStore();
     const loadMoreRef = useRef<HTMLDivElement>(null);
 
     // Sync initial sort from route if provided
@@ -106,12 +106,11 @@ export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
                     <p className="text-muted-foreground">No notes yet. Be the first to post!</p>
                 </div>
             ) : (
-                <div className="space-y-2">
+                <div className="space-y-4">
                     {allNotes.map((note) => (
                         <NoteCard
                             key={note.id}
                             note={note}
-                            viewMode={viewMode}
                         />
                     ))}
                 </div>

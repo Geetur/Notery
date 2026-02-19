@@ -5,6 +5,7 @@ import type {
     CommentsListResponse,
     CommentSortOrder,
     CommentVoteResponse,
+    MyCommentsResponse,
     PaginationParams,
 } from "@/types";
 
@@ -71,4 +72,15 @@ export function removeCommentVote(
     commentId: number
 ): Promise<{ message: string }> {
     return apiDelete(`/comments/${commentId}/vote`);
+}
+
+/** GET /me/comments — Own comments (flat, paginated). */
+export function getMyComments(
+    params?: PaginationParams
+): Promise<MyCommentsResponse> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return apiGet(`/me/comments${qs ? `?${qs}` : ""}`);
 }

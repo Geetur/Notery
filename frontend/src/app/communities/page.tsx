@@ -39,7 +39,7 @@ export default function CommunitiesPage() {
 
     return (
         <div className="flex">
-            <main className="flex-1 min-w-0 px-4 py-4">
+            <main className="flex-1 min-w-0 px-6 py-4">
                 <div className="max-w-3xl mx-auto">
                     <h1 className="text-2xl font-bold mb-4">Communities</h1>
                     <p className="text-muted-foreground mb-6">

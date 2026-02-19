@@ -1,6 +1,7 @@
 // page.tsx — Note detail page with Reddit-style layout.
-// Shows note content via in-app PDF viewer, purchase widget in right sidebar, and comment section.
+// Shows note content via in-app PDF viewer with purchase widget integrated into the note card.
 // No download functionality — all viewing is in-app only via the PDFViewer component.
+// Admins see the full PDF for pending notes (not preview). Nobody can purchase pending notes.
 "use client";
 
 import { CommentSection } from "@/components/comments";
@@ -8,7 +9,7 @@ import { VoteButtons } from "@/components/feed/vote-buttons";
 import { PDFViewer } from "@/components/pdf-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -59,7 +60,12 @@ export default function NoteDetailPage() {
 
     const isOwned = purchaseStatus?.purchased === true;
     const isFree = note?.price === 0;
-    const hasFullAccess = isOwned || isFree;
+    const isPending = note?.status === "Pending";
+    // Pending notes are only visible to admins — they always get full access.
+    // Approved notes: full access if owned or free.
+    const hasFullAccess = isPending || isOwned || isFree;
+    // Purchase UI is only shown for approved, non-free, non-owned notes.
+    const isApproved = note?.status === "Approved";
 
     const handlePurchase = async () => {
         if (!isAuthenticated) {
@@ -109,15 +115,10 @@ export default function NoteDetailPage() {
 
     if (isLoading) {
         return (
-            <div className="max-w-[1000px] mx-auto flex gap-4 px-4 py-4">
-                <div className="flex-1 space-y-3">
-                    <Skeleton className="h-8 w-3/4" />
-                    <Skeleton className="h-4 w-1/2" />
-                    <Skeleton className="h-40 w-full" />
-                </div>
-                <div className="hidden lg:block w-80">
-                    <Skeleton className="h-48" />
-                </div>
+            <div className="max-w-4xl mx-auto px-4 py-4 space-y-3">
+                <Skeleton className="h-8 w-3/4" />
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="h-40 w-full" />
             </div>
         );
     }
@@ -134,256 +135,227 @@ export default function NoteDetailPage() {
     }
 
     return (
-        <div className="max-w-[1000px] mx-auto flex gap-4 px-2 md:px-4 py-4">
-            {/* Main content */}
-            <main className="flex-1 min-w-0">
-                {/* Back nav */}
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    className="mb-2 -ml-2 text-muted-foreground"
-                    onClick={() => router.back()}
-                >
-                    <ArrowLeft className="h-4 w-4 mr-1" />
-                    Back
-                </Button>
+        <div className="max-w-4xl mx-auto px-2 md:px-4 py-4">
+            {/* Back nav */}
+            <Button
+                variant="ghost"
+                size="sm"
+                className="mb-2 -ml-2 text-muted-foreground"
+                onClick={() => router.back()}
+            >
+                <ArrowLeft className="h-4 w-4 mr-1" />
+                Back
+            </Button>
 
-                {/* Note card */}
-                <Card className="border-border">
-                    <div className="flex">
-                        {/* Vote column */}
-                        <div className="p-3 pr-0">
-                            <VoteButtons
-                                noteId={note.id}
-                                upvotes={note.upvotes}
-                                downvotes={note.downvotes}
-                            />
+            {/* Note card — single unified card with all content */}
+            <Card className="border-border">
+                <div className="flex">
+                    {/* Vote column */}
+                    <div className="p-3 pr-0">
+                        <VoteButtons
+                            noteId={note.id}
+                            upvotes={note.upvotes}
+                            downvotes={note.downvotes}
+                        />
+                    </div>
+
+                    {/* Content */}
+                    <div className="flex-1 p-3 pl-2">
+                        {/* Meta */}
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                            <Link
+                                href={`/communities/${note.subnotery_id}`}
+                                className="font-semibold text-foreground hover:underline"
+                            >
+                                n/{note.subnotery_name || note.subnotery_id}
+                            </Link>
+                            <span>•</span>
+                            <span>Posted by</span>
+                            <Link
+                                href={`/user/${note.creator_id}`}
+                                className="hover:underline"
+                            >
+                                u/{note.author}
+                            </Link>
+                            <span>•</span>
+                            <span>{timeAgo(note.created_at)}</span>
                         </div>
 
-                        {/* Content */}
-                        <div className="flex-1 p-3 pl-2">
-                            {/* Meta */}
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                                <Link
-                                    href={`/communities/${note.subnotery_id}`}
-                                    className="font-semibold text-foreground hover:underline"
-                                >
-                                    n/{note.subnotery_name || note.subnotery_id}
-                                </Link>
-                                <span>•</span>
-                                <span>Posted by</span>
-                                <Link
-                                    href={`/user/${note.creator_id}`}
-                                    className="hover:underline"
-                                >
-                                    u/{note.author}
-                                </Link>
-                                <span>•</span>
-                                <span>{timeAgo(note.created_at)}</span>
-                            </div>
+                        {/* Title */}
+                        <h1 className="text-xl font-bold text-foreground mb-2">
+                            {note.title}
+                        </h1>
 
-                            {/* Title */}
-                            <h1 className="text-xl font-bold text-foreground mb-2">
-                                {note.title}
-                            </h1>
-
-                            {/* Badges */}
-                            <div className="flex items-center gap-2 mb-4">
-                                <Badge
-                                    variant={note.price === 0 ? "secondary" : "default"}
-                                >
-                                    {formatPrice(note.price)}
+                        {/* Badges */}
+                        <div className="flex items-center gap-2 mb-4">
+                            <Badge
+                                variant={note.price === 0 ? "secondary" : "default"}
+                            >
+                                {formatPrice(note.price)}
+                            </Badge>
+                            {note.has_pdf && (
+                                <Badge variant="outline">
+                                    <FileText className="h-3 w-3 mr-1" />
+                                    PDF — {formatFileSize(note.pdf_size)}
                                 </Badge>
-                                {note.has_pdf && (
-                                    <Badge variant="outline">
-                                        <FileText className="h-3 w-3 mr-1" />
-                                        PDF — {formatFileSize(note.pdf_size)}
-                                    </Badge>
-                                )}
-                                <Badge
-                                    variant="outline"
-                                    className={
-                                        note.status === "Approved"
-                                            ? "border-green-500/50 text-green-500"
-                                            : note.status === "Pending"
-                                                ? "border-yellow-500/50 text-yellow-500"
-                                                : "border-red-500/50 text-red-500"
-                                    }
-                                >
-                                    {note.status}
-                                </Badge>
+                            )}
+                            <Badge
+                                variant="outline"
+                                className={
+                                    note.status === "Approved"
+                                        ? "border-green-500/50 text-green-500"
+                                        : note.status === "Pending"
+                                            ? "border-yellow-500/50 text-yellow-500"
+                                            : "border-red-500/50 text-red-500"
+                                }
+                            >
+                                {note.status}
+                            </Badge>
+                        </div>
+
+                        {/* Description */}
+                        {note.description && (
+                            <p className="text-sm text-muted-foreground leading-relaxed mb-4 whitespace-pre-wrap">
+                                {note.description}
+                            </p>
+                        )}
+
+                        {/* Thumbnail */}
+                        {note.has_thumbnail && note.thumbnail_url && (
+                            <div className="mb-4 rounded-md overflow-hidden border border-border">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={thumbnailUrl(note.id, note.thumbnail_url)}
+                                    alt={`Thumbnail for ${note.title}`}
+                                    className="w-full max-h-[400px] object-contain bg-muted/30"
+                                />
                             </div>
+                        )}
 
-                            {/* Description */}
-                            {note.description && (
-                                <p className="text-sm text-muted-foreground leading-relaxed mb-4 whitespace-pre-wrap">
-                                    {note.description}
-                                </p>
-                            )}
-
-                            {/* Thumbnail */}
-                            {note.has_thumbnail && note.thumbnail_url && (
-                                <div className="mb-4 rounded-md overflow-hidden border border-border">
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                        src={thumbnailUrl(note.id, note.thumbnail_url)}
-                                        alt={`Thumbnail for ${note.title}`}
-                                        className="w-full max-h-[400px] object-contain bg-muted/30"
-                                    />
-                                </div>
-                            )}
-
-                            <Separator className="mb-4" />
-
-                            {/* Content area — in-app PDF viewer */}
-                            {note.has_pdf ? (
-                                hasFullAccess ? (
-                                    <div>
-                                        <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3 mb-4">
-                                            <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
-                                                <CheckCircle className="h-4 w-4" />
-                                                {isOwned
-                                                    ? "You own this note — full access granted"
-                                                    : "This note is free — full access"}
-                                            </div>
+                        {/* Purchase / ownership widget — integrated into the note card */}
+                        {isApproved && (
+                            <div className="mb-4">
+                                {isOwned ? (
+                                    <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3">
+                                        <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
+                                            <CheckCircle className="h-4 w-4" />
+                                            You own this note
+                                            {purchaseStatus?.purchased_at
+                                                ? ` — purchased ${formatDate(purchaseStatus.purchased_at)}`
+                                                : " — full access granted"}
                                         </div>
-                                        <PDFViewer
-                                            noteId={note.id}
-                                            mode="full"
-                                            maxHeight={700}
-                                        />
+                                    </div>
+                                ) : isFree ? (
+                                    <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3">
+                                        <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
+                                            <CheckCircle className="h-4 w-4" />
+                                            This note is free — full access
+                                        </div>
                                     </div>
                                 ) : (
-                                    <div>
-                                        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 mb-4">
-                                            <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 text-sm font-medium">
-                                                <Eye className="h-4 w-4" />
-                                                Preview — purchase to view the full document
+                                    <div className="border border-border rounded-md p-4">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="text-xl font-bold text-foreground">
+                                                    {formatPrice(note.price)}
+                                                </div>
+                                                <div className="text-xs text-muted-foreground space-y-0.5">
+                                                    <div className="flex items-center gap-1">
+                                                        <User className="h-3 w-3" />
+                                                        by {note.author}
+                                                    </div>
+                                                    <div className="flex items-center gap-1">
+                                                        <Clock className="h-3 w-3" />
+                                                        {formatDate(note.created_at)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    className="gap-2"
+                                                    onClick={handlePurchase}
+                                                    disabled={purchasing}
+                                                >
+                                                    {purchasing ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <ShoppingCart className="h-4 w-4" />
+                                                    )}
+                                                    Buy Now
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    className="gap-2"
+                                                    onClick={handleAddToCart}
+                                                    disabled={addingToCart}
+                                                >
+                                                    {addingToCart ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <ShoppingCart className="h-4 w-4" />
+                                                    )}
+                                                    Add to Cart
+                                                </Button>
                                             </div>
                                         </div>
-                                        <PDFViewer
-                                            noteId={note.id}
-                                            mode="preview"
-                                            maxHeight={500}
-                                        />
-                                    </div>
-                                )
-                            ) : (
-                                <div className="bg-muted/50 border border-border rounded-md p-6 text-center">
-                                    <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                                    <p className="text-sm text-muted-foreground">
-                                        No PDF content available for this note.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </Card>
-
-                {/* Comments */}
-                <div className="mt-4">
-                    <Card className="border-border p-4">
-                        <CommentSection noteId={noteId} />
-                    </Card>
-                </div>
-            </main>
-
-            {/* Right sidebar — purchase widget */}
-            <aside className="hidden lg:block w-80 shrink-0">
-                <div className="sticky top-14 space-y-4">
-                    {/* Purchase widget */}
-                    <Card className="border-border">
-                        <CardHeader className="py-3 px-4">
-                            <CardTitle className="text-sm font-semibold">
-                                {isOwned ? "Owned" : "Purchase"}
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="px-4 pb-4 pt-0 space-y-3">
-                            {/* Price */}
-                            <div className="text-2xl font-bold text-foreground">
-                                {formatPrice(note.price)}
-                            </div>
-
-                            {isOwned ? (
-                                <div className="flex items-center gap-2 text-sm text-green-500">
-                                    <CheckCircle className="h-4 w-4" />
-                                    Purchased {purchaseStatus?.purchased_at
-                                        ? formatDate(purchaseStatus.purchased_at)
-                                        : ""}
-                                </div>
-                            ) : (
-                                <>
-                                    <Button
-                                        className="w-full gap-2"
-                                        onClick={handlePurchase}
-                                        disabled={purchasing}
-                                    >
-                                        {purchasing ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                            <ShoppingCart className="h-4 w-4" />
-                                        )}
-                                        {isFree ? "Get for Free" : "Buy Now"}
-                                    </Button>
-                                    {!isFree && (
-                                        <Button
-                                            variant="outline"
-                                            className="w-full gap-2"
-                                            onClick={handleAddToCart}
-                                            disabled={addingToCart}
-                                        >
-                                            {addingToCart ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                                <ShoppingCart className="h-4 w-4" />
-                                            )}
-                                            Add to Cart
-                                        </Button>
-                                    )}
-                                </>
-                            )}
-
-                            <Separator />
-
-                            {/* Note info */}
-                            <div className="space-y-2 text-xs text-muted-foreground">
-                                <div className="flex items-center gap-2">
-                                    <User className="h-3.5 w-3.5" />
-                                    <span>by {note.author}</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <Clock className="h-3.5 w-3.5" />
-                                    <span>{formatDate(note.created_at)}</span>
-                                </div>
-                                {note.has_pdf && (
-                                    <div className="flex items-center gap-2">
-                                        <FileText className="h-3.5 w-3.5" />
-                                        <span>PDF — {formatFileSize(note.pdf_size)}</span>
                                     </div>
                                 )}
                             </div>
-                        </CardContent>
-                    </Card>
+                        )}
 
-                    {/* Viewing info */}
-                    <Card className="border-border">
-                        <CardHeader className="py-3 px-4">
-                            <CardTitle className="text-sm font-semibold">
-                                {hasFullAccess ? "Full Access" : "Preview"}
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="px-4 pb-4 pt-0">
-                            <p className="text-xs text-muted-foreground">
-                                {hasFullAccess
-                                    ? "You have full access to this document. View all pages in the reader above."
-                                    : note.has_pdf
-                                        ? "You can preview the first few pages. Purchase to view the full document."
-                                        : "No preview available for this note."}
-                            </p>
-                        </CardContent>
-                    </Card>
+                        {/* Pending note admin banner */}
+                        {isPending && (
+                            <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 mb-4">
+                                <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 text-sm font-medium">
+                                    <Eye className="h-4 w-4" />
+                                    Admin review — viewing full document
+                                </div>
+                            </div>
+                        )}
+
+                        <Separator className="mb-4" />
+
+                        {/* Content area — in-app PDF viewer */}
+                        {note.has_pdf ? (
+                            hasFullAccess ? (
+                                <PDFViewer
+                                    noteId={note.id}
+                                    mode="full"
+                                    maxHeight={700}
+                                />
+                            ) : (
+                                <div>
+                                    <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 mb-4">
+                                        <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 text-sm font-medium">
+                                            <Eye className="h-4 w-4" />
+                                            Preview — purchase to view the full document
+                                        </div>
+                                    </div>
+                                    <PDFViewer
+                                        noteId={note.id}
+                                        mode="preview"
+                                        maxHeight={500}
+                                    />
+                                </div>
+                            )
+                        ) : (
+                            <div className="bg-muted/50 border border-border rounded-md p-6 text-center">
+                                <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                                <p className="text-sm text-muted-foreground">
+                                    No PDF content available for this note.
+                                </p>
+                            </div>
+                        )}
+                    </div>
                 </div>
-            </aside>
+            </Card>
+
+            {/* Comments */}
+            <div className="mt-4">
+                <Card className="border-border p-4">
+                    <CommentSection noteId={noteId} />
+                </Card>
+            </div>
         </div>
     );
 }

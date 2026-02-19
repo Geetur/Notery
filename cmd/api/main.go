@@ -157,6 +157,7 @@ func main() {
 	readOnly.GET("/me/profile", app.GetMyProfile)
 	readOnly.GET("/orders/:order_id", app.GetOrderStatus)
 	readOnly.GET("/me/notes", app.GetMyNotes)
+	readOnly.GET("/me/comments", app.GetMyComments)
 	readOnly.GET("/bookmarks", app.GetBookmarks)
 	readOnly.GET("/bookmarks/:note_id", app.CheckBookmark)
 

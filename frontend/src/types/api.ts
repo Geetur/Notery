@@ -347,6 +347,23 @@ export interface CommentsListResponse {
     truncated: boolean;
 }
 
+export interface MyComment {
+    id: number;
+    note_id: number;
+    note_title: string;
+    body: string;
+    upvotes: number;
+    downvotes: number;
+    created_at: string;
+}
+
+export interface MyCommentsResponse {
+    comments: MyComment[];
+    total: number;
+    page: number;
+    limit: number;
+}
+
 // ─── Order Status ─────────────────────────────────────────────────────────────
 
 export interface OrderStatusResponse {

@@ -16,7 +16,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { timeAgo } from "@/lib/format";
 import { search } from "@/services/search";
-import { useFeedStore } from "@/stores/feed-store";
 import type {
     CommentSearchResult,
     Note,
@@ -44,7 +43,6 @@ const ALL_PREVIEW_LIMIT = 3;
 function SearchPageContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
-    const { viewMode } = useFeedStore();
     const [query, setQuery] = useState(searchParams.get("q") || "");
     const [type, setType] = useState<SearchType>(
         (searchParams.get("type") as SearchType) || "all"
@@ -237,7 +235,6 @@ function SearchPageContent() {
                     users={allUsers.data}
                     comments={allComments.data}
                     onSwitchTab={setType}
-                    viewMode={viewMode}
                 />
             ) : results.length === 0 ? (
                 <div className="text-center py-12">
@@ -253,8 +250,8 @@ function SearchPageContent() {
                         {searchQuery}&rdquo;
                     </p>
 
-                    <div className="space-y-2">
-                        {type === "notes" && <NoteResults notes={results as Note[]} viewMode={viewMode} />}
+                    <div className="space-y-4">
+                        {type === "notes" && <NoteResults notes={results as Note[]} />}
                         {type === "users" && <UserResults users={results as PublicProfile[]} />}
                         {type === "subnoteries" && <SubnoteryResults subnoteries={results as Subnotery[]} />}
                         {type === "comments" && <CommentResults comments={results as CommentSearchResult[]} />}
@@ -294,10 +291,8 @@ function SearchPageContent() {
 
 function NoteResults({
     notes,
-    viewMode,
 }: {
     notes: Note[];
-    viewMode: string;
 }) {
     return (
         <>
@@ -305,7 +300,6 @@ function NoteResults({
                 <NoteCard
                     key={note.id}
                     note={note}
-                    viewMode={viewMode as "card" | "compact"}
                 />
             ))}
         </>
@@ -411,7 +405,6 @@ interface AllResultsProps {
     users?: { results: PublicProfile[]; total: number };
     comments?: { results: CommentSearchResult[]; total: number };
     onSwitchTab: (type: SearchType) => void;
-    viewMode: string;
 }
 
 function AllResults({
@@ -420,7 +413,6 @@ function AllResults({
     users,
     comments,
     onSwitchTab,
-    viewMode,
 }: AllResultsProps) {
     const sections: {
         key: Exclude<SearchType, "all">;
@@ -499,11 +491,10 @@ function AllResults({
                                 </Button>
                             )}
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-4">
                             {key === "notes" && (
                                 <NoteResults
                                     notes={data.results as Note[]}
-                                    viewMode={viewMode}
                                 />
                             )}
                             {key === "users" && (

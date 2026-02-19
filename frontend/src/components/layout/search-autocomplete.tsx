@@ -108,7 +108,7 @@ export function SearchAutocomplete({ query, visible, onClose }: SearchAutocomple
                                     <div className="min-w-0 flex-1">
                                         <p className="text-sm font-medium truncate">{note.title}</p>
                                         <p className="text-xs text-muted-foreground truncate">
-                                            n/{note.subnotery_name || note.subnotery_id} · by {note.author}
+                                            n/{note.subnotery_name || note.subnotery_id}
                                         </p>
                                     </div>
                                 </Link>

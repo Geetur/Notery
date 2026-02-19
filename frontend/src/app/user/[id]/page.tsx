@@ -13,7 +13,6 @@ import { getUserNotes } from "@/services/notes";
 import { getUserProfile } from "@/services/profile";
 import { useQuery } from "@tanstack/react-query";
 import { FileText } from "lucide-react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
@@ -150,19 +149,7 @@ export default function UserProfilePage() {
                                 </Card>
                             ) : (
                                 notes.slice(0, 5).map((note) => (
-                                    <div key={note.id}>
-                                        <div className="text-xs text-muted-foreground mb-0.5 pl-2">
-                                            <Link
-                                                href={`/communities/${note.subnotery_id}`}
-                                                className="font-semibold text-foreground hover:underline"
-                                            >
-                                                n/{note.subnotery_name || note.subnotery_id}
-                                            </Link>
-                                            <span className="mx-1">&bull;</span>
-                                            Posted by u/{profile.username}
-                                        </div>
-                                        <NoteCard note={note} viewMode="card" />
-                                    </div>
+                                    <NoteCard key={note.id} note={note} />
                                 ))
                             )}
                         </div>
@@ -185,19 +172,7 @@ export default function UserProfilePage() {
                                 </Card>
                             ) : (
                                 notes.map((note) => (
-                                    <div key={note.id}>
-                                        <div className="text-xs text-muted-foreground mb-0.5 pl-2">
-                                            <Link
-                                                href={`/communities/${note.subnotery_id}`}
-                                                className="font-semibold text-foreground hover:underline"
-                                            >
-                                                n/{note.subnotery_name || note.subnotery_id}
-                                            </Link>
-                                            <span className="mx-1">&bull;</span>
-                                            Posted by u/{profile.username}
-                                        </div>
-                                        <NoteCard note={note} viewMode="card" />
-                                    </div>
+                                    <NoteCard key={note.id} note={note} />
                                 ))
                             )}
                         </div>

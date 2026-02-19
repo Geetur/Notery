@@ -8,7 +8,6 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getBookmarks } from "@/services/bookmarks";
 import { useAuthStore } from "@/stores/auth-store";
-import { useFeedStore } from "@/stores/feed-store";
 import type { Note } from "@/types";
 import { useQuery } from "@tanstack/react-query";
 import { Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
@@ -19,7 +18,6 @@ const PAGE_SIZE = 20;
 
 export default function BookmarksPage() {
     const { isAuthenticated } = useAuthStore();
-    const { viewMode } = useFeedStore();
     const router = useRouter();
     const [page, setPage] = useState(1);
 
@@ -90,12 +88,11 @@ export default function BookmarksPage() {
                         </Card>
                     ) : (
                         <>
-                            <div className="space-y-2">
+                            <div className="space-y-4">
                                 {notes.map((note) => (
                                     <NoteCard
                                         key={note.id}
                                         note={note}
-                                        viewMode={viewMode}
                                         bookmarked
                                     />
                                 ))}

@@ -214,6 +214,9 @@ func (app *App) searchNotesDB(c *gin.Context, query string, pag helpers.Paginati
 		return
 	}
 
+	// Populate subnotery names for display
+	app.populateSubnoteryNames(notes)
+
 	searchLog.Log("SEARCH", "notes db results", "query", query, "count", len(notes))
 	c.JSON(http.StatusOK, gin.H{
 		"type":    "notes",

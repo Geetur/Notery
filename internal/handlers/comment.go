@@ -9,6 +9,7 @@
 //	DELETE /comments/:comment_id        Soft-delete own comment (admin: any comment)
 //	POST   /comments/:comment_id/vote   Vote on a comment (+1 upvote, -1 downvote, toggle)
 //	DELETE /comments/:comment_id/vote   Remove vote from a comment
+//	GET    /me/comments                  List own comments (flat, paginated)
 //
 // DESIGN:
 //
@@ -853,6 +854,88 @@ func (app *App) RemoveCommentVote(c *gin.Context) {
 
 	commentLog.Log("UNVOTE", "success", "comment_id", commentID, "user_id", userID)
 	c.JSON(http.StatusOK, gin.H{"message": "Vote removed"})
+}
+
+// ----- GET /me/comments -----
+
+// GetMyComments returns a flat paginated list of the authenticated user's comments.
+// Soft-deleted comments are excluded. Each response includes the note title for context.
+//
+// Query params:
+//
+//	page  — page number (default 1)
+//	limit — page size (default 25, max 100)
+//
+// Route: GET /api/v1/me/comments
+func (app *App) GetMyComments(c *gin.Context) {
+	userID := helpers.GetUserID(c)
+	pag := helpers.ParsePagination(c)
+
+	var total int64
+	if err := app.DB.Model(&models.Comment{}).Where("user_id = ? AND is_deleted = false", userID).Count(&total).Error; err != nil {
+		commentLog.Log("MY_COMMENTS", "count error", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count comments"})
+		return
+	}
+
+	var comments []models.Comment
+	if err := app.DB.Where("user_id = ? AND is_deleted = false", userID).
+		Order("created_at DESC").
+		Offset(pag.Offset).Limit(pag.Limit).
+		Find(&comments).Error; err != nil {
+		commentLog.Log("MY_COMMENTS", "fetch error", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comments"})
+		return
+	}
+
+	// Batch-fetch note titles for context
+	noteIDs := make(map[uint]struct{})
+	for _, cm := range comments {
+		noteIDs[cm.NoteID] = struct{}{}
+	}
+	noteTitles := make(map[uint]string)
+	if len(noteIDs) > 0 {
+		ids := make([]uint, 0, len(noteIDs))
+		for id := range noteIDs {
+			ids = append(ids, id)
+		}
+		var notes []models.Note
+		app.DB.Select("id, title").Where("id IN ?", ids).Find(&notes)
+		for _, n := range notes {
+			noteTitles[uint(n.ID)] = n.Title
+		}
+	}
+
+	type myCommentResponse struct {
+		ID        uint      `json:"id"`
+		NoteID    uint      `json:"note_id"`
+		NoteTitle string    `json:"note_title"`
+		Body      string    `json:"body"`
+		Upvotes   int64     `json:"upvotes"`
+		Downvotes int64     `json:"downvotes"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	results := make([]myCommentResponse, 0, len(comments))
+	for _, cm := range comments {
+		results = append(results, myCommentResponse{
+			ID:        cm.ID,
+			NoteID:    cm.NoteID,
+			NoteTitle: noteTitles[cm.NoteID],
+			Body:      cm.Body,
+			Upvotes:   cm.Upvotes,
+			Downvotes: cm.Downvotes,
+			CreatedAt: cm.CreatedAt,
+		})
+	}
+
+	commentLog.Log("MY_COMMENTS", "success", "user_id", userID, "count", len(results), "total", total)
+	c.JSON(http.StatusOK, gin.H{
+		"comments": results,
+		"total":    total,
+		"page":     pag.Page,
+		"limit":    pag.Limit,
+	})
 }
 
 // ===== TREE-BUILDING INTERNALS =====
