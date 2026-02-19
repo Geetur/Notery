@@ -37,10 +37,10 @@ describe("getCart", () => {
 });
 
 describe("addToCart", () => {
-    it("calls POST /cart with note_id", async () => {
+    it("calls POST /cart with item_id", async () => {
         mockApiPost.mockResolvedValue({ message: "added" });
         await addToCart(5);
-        expect(mockApiPost).toHaveBeenCalledWith("/cart", { note_id: 5 });
+        expect(mockApiPost).toHaveBeenCalledWith("/cart", { item_id: "5" });
     });
 });
 

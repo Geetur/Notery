@@ -22,7 +22,6 @@ import {
     Compass,
     FileText,
     Home,
-    Search,
     ShoppingCart,
     TrendingUp,
     User,
@@ -126,13 +125,6 @@ export function LeftSidebar({ mobile }: LeftSidebarProps) {
                             icon={<Compass className={iconSize} />}
                             label="New"
                             active={pathname === "/new"}
-                            collapsed={isCollapsed}
-                        />
-                        <SidebarLink
-                            href="/search"
-                            icon={<Search className={iconSize} />}
-                            label="Explore"
-                            active={pathname === "/search"}
                             collapsed={isCollapsed}
                         />
                         <SidebarLink

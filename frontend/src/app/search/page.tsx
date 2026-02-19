@@ -48,7 +48,7 @@ function SearchPageContent() {
         (searchParams.get("type") as SearchType) || "all"
     );
     const [sort, setSort] = useState<SearchSort>(
-        (searchParams.get("sort") as SearchSort) || "relevance"
+        (searchParams.get("sort") as SearchSort) || "hot"
     );
     const [page, setPage] = useState(1);
 
@@ -198,11 +198,10 @@ function SearchPageContent() {
                         <SelectValue placeholder="Sort" />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="relevance">Relevance</SelectItem>
-                        <SelectItem value="hot">Hotness</SelectItem>
-                        <SelectItem value="new">Newest</SelectItem>
+                        <SelectItem value="hot">Hot</SelectItem>
+                        <SelectItem value="new">New</SelectItem>
                         <SelectItem value="top">Top</SelectItem>
-                        <SelectItem value="comments">Comments</SelectItem>
+                        <SelectItem value="controversial">Controversial</SelectItem>
                     </SelectContent>
                 </Select>
             </div>

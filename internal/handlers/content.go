@@ -105,8 +105,14 @@ func (app *App) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
 		return AccessSubAdmin
 	}
 
-	// For approved notes, check if user purchased it
+	// For approved notes, check if the note is free or user purchased it
 	if note.Status == models.StatusApproved {
+		// Free notes are accessible to any authenticated user
+		if note.Price == 0 {
+			contentLog.Log("ACCESS_GRANTED", "free note", "user_id", userID, "note_id", note.ID)
+			return AccessPurchased
+		}
+
 		var purchaseCount int64
 		app.DB.Model(&models.Purchase{}).
 			Where("user_id = ? AND note_id = ?", userID, note.ID).

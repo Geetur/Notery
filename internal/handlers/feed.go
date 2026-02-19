@@ -200,6 +200,9 @@ func (app *App) GetHotFeed(c *gin.Context) {
 	// Fetch full note data from database
 	notes := app.fetchNotes(noteIDs)
 
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
 	// Populate user votes if authenticated
 	if authenticated {
 		app.populateUserVotes(userID, notes)
@@ -343,6 +346,40 @@ func (app *App) populateSubnoteryNames(notes []models.Note) {
 	// Populate
 	for i := range notes {
 		notes[i].SubnoteryName = nameMap[notes[i].SubnoteryID]
+	}
+}
+
+// populateCommentCounts batch-fetches comment counts for a slice of notes
+// and populates the CommentCount field on each note.
+func (app *App) populateCommentCounts(notes []models.Note) {
+	if len(notes) == 0 {
+		return
+	}
+	noteIDs := make([]uint, 0, len(notes))
+	for _, n := range notes {
+		noteIDs = append(noteIDs, n.ID)
+	}
+
+	type countRow struct {
+		NoteID uint
+		Cnt    int
+	}
+	var rows []countRow
+	if err := app.DB.Model(&models.Comment{}).
+		Select("note_id, COUNT(*) as cnt").
+		Where("note_id IN ?", noteIDs).
+		Group("note_id").
+		Scan(&rows).Error; err != nil {
+		feedLog.Log("HELPER", "failed to batch-fetch comment counts", "error", err)
+		return
+	}
+
+	countMap := make(map[uint]int, len(rows))
+	for _, r := range rows {
+		countMap[r.NoteID] = r.Cnt
+	}
+	for i := range notes {
+		notes[i].CommentCount = countMap[notes[i].ID]
 	}
 }
 

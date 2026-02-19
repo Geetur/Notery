@@ -167,7 +167,7 @@ func TestControversyScoreOrdering(t *testing.T) {
 func TestValidSortOrderAccepted(t *testing.T) {
 	valid := []CommentSortOrder{
 		SortBest, SortNew, SortTop,
-		SortControversial, SortOld,
+		SortControversial, SortOld, SortHot,
 	}
 	for _, s := range valid {
 		if !ValidSortOrder(s) {
@@ -177,7 +177,7 @@ func TestValidSortOrderAccepted(t *testing.T) {
 }
 
 func TestValidSortOrderRejected(t *testing.T) {
-	invalid := []CommentSortOrder{"", "random", "hot", "rising", "BEST"}
+	invalid := []CommentSortOrder{"", "random", "rising", "BEST"}
 	for _, s := range invalid {
 		if ValidSortOrder(s) {
 			t.Errorf("ValidSortOrder(%q) = true, want false", s)

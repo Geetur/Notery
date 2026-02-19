@@ -40,18 +40,18 @@ export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
         isError,
         error,
     } = useInfiniteQuery({
-        queryKey: ["feed", sort, sort === "top" || sort === "new" ? timeFilter : null],
+        queryKey: ["feed", sort, (sort === "top" || sort === "controversial") ? timeFilter : null],
         queryFn: async ({ pageParam = 1 }) => {
             if (sort === "hot") {
                 return getHotFeed({ page: pageParam, limit: 25 });
             }
-            // For "new", "top", and any other sort: use the approved notes endpoint
-            // with the sort param. Time filter only applies to "top".
+            // For "new", "top", "controversial": use the approved notes endpoint.
+            // Time filter applies to "top" and "controversial".
             return getApprovedNotes({
                 page: pageParam,
                 limit: 25,
                 sort: sort,
-                time: sort === "top" ? timeFilter : undefined,
+                time: (sort === "top" || sort === "controversial") ? timeFilter : undefined,
             });
         },
         getNextPageParam: (lastPage, allPages) => {

@@ -163,7 +163,7 @@ func (app *App) GetNoteComments(c *gin.Context) {
 	// ----- PHASE 1: Fetch only roots for this page with DB-level sort + pagination -----
 	rootQuery := app.DB.Where("note_id = ? AND parent_id IS NULL", noteID)
 	switch sortOrder {
-	case models.SortBest:
+	case models.SortBest, models.SortHot:
 		rootQuery = rootQuery.Order("score DESC, created_at ASC, id ASC")
 	case models.SortNew:
 		rootQuery = rootQuery.Order("created_at DESC, id DESC")
@@ -1039,7 +1039,7 @@ func sortTree(nodes []*CommentResponse, order models.CommentSortOrder) {
 // sortSlice sorts a single level of CommentResponse by the given order.
 func sortSlice(nodes []*CommentResponse, order models.CommentSortOrder) {
 	switch order {
-	case models.SortBest:
+	case models.SortBest, models.SortHot:
 		sort.SliceStable(nodes, func(i, j int) bool {
 			if nodes[i].Score == nodes[j].Score {
 				return olderFirst(nodes[i], nodes[j])

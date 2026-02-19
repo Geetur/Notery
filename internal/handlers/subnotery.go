@@ -235,6 +235,9 @@ func (app *App) GetSubnoteryDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"id":           subnotery.ID,
 		"name":         subnotery.Name,
+		"description":  subnotery.Description,
+		"content_type": subnotery.ContentType,
+		"rules":        subnotery.Rules,
 		"admins":       admins,
 		"member_count": len(subnotery.Members),
 		"created_at":   subnotery.CreatedAt,
@@ -317,6 +320,9 @@ func (app *App) GetSubnoteryNotes(c *gin.Context) {
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
 
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
 	// Populate user votes if authenticated (endpoint is public, so check optionally)
 	if userID, authenticated := helpers.TryGetUserID(c); authenticated {
 		app.populateUserVotes(userID, notes)
@@ -327,5 +333,90 @@ func (app *App) GetSubnoteryNotes(c *gin.Context) {
 		"total": total,
 		"page":  pag.Page,
 		"limit": pag.Limit,
+	})
+}
+
+// UpdateSubnoterySettings allows admins to update a subnotery's description,
+// content type, and rules.
+//
+// Only subnotery admins and global admins can update settings.
+//
+// Route: PATCH /api/v1/subnoteries/:subnotery_id/settings
+func (app *App) UpdateSubnoterySettings(c *gin.Context) {
+	subnoteryLog.Log("SETTINGS", "Processing update settings request")
+
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+
+	userID := helpers.GetUserID(c)
+
+	// Fetch subnotery
+	var subnotery models.Subnotery
+	if err := app.DB.First(&subnotery, subnoteryID).Error; err != nil {
+		subnoteryLog.Log("SETTINGS", "Subnotery not found", "subnoteryID", subnoteryID, "error", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
+		return
+	}
+
+	// Check admin permission: global admin or subnotery admin
+	var user models.User
+	if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+		return
+	}
+	isAllowed := user.IsGlobalAdmin
+	if !isAllowed {
+		var adminCount int64
+		app.DB.Table("user_admins").
+			Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
+			Count(&adminCount)
+		isAllowed = adminCount > 0
+	}
+	if !isAllowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can update subnotery settings"})
+		return
+	}
+
+	// Bind request
+	var req struct {
+		Description *string `json:"description"`
+		ContentType *string `json:"content_type"`
+		Rules       *string `json:"rules"`
+	}
+	if !helpers.BindJSON(c, &req) {
+		return
+	}
+
+	// Apply updates
+	updates := map[string]interface{}{}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.ContentType != nil {
+		updates["content_type"] = *req.ContentType
+	}
+	if req.Rules != nil {
+		updates["rules"] = *req.Rules
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		return
+	}
+
+	if err := app.DB.Model(&subnotery).Updates(updates).Error; err != nil {
+		subnoteryLog.Log("SETTINGS", "Failed to update settings", "subnoteryID", subnoteryID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings"})
+		return
+	}
+
+	subnoteryLog.Log("SETTINGS", "Settings updated", "subnoteryID", subnoteryID)
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Settings updated successfully",
+		"description":  subnotery.Description,
+		"content_type": subnotery.ContentType,
+		"rules":        subnotery.Rules,
 	})
 }

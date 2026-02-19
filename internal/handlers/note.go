@@ -462,11 +462,17 @@ func (app *App) GetNoteByID(c *gin.Context) {
 		note.SubnoteryName = sub.Name
 	}
 
-	// Populate user vote
+	// Populate user vote and comment count
 	viewerID := helpers.GetUserID(c)
 	notes := []models.Note{*note}
 	app.populateUserVotes(viewerID, notes)
+	app.populateCommentCounts(notes)
 	note.UserVote = notes[0].UserVote
+	note.CommentCount = notes[0].CommentCount
+
+	// Determine if the requesting user has full PDF access (creator, admin, or purchased/free).
+	access := app.CheckNoteAccess(viewerID, note)
+	note.HasFullAccess = (access != AccessNone)
 
 	c.JSON(http.StatusOK, note)
 }
@@ -610,6 +616,9 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
 
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
 	// Populate user votes for the current user
 	userID := helpers.GetUserID(c)
 	app.populateUserVotes(userID, notes)
@@ -671,6 +680,9 @@ func (app *App) GetMyNotes(c *gin.Context) {
 
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
+
+	// Populate comment counts
+	app.populateCommentCounts(notes)
 
 	// Populate user votes
 	app.populateUserVotes(userID, notes)
@@ -761,6 +773,9 @@ func (app *App) GetUserNotes(c *gin.Context) {
 
 	// Populate subnotery names
 	app.populateSubnoteryNames(notes)
+
+	// Populate comment counts
+	app.populateCommentCounts(notes)
 
 	// Populate user votes if viewer is authenticated
 	if viewerID, authenticated := helpers.TryGetUserID(c); authenticated {

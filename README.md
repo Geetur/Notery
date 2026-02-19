@@ -285,7 +285,7 @@ npm run dev
 # → http://localhost:3000
 ```
 
-## API Endpoints (57 routes)
+## API Endpoints (58 routes)
 
 ### Public (17 routes)
 
@@ -341,7 +341,7 @@ npm run dev
 | GET | `/api/v1/orders/:order_id` | Order status |
 | GET | `/api/v1/me/notes` | Own created notes (paginated, filterable by status) |
 
-### Verified — Requires JWT + verified email (20 routes)
+### Verified — Requires JWT + verified email (21 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -365,6 +365,7 @@ npm run dev
 | DELETE | `/api/v1/comments/:comment_id/vote` | Remove comment vote |
 | POST | `/api/v1/orders/:order_id/confirm` | Manual order reconciliation |
 | POST | `/api/v1/subnoteries/:id/join` | Join subnotery |
+| PATCH | `/api/v1/subnoteries/:id/settings` | Update subnotery settings (admin only) |
 
 ### Admin — Global or Subnotery-Scoped (7 routes)
 

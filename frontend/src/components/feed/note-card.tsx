@@ -1,16 +1,24 @@
 // note-card.tsx — Reddit-style expanded post card for the feed.
 // Unified card layout matching the note detail page style: vote buttons on left,
 // meta line, title, badges (price, PDF, status), description, and large thumbnail.
+// Admins see a three-dot menu to delete notes from a subnotery.
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { formatFileSize, formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
 import { addBookmark, removeBookmark } from "@/services/bookmarks";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Note, ViewMode } from "@/types";
-import { Bookmark, BookmarkCheck, CheckCircle, FileText, Lock, MessageSquare } from "lucide-react";
+import { Bookmark, BookmarkCheck, CheckCircle, FileText, Lock, MessageSquare, MoreVertical, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { VoteButtons } from "./vote-buttons";
@@ -21,9 +29,13 @@ interface NoteCardProps {
     viewMode?: ViewMode;
     purchased?: boolean;
     bookmarked?: boolean;
+    /** If true, shows admin controls (delete). */
+    isAdmin?: boolean;
+    /** Called when admin deletes the note. */
+    onDelete?: (noteId: number) => void;
 }
 
-export function NoteCard({ note, purchased, bookmarked: initialBookmarked }: NoteCardProps) {
+export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdmin, onDelete }: NoteCardProps) {
     const { isAuthenticated } = useAuthStore();
     const { toast } = useToast();
     const [bookmarked, setBookmarked] = useState(initialBookmarked ?? false);
@@ -69,22 +81,46 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked }: Not
                 <div className="flex-1 min-w-0 p-3 pl-2">
                     {/* Meta line */}
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-                        <Link
-                            href={`/communities/${note.subnotery_id}`}
-                            className="font-semibold text-foreground hover:underline"
-                        >
-                            n/{note.subnotery_name || note.subnotery_id}
-                        </Link>
-                        <span>•</span>
-                        <span>Posted by</span>
-                        <Link
-                            href={`/user/${note.creator_id}`}
-                            className="hover:underline"
-                        >
-                            u/{note.author}
-                        </Link>
-                        <span>•</span>
-                        <span>{timeAgo(note.created_at)}</span>
+                        <div className="flex-1 flex items-center gap-1.5 min-w-0">
+                            <Link
+                                href={`/communities/${note.subnotery_id}`}
+                                className="font-semibold text-foreground hover:underline"
+                            >
+                                n/{note.subnotery_name || note.subnotery_id}
+                            </Link>
+                            <span>•</span>
+                            <span>Posted by</span>
+                            <Link
+                                href={`/user/${note.creator_id}`}
+                                className="hover:underline"
+                            >
+                                u/{note.author}
+                            </Link>
+                            <span>•</span>
+                            <span>{timeAgo(note.created_at)}</span>
+                        </div>
+                        {isAdmin && onDelete && (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0">
+                                        <MoreVertical className="h-3.5 w-3.5" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                        className="text-destructive focus:text-destructive"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            onDelete(note.id);
+                                        }}
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                        Delete Note
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        )}
                     </div>
 
                     {/* Title */}
@@ -167,7 +203,7 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked }: Not
                             className="flex items-center gap-1 hover:text-foreground transition-colors"
                         >
                             <MessageSquare className="h-3.5 w-3.5" />
-                            Comments
+                            {note.comment_count > 0 ? `${note.comment_count} Comments` : "Comments"}
                         </Link>
 
                         <button

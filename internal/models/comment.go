@@ -48,12 +48,15 @@ const (
 
 	// SortOld ranks by creation time, oldest first.
 	SortOld CommentSortOrder = "old"
+
+	// SortHot is an alias for SortBest — exposed under "hot" for UI consistency.
+	SortHot CommentSortOrder = "hot"
 )
 
 // ValidSortOrder returns true if the given sort order is recognized.
 func ValidSortOrder(s CommentSortOrder) bool {
 	switch s {
-	case SortBest, SortNew, SortTop, SortControversial, SortOld:
+	case SortBest, SortNew, SortTop, SortControversial, SortOld, SortHot:
 		return true
 	}
 	return false

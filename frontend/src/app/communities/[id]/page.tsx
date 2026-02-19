@@ -1,5 +1,5 @@
 // page.tsx — Community (subnotery) detail page.
-// Shows community info, approved notes, and admin controls (pending notes).
+// Shows community info, approved notes, and admin controls (pending notes + settings).
 "use client";
 
 import { NoteCard } from "@/components/feed";
@@ -12,8 +12,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { timeAgo } from "@/lib/format";
-import { approveNote, getPendingNotes, rejectNote } from "@/services/notes";
-import { getSubnotery, getSubnoteryNotes, joinSubnotery } from "@/services/subnoteries";
+import { approveNote, deleteNote, getPendingNotes, rejectNote } from "@/services/notes";
+import { getSubnotery, getSubnoteryNotes, joinSubnotery, updateSubnoterySettings } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useFeedStore } from "@/stores/feed-store";
 import type { Note, SubnoteryDetail } from "@/types";
@@ -23,6 +23,7 @@ import {
     ChevronRight,
     Eye,
     FileText,
+    Settings,
     Shield,
     Users,
     XCircle,
@@ -50,6 +51,12 @@ export default function CommunityDetailPage() {
     const [joining, setJoining] = useState(false);
     const [activeTab, setActiveTab] = useState("notes");
 
+    // Settings form state (admin only)
+    const [settingsDescription, setSettingsDescription] = useState("");
+    const [settingsContentType, setSettingsContentType] = useState("");
+    const [settingsRules, setSettingsRules] = useState("");
+    const [savingSettings, setSavingSettings] = useState(false);
+
     const isAdmin =
         user &&
         community?.admins?.some((a) => a.id === user.id);
@@ -63,7 +70,12 @@ export default function CommunityDetailPage() {
         }
         setLoading(true);
         getSubnotery(communityId)
-            .then((data) => setCommunity(data))
+            .then((data) => {
+                setCommunity(data);
+                setSettingsDescription(data.description || "");
+                setSettingsContentType(data.content_type || "");
+                setSettingsRules(data.rules || "");
+            })
             .catch((err) => setError(err.message || "Failed to load community"))
             .finally(() => setLoading(false));
     }, [communityId]);
@@ -75,7 +87,7 @@ export default function CommunityDetailPage() {
             page: notesPage,
             limit: PAGE_SIZE,
             sort: sort,
-            time: sort === "top" ? timeFilter : undefined,
+            time: (sort === "top" || sort === "controversial") ? timeFilter : undefined,
         })
             .then((res) => {
                 setNotes(res.notes ?? []);
@@ -124,7 +136,7 @@ export default function CommunityDetailPage() {
                 page: notesPage,
                 limit: PAGE_SIZE,
                 sort: sort,
-                time: sort === "top" ? timeFilter : undefined,
+                time: (sort === "top" || sort === "controversial") ? timeFilter : undefined,
             })
                 .then((res) => {
                     setNotes(res.notes ?? []);
@@ -145,6 +157,49 @@ export default function CommunityDetailPage() {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Failed to reject";
             toast({ title: "Error", description: msg, variant: "destructive" });
+        }
+    };
+
+    const handleDeleteNote = async (noteId: number) => {
+        if (!confirm("Are you sure you want to delete this note? This cannot be undone.")) return;
+        try {
+            await deleteNote(noteId);
+            toast({ title: "Deleted", description: "Note has been deleted." });
+            // Refresh approved notes
+            getSubnoteryNotes(communityId, {
+                page: notesPage,
+                limit: PAGE_SIZE,
+                sort: sort,
+                time: (sort === "top" || sort === "controversial") ? timeFilter : undefined,
+            })
+                .then((res) => {
+                    setNotes(res.notes ?? []);
+                    setNotesTotal(res.total);
+                })
+                .catch(() => { });
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to delete";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        }
+    };
+
+    const handleSaveSettings = async () => {
+        setSavingSettings(true);
+        try {
+            await updateSubnoterySettings(communityId, {
+                description: settingsDescription,
+                content_type: settingsContentType,
+                rules: settingsRules,
+            });
+            toast({ title: "Saved", description: "Community settings updated." });
+            // Refresh community data
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to save";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setSavingSettings(false);
         }
     };
 
@@ -233,6 +288,12 @@ export default function CommunityDetailPage() {
                                     Pending ({pendingNotes.length})
                                 </TabsTrigger>
                             )}
+                            {isAdmin && (
+                                <TabsTrigger value="settings">
+                                    <Settings className="h-3.5 w-3.5 mr-1" />
+                                    Settings
+                                </TabsTrigger>
+                            )}
                         </TabsList>
 
                         {/* Approved notes tab */}
@@ -248,6 +309,8 @@ export default function CommunityDetailPage() {
                                         <NoteCard
                                             key={note.id}
                                             note={note}
+                                            isAdmin={!!isAdmin}
+                                            onDelete={handleDeleteNote}
                                         />
                                     ))}
                                 </div>
@@ -369,10 +432,66 @@ export default function CommunityDetailPage() {
                                 )}
                             </TabsContent>
                         )}
+
+                        {/* Settings tab (admin only) */}
+                        {isAdmin && (
+                            <TabsContent value="settings" className="mt-4">
+                                <Card className="p-6 space-y-4">
+                                    <h3 className="text-lg font-semibold">Community Settings</h3>
+
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Description</label>
+                                        <textarea
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[80px] resize-y"
+                                            placeholder="Describe this community..."
+                                            value={settingsDescription}
+                                            onChange={(e) => setSettingsDescription(e.target.value)}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Content Type</label>
+                                        <input
+                                            type="text"
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                            placeholder="e.g. PDF Notes, Lecture Summaries"
+                                            value={settingsContentType}
+                                            onChange={(e) => setSettingsContentType(e.target.value)}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Community Rules</label>
+                                        <textarea
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[120px] resize-y"
+                                            placeholder="Enter community rules (one per line)..."
+                                            value={settingsRules}
+                                            onChange={(e) => setSettingsRules(e.target.value)}
+                                        />
+                                    </div>
+
+                                    <Button
+                                        onClick={handleSaveSettings}
+                                        disabled={savingSettings}
+                                    >
+                                        {savingSettings ? "Saving..." : "Save Settings"}
+                                    </Button>
+                                </Card>
+                            </TabsContent>
+                        )}
                     </Tabs>
                 </div>
             </main>
-            <RightSidebar />
+            <RightSidebar
+                subnotery={community ? {
+                    name: community.name,
+                    description: community.description,
+                    content_type: community.content_type,
+                    rules: community.rules,
+                    member_count: community.member_count,
+                    created_at: community.created_at,
+                } : undefined}
+            />
         </div>
     );
 }

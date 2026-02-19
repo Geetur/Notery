@@ -198,6 +198,7 @@ func main() {
 	// Orders & Subnoteries
 	write.POST("/orders/:order_id/confirm", app.ConfirmOrder)
 	write.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
+	write.PATCH("/subnoteries/:subnotery_id/settings", app.UpdateSubnoterySettings)
 
 	// Bookmarks
 	write.POST("/bookmarks/:note_id", app.AddBookmark)

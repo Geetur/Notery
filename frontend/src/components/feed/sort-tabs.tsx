@@ -12,12 +12,13 @@ import {
 import { cn } from "@/lib/utils";
 import { useFeedStore } from "@/stores/feed-store";
 import type { FeedSort, TimeFilter } from "@/types";
-import { Clock, Flame, TrendingUp } from "lucide-react";
+import { Clock, Flame, Scale, TrendingUp } from "lucide-react";
 
 const SORT_OPTIONS: { value: FeedSort; label: string; icon: React.ReactNode }[] = [
     { value: "hot", label: "Hot", icon: <Flame className="h-4 w-4" /> },
     { value: "new", label: "New", icon: <Clock className="h-4 w-4" /> },
     { value: "top", label: "Top", icon: <TrendingUp className="h-4 w-4" /> },
+    { value: "controversial", label: "Controversial", icon: <Scale className="h-4 w-4" /> },
 ];
 
 const TIME_OPTIONS: { value: TimeFilter; label: string }[] = [
@@ -53,8 +54,8 @@ export function SortTabs() {
                 ))}
             </div>
 
-            {/* Time filter (only for Top sort) */}
-            {sort === "top" && (
+            {/* Time filter (for Top and Controversial sorts) */}
+            {(sort === "top" || sort === "controversial") && (
                 <Select
                     value={timeFilter}
                     onValueChange={(v) => setTimeFilter(v as TimeFilter)}

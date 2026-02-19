@@ -1,5 +1,5 @@
 // subnoteries.ts — Subnotery API service.
-import { apiGet, apiPost } from "@/lib/api-client";
+import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import type {
     NotesListResponse,
     PaginationParams,
@@ -50,4 +50,12 @@ export function addAdminToSubnotery(
     userId: number
 ): Promise<{ message: string }> {
     return apiPost(`/subnoteries/${subnoteryId}/admins`, { user_id: userId });
+}
+
+/** PATCH /subnoteries/:id/settings — Update subnotery settings (admin only). */
+export function updateSubnoterySettings(
+    subnoteryId: number,
+    settings: { description?: string; content_type?: string; rules?: string }
+): Promise<{ message: string }> {
+    return apiPatch(`/subnoteries/${subnoteryId}/settings`, settings);
 }

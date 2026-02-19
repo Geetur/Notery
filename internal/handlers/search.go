@@ -57,17 +57,18 @@ func validSearchType(t SearchType) bool {
 type SearchSort string
 
 const (
-	SortRelevance SearchSort = "relevance"
-	SortHot       SearchSort = "hot"
-	SortNew       SearchSort = "new"
-	SortTop       SearchSort = "top"
-	SortComments  SearchSort = "comments"
+	SortRelevance     SearchSort = "relevance"
+	SortHot           SearchSort = "hot"
+	SortNew           SearchSort = "new"
+	SortTop           SearchSort = "top"
+	SortComments      SearchSort = "comments"
+	SortControversial SearchSort = "controversial"
 )
 
 // validSearchSort returns true if the given sort option is recognized.
 func validSearchSort(s SearchSort) bool {
 	switch s {
-	case SortRelevance, SortHot, SortNew, SortTop, SortComments:
+	case SortRelevance, SortHot, SortNew, SortTop, SortComments, SortControversial:
 		return true
 	}
 	return false
@@ -133,8 +134,8 @@ func (app *App) SearchAll(c *gin.Context) {
 // DB: Meilisearch (default) or PostgreSQL (comment-count fallback).
 // Technologies: Meilisearch (offset/limit pagination), GORM.
 func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
-	// Comment-count sort requires a DB subquery — fall back to DB search.
-	if sort == SortComments {
+	// Comment-count and controversial sorts require DB computation — fall back to DB search.
+	if sort == SortComments || sort == SortControversial {
 		app.searchNotesDB(c, query, pag, sort)
 		return
 	}
@@ -202,7 +203,9 @@ func (app *App) searchNotesDB(c *gin.Context, query string, pag helpers.Paginati
 	case SortNew:
 		q = q.Order("created_at DESC")
 	case SortTop:
-		q = q.Order("upvotes DESC")
+		q = q.Order("(upvotes - downvotes) DESC")
+	case SortControversial:
+		q = q.Order("(upvotes + downvotes) * 1.0 / CASE WHEN ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) < 1 THEN 1 ELSE ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) END DESC, created_at DESC")
 	default:
 		q = q.Order("created_at DESC")
 	}
@@ -216,6 +219,9 @@ func (app *App) searchNotesDB(c *gin.Context, query string, pag helpers.Paginati
 
 	// Populate subnotery names for display
 	app.populateSubnoteryNames(notes)
+
+	// Populate comment counts
+	app.populateCommentCounts(notes)
 
 	searchLog.Log("SEARCH", "notes db results", "query", query, "count", len(notes))
 	c.JSON(http.StatusOK, gin.H{

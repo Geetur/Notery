@@ -22,7 +22,7 @@ export function search<T = unknown>(params: SearchParams): Promise<SearchRespons
     const query = new URLSearchParams();
     query.set("q", params.q);
     query.set("type", params.type);
-    if (params.sort && params.sort !== "relevance") query.set("sort", params.sort);
+    if (params.sort) query.set("sort", params.sort);
     if (params.page) query.set("page", String(params.page));
     if (params.limit) query.set("limit", String(params.limit));
     return apiGet(`/search?${query.toString()}`);

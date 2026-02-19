@@ -8,9 +8,9 @@ export type NoteStatus = "Pending" | "Approved" | "Rejected";
 export type VoteDirection = "up" | "down";
 export type OrderStatus = "pending" | "paid" | "fulfilled" | "failed" | "refunded";
 export type ProfileVisibility = "public" | "private";
-export type CommentSortOrder = "best" | "new" | "top" | "controversial" | "old";
+export type CommentSortOrder = "hot" | "new" | "top" | "controversial";
 export type SearchType = "notes" | "subnoteries" | "users" | "comments" | "all";
-export type SearchSort = "relevance" | "hot" | "new" | "top" | "comments";
+export type SearchSort = "hot" | "new" | "top" | "controversial";
 
 // ─── Domain Models ────────────────────────────────────────────────────────────
 
@@ -34,6 +34,10 @@ export interface Note {
     hotness: number;
     /** Current user's vote direction: "up", "down", or "" (no vote). */
     user_vote: string;
+    /** Total number of comments on this note. */
+    comment_count: number;
+    /** Whether the requesting user has full PDF access (creator, admin, purchased, free). */
+    has_full_access: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -60,6 +64,9 @@ export interface SubnoteryListItem {
 export interface SubnoteryDetail {
     id: number;
     name: string;
+    description: string;
+    content_type: string;
+    rules: string;
     admins: { id: number; username: string }[];
     member_count: number;
     created_at: string;
@@ -395,6 +402,6 @@ export interface PaginationParams {
 
 // ─── Feed Sort (UI-only, not in API) ──────────────────────────────────────────
 
-export type FeedSort = "hot" | "new" | "top";
+export type FeedSort = "hot" | "new" | "top" | "controversial";
 export type TimeFilter = "day" | "week" | "month" | "year" | "all";
 export type ViewMode = "card" | "compact";

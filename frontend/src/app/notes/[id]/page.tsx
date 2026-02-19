@@ -61,10 +61,10 @@ export default function NoteDetailPage() {
     const isOwned = purchaseStatus?.purchased === true;
     const isFree = note?.price === 0;
     const isPending = note?.status === "Pending";
-    // Pending notes are only visible to admins — they always get full access.
-    // Approved notes: full access if owned or free.
-    const hasFullAccess = isPending || isOwned || isFree;
-    // Purchase UI is only shown for approved, non-free, non-owned notes.
+    // Use the backend-computed has_full_access (covers creator, admin, purchased, free).
+    // Fallback to client-side checks for immediate UI display.
+    const hasFullAccess = note?.has_full_access || isPending || isOwned || isFree;
+    // Purchase UI is only shown for approved, non-free, non-owned notes that user doesn't have full access to.
     const isApproved = note?.status === "Approved";
 
     const handlePurchase = async () => {
@@ -252,6 +252,13 @@ export default function NoteDetailPage() {
                                         <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
                                             <CheckCircle className="h-4 w-4" />
                                             This note is free — full access
+                                        </div>
+                                    </div>
+                                ) : hasFullAccess ? (
+                                    <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3">
+                                        <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
+                                            <CheckCircle className="h-4 w-4" />
+                                            Full access granted
                                         </div>
                                     </div>
                                 ) : (
