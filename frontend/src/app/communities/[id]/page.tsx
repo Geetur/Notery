@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { timeAgo } from "@/lib/format";
 import { approveNote, deleteNote, getPendingNotes, rejectNote } from "@/services/notes";
-import { getSubnotery, getSubnoteryNotes, joinSubnotery, leaveSubnotery, updateSubnoterySettings } from "@/services/subnoteries";
+import { deleteSubnoteryBanner, getSubnotery, getSubnoteryNotes, joinSubnotery, leaveSubnotery, removeAdminFromSubnotery, updateSubnoterySettings, uploadSubnoteryBanner } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useFeedStore } from "@/stores/feed-store";
 import type { Note, SubnoteryDetail } from "@/types";
@@ -23,14 +23,18 @@ import {
     ChevronRight,
     Eye,
     FileText,
+    ImageIcon,
+    Paintbrush,
     Settings,
     Shield,
+    Trash2,
+    Upload,
     Users,
     XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const PAGE_SIZE = 20;
 
@@ -58,7 +62,11 @@ export default function CommunityDetailPage() {
     const [settingsRules, setSettingsRules] = useState("");
     const [settingsMinPostNotoriety, setSettingsMinPostNotoriety] = useState(0);
     const [settingsMinCommentNotoriety, setSettingsMinCommentNotoriety] = useState(0);
+    const [settingsBackgroundColor, setSettingsBackgroundColor] = useState("");
     const [savingSettings, setSavingSettings] = useState(false);
+    const [uploadingBanner, setUploadingBanner] = useState(false);
+    const [removingAdmin, setRemovingAdmin] = useState<number | null>(null);
+    const bannerInputRef = useRef<HTMLInputElement>(null);
 
     const isAdmin =
         user &&
@@ -80,6 +88,7 @@ export default function CommunityDetailPage() {
                 setSettingsRules(data.rules || "");
                 setSettingsMinPostNotoriety(data.min_post_notoriety ?? 0);
                 setSettingsMinCommentNotoriety(data.min_comment_notoriety ?? 0);
+                setSettingsBackgroundColor(data.background_color || "");
             })
             .catch((err) => setError(err.message || "Failed to load community"))
             .finally(() => setLoading(false));
@@ -210,6 +219,7 @@ export default function CommunityDetailPage() {
                 description: settingsDescription,
                 content_type: settingsContentType,
                 rules: settingsRules,
+                background_color: settingsBackgroundColor,
                 min_post_notoriety: settingsMinPostNotoriety,
                 min_comment_notoriety: settingsMinCommentNotoriety,
             });
@@ -226,6 +236,52 @@ export default function CommunityDetailPage() {
     };
 
     const notesTotalPages = Math.ceil(notesTotal / PAGE_SIZE);
+
+    const handleUploadBanner = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setUploadingBanner(true);
+        try {
+            await uploadSubnoteryBanner(communityId, file);
+            toast({ title: "Banner uploaded" });
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to upload banner";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setUploadingBanner(false);
+            if (bannerInputRef.current) bannerInputRef.current.value = "";
+        }
+    };
+
+    const handleDeleteBanner = async () => {
+        try {
+            await deleteSubnoteryBanner(communityId);
+            toast({ title: "Banner removed" });
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to delete banner";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        }
+    };
+
+    const handleRemoveAdmin = async (adminId: number) => {
+        if (!confirm("Remove this user's admin permissions?")) return;
+        setRemovingAdmin(adminId);
+        try {
+            await removeAdminFromSubnotery(communityId, adminId);
+            toast({ title: "Admin removed" });
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to remove admin";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setRemovingAdmin(null);
+        }
+    };
 
     if (loading) {
         return (
@@ -252,59 +308,75 @@ export default function CommunityDetailPage() {
 
     return (
         <div className="flex">
-            <main className="flex-1 min-w-0 px-6 py-4">
+            <main
+                className="flex-1 min-w-0 px-6 py-4"
+                style={community.background_color ? { backgroundColor: community.background_color } : undefined}
+            >
                 <div className="max-w-3xl mx-auto">
                     {/* Community header */}
-                    <Card className="p-6 mb-4">
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <h1 className="text-2xl font-bold">n/{community.name}</h1>
-                                <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                                    <span className="flex items-center gap-1">
-                                        <Users className="h-4 w-4" />
-                                        {community.member_count}{" "}
-                                        {community.member_count === 1 ? "member" : "members"}
-                                    </span>
-                                    <span>
-                                        Created {timeAgo(community.created_at)}
-                                    </span>
-                                </div>
-                                <div className="flex items-center gap-2 mt-2">
-                                    <Shield className="h-4 w-4 text-muted-foreground" />
-                                    <span className="text-sm text-muted-foreground">Admins:</span>
-                                    {community.admins.map((admin) => (
-                                        <Badge key={admin.id} variant="secondary">
-                                            {admin.username}
-                                        </Badge>
-                                    ))}
-                                </div>
+                    <Card className="mb-4 overflow-hidden">
+                        {/* Community banner */}
+                        {community.banner_url && (
+                            <div className="relative w-full h-32 bg-muted">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
+                                    alt={`Banner for n/${community.name}`}
+                                    className="w-full h-full object-cover"
+                                />
                             </div>
-                            <div className="flex gap-2">
-                                {user && !isAdmin && (
-                                    community?.is_member ? (
-                                        <Button
-                                            variant="outline"
-                                            onClick={handleLeave}
-                                            disabled={leaving}
-                                        >
-                                            {leaving ? "Leaving..." : "Leave"}
-                                        </Button>
-                                    ) : (
-                                        <Button
-                                            variant="outline"
-                                            onClick={handleJoin}
-                                            disabled={joining}
-                                        >
-                                            {joining ? "Joining..." : "Join"}
-                                        </Button>
-                                    )
-                                )}
-                                {isAdmin && (
-                                    <Badge variant="default" className="h-8 flex items-center">
-                                        <Shield className="h-3 w-3 mr-1" />
-                                        Admin
-                                    </Badge>
-                                )}
+                        )}
+                        <div className="p-6">
+                            <div className="flex items-start justify-between">
+                                <div>
+                                    <h1 className="text-2xl font-bold">n/{community.name}</h1>
+                                    <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                                        <span className="flex items-center gap-1">
+                                            <Users className="h-4 w-4" />
+                                            {community.member_count}{" "}
+                                            {community.member_count === 1 ? "member" : "members"}
+                                        </span>
+                                        <span>
+                                            Created {timeAgo(community.created_at)}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <Shield className="h-4 w-4 text-muted-foreground" />
+                                        <span className="text-sm text-muted-foreground">Admins:</span>
+                                        {community.admins.map((admin) => (
+                                            <Badge key={admin.id} variant="secondary">
+                                                {admin.username}
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="flex gap-2">
+                                    {user && (
+                                        community?.is_member ? (
+                                            <Button
+                                                variant="outline"
+                                                onClick={handleLeave}
+                                                disabled={leaving}
+                                            >
+                                                {leaving ? "Leaving..." : "Leave"}
+                                            </Button>
+                                        ) : (
+                                            <Button
+                                                variant="outline"
+                                                onClick={handleJoin}
+                                                disabled={joining}
+                                            >
+                                                {joining ? "Joining..." : "Join"}
+                                            </Button>
+                                        )
+                                    )}
+                                    {isAdmin && (
+                                        <Badge variant="default" className="h-8 flex items-center">
+                                            <Shield className="h-3 w-3 mr-1" />
+                                            Admin
+                                        </Badge>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </Card>
@@ -531,12 +603,134 @@ export default function CommunityDetailPage() {
                                         </div>
                                     </div>
 
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1 flex items-center gap-1">
+                                            <Paintbrush className="h-3.5 w-3.5" /> Background Color
+                                        </label>
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="color"
+                                                value={settingsBackgroundColor || "#000000"}
+                                                onChange={(e) => setSettingsBackgroundColor(e.target.value)}
+                                                className="h-9 w-14 rounded border border-border cursor-pointer"
+                                            />
+                                            <input
+                                                type="text"
+                                                className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                                                placeholder="#000000"
+                                                maxLength={7}
+                                                value={settingsBackgroundColor}
+                                                onChange={(e) => setSettingsBackgroundColor(e.target.value)}
+                                            />
+                                            {settingsBackgroundColor && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-8 text-xs text-muted-foreground"
+                                                    onClick={() => setSettingsBackgroundColor("")}
+                                                >
+                                                    Reset to default
+                                                </Button>
+                                            )}
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1">Custom background colour for the content area. Leave empty for the default theme.</p>
+                                    </div>
+
                                     <Button
                                         onClick={handleSaveSettings}
                                         disabled={savingSettings}
                                     >
                                         {savingSettings ? "Saving..." : "Save Settings"}
                                     </Button>
+                                </Card>
+
+                                {/* Banner management */}
+                                <Card className="p-6 space-y-4 mt-4">
+                                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                                        <ImageIcon className="h-5 w-5" /> Community Banner
+                                    </h3>
+                                    {community?.banner_url ? (
+                                        <div className="space-y-3">
+                                            <div className="relative w-full h-32 rounded-md overflow-hidden border border-border">
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                    src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
+                                                    alt="Current banner"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => bannerInputRef.current?.click()}
+                                                    disabled={uploadingBanner}
+                                                >
+                                                    <Upload className="h-4 w-4 mr-1" />
+                                                    {uploadingBanner ? "Uploading..." : "Replace Banner"}
+                                                </Button>
+                                                <Button
+                                                    variant="destructive"
+                                                    size="sm"
+                                                    onClick={handleDeleteBanner}
+                                                >
+                                                    <Trash2 className="h-4 w-4 mr-1" />
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            <p className="text-sm text-muted-foreground">No banner set.</p>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => bannerInputRef.current?.click()}
+                                                disabled={uploadingBanner}
+                                            >
+                                                <Upload className="h-4 w-4 mr-1" />
+                                                {uploadingBanner ? "Uploading..." : "Upload Banner"}
+                                            </Button>
+                                        </div>
+                                    )}
+                                    <input
+                                        ref={bannerInputRef}
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,image/gif"
+                                        className="hidden"
+                                        onChange={handleUploadBanner}
+                                    />
+                                    <p className="text-xs text-muted-foreground">Max 5 MB. JPEG, PNG, WebP, or GIF.</p>
+                                </Card>
+
+                                {/* Admin management */}
+                                <Card className="p-6 space-y-4 mt-4">
+                                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                                        <Shield className="h-5 w-5" /> Manage Admins
+                                    </h3>
+                                    <div className="space-y-2">
+                                        {community?.admins.map((admin) => (
+                                            <div key={admin.id} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-accent/50">
+                                                <Link href={`/user/${admin.id}`} className="text-sm hover:text-primary">
+                                                    u/{admin.username}
+                                                </Link>
+                                                {admin.id !== user?.id && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-7 text-xs text-destructive hover:text-destructive"
+                                                        onClick={() => handleRemoveAdmin(admin.id)}
+                                                        disabled={removingAdmin === admin.id}
+                                                    >
+                                                        {removingAdmin === admin.id ? "..." : "Remove"}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        You can only remove admins who were added after you.
+                                    </p>
                                 </Card>
                             </TabsContent>
                         )}
@@ -550,6 +744,7 @@ export default function CommunityDetailPage() {
                     content_type: community.content_type,
                     rules: community.rules,
                     member_count: community.member_count,
+                    admins: community.admins,
                     created_at: community.created_at,
                 } : undefined}
             />

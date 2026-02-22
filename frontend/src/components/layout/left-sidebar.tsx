@@ -152,7 +152,7 @@ export function LeftSidebar({ mobile }: LeftSidebarProps) {
                                 <SidebarLink
                                     href="/purchases"
                                     icon={<BookOpen className={iconSize} />}
-                                    label="My Purchases"
+                                    label="My Notes"
                                     active={pathname === "/purchases"}
                                     collapsed={isCollapsed}
                                 />

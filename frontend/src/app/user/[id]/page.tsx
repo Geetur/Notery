@@ -1,5 +1,5 @@
-// page.tsx — Public user profile page: Reddit-style with Overview and Posts tabs.
-// Shows profile banner, avatar, username, bio, joined date, and posted notes.
+// page.tsx — Public user profile page: Reddit-style with Overview, Posts, and Comments tabs.
+// Shows profile banner, avatar, username, bio, joined date, posted notes, and comments.
 // No edit controls — those are only on the own-profile page (/profile).
 "use client";
 
@@ -8,20 +8,23 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { avatarUrl, formatDate } from "@/lib/format";
+import { avatarUrl, formatDate, userBannerUrl } from "@/lib/format";
+import { getUserComments } from "@/services/comments";
 import { getUserNotes } from "@/services/notes";
 import { getUserProfile } from "@/services/profile";
 import { useQuery } from "@tanstack/react-query";
-import { FileText } from "lucide-react";
+import { FileText, MessageSquare } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
-type UserTab = "overview" | "posts";
+type UserTab = "overview" | "posts" | "comments";
 
 export default function UserProfilePage() {
     const params = useParams();
     const userId = Number(params.id);
     const [activeTab, setActiveTab] = useState<UserTab>("overview");
+    const [commentsPage, setCommentsPage] = useState(1);
 
     const {
         data: profile,
@@ -37,6 +40,12 @@ export default function UserProfilePage() {
         queryKey: ["userNotes", userId],
         queryFn: () => getUserNotes(userId, { limit: 25 }),
         enabled: !!userId,
+    });
+
+    const { data: commentsData, isLoading: commentsLoading } = useQuery({
+        queryKey: ["userComments", userId, commentsPage],
+        queryFn: () => getUserComments(userId, { page: commentsPage, limit: 25 }),
+        enabled: !!userId && (activeTab === "comments" || activeTab === "overview"),
     });
 
     if (isLoading) {
@@ -78,13 +87,25 @@ export default function UserProfilePage() {
     const tabs: { key: UserTab; label: string; icon: React.ReactNode }[] = [
         { key: "overview", label: "Overview", icon: null },
         { key: "posts", label: "Posts", icon: <FileText className="h-4 w-4" /> },
+        { key: "comments", label: "Comments", icon: <MessageSquare className="h-4 w-4" /> },
     ];
 
     return (
         <div className="flex">
             <main className="flex-1 min-w-0 px-4 py-0">
                 {/* Profile banner */}
-                <div className="h-28 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/5 -mx-4" />
+                <div className="h-28 -mx-4">
+                    {profile.banner_url ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                            src={userBannerUrl(profile.id, profile.banner_url)}
+                            alt={`${profile.username}'s banner`}
+                            className="w-full h-full object-cover"
+                        />
+                    ) : (
+                        <div className="h-full bg-gradient-to-r from-primary/20 via-primary/10 to-primary/5" />
+                    )}
+                </div>
 
                 <div className="max-w-3xl mx-auto">
                     {/* Avatar + name row */}
@@ -174,6 +195,68 @@ export default function UserProfilePage() {
                                 notes.map((note) => (
                                     <NoteCard key={note.id} note={note} />
                                 ))
+                            )}
+                        </div>
+                    )}
+
+                    {/* ─── Comments Tab ─── */}
+                    {activeTab === "comments" && (
+                        <div className="space-y-2 px-2">
+                            {commentsLoading ? (
+                                <div className="space-y-2">
+                                    {Array.from({ length: 5 }).map((_, i) => (
+                                        <Skeleton key={i} className="h-16 w-full" />
+                                    ))}
+                                </div>
+                            ) : (commentsData?.comments?.length ?? 0) === 0 ? (
+                                <Card className="border-border p-6 text-center">
+                                    <p className="text-sm text-muted-foreground">
+                                        No comments yet.
+                                    </p>
+                                </Card>
+                            ) : (
+                                <>
+                                    {commentsData!.comments.map((comment) => (
+                                        <Card key={comment.id} className="border-border">
+                                            <CardContent className="p-3">
+                                                <Link
+                                                    href={`/notes/${comment.note_id}`}
+                                                    className="text-xs text-muted-foreground hover:text-primary"
+                                                >
+                                                    on {comment.note_title || `Note #${comment.note_id}`}
+                                                </Link>
+                                                <p className="text-sm mt-1">{comment.body}</p>
+                                                <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                                                    <span>▲ {comment.upvotes}</span>
+                                                    <span>▼ {comment.downvotes}</span>
+                                                    <span>{formatDate(comment.created_at)}</span>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    ))}
+
+                                    {commentsData && commentsData.total > commentsData.limit && (
+                                        <div className="flex items-center justify-center gap-2 mt-4">
+                                            <button
+                                                className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                                disabled={commentsPage <= 1}
+                                                onClick={() => setCommentsPage((p) => p - 1)}
+                                            >
+                                                ← Previous
+                                            </button>
+                                            <span className="text-xs text-muted-foreground">
+                                                Page {commentsPage} of {Math.ceil(commentsData.total / commentsData.limit)}
+                                            </span>
+                                            <button
+                                                className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                                disabled={commentsPage >= Math.ceil(commentsData.total / commentsData.limit)}
+                                                onClick={() => setCommentsPage((p) => p + 1)}
+                                            >
+                                                Next →
+                                            </button>
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                     )}

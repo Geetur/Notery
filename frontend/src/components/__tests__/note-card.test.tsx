@@ -77,6 +77,10 @@ function makeNote(overrides: Partial<Note> = {}): Note {
         upvotes: 12,
         downvotes: 3,
         hotness: 42,
+        user_vote: "",
+        comment_count: 0,
+        has_full_access: false,
+        is_locked: false,
         created_at: "2025-01-01T00:00:00Z",
         updated_at: "2025-01-01T00:00:00Z",
         ...overrides,
@@ -144,11 +148,9 @@ describe("NoteCard", () => {
     });
 
     // Status badge colour tests
-    it("shows green Approved status badge", () => {
+    it("does not show Approved status badge", () => {
         render(<NoteCard note={makeNote({ status: "Approved" })} />);
-        const badge = screen.getByText("Approved");
-        expect(badge).toBeInTheDocument();
-        expect(badge.className).toContain("green");
+        expect(screen.queryByText("Approved")).not.toBeInTheDocument();
     });
 
     it("shows yellow Pending status badge", () => {

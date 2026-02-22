@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatDate, formatFileSize, formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
 import { approveNote, getNoteById, rejectNote } from "@/services/notes";
 import { addToCart, checkPurchaseStatus, purchaseNote } from "@/services/purchases";
+import { getSubnotery } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -56,11 +57,21 @@ export default function NoteDetailPage() {
         enabled: !!noteId && isAuthenticated,
     });
 
-    const { data: purchaseStatus, refetch: refetchPurchase } = useQuery({
+    const { data: purchaseStatus } = useQuery({
         queryKey: ["purchaseStatus", noteId],
         queryFn: () => checkPurchaseStatus(noteId),
         enabled: !!noteId && isAuthenticated,
     });
+
+    const { data: subnoteryDetail } = useQuery({
+        queryKey: ["subnotery", note?.subnotery_id],
+        queryFn: () => getSubnotery(note!.subnotery_id),
+        enabled: !!note?.subnotery_id,
+    });
+
+    const isNoteAdmin =
+        currentUser &&
+        subnoteryDetail?.admins?.some((a) => a.id === currentUser.id);
 
     const isOwned = purchaseStatus?.purchased === true;
     const isFree = note?.price === 0;
@@ -78,11 +89,40 @@ export default function NoteDetailPage() {
         }
         setPurchasing(true);
         try {
-            await purchaseNote(noteId);
-            refetchPurchase();
-            toast({ title: "Purchase successful!", description: "You now have full access to this note." });
-        } catch {
-            toast({ title: "Purchase failed", variant: "destructive" });
+            const res = await purchaseNote(noteId);
+
+            // Only mark as purchased if the order was actually fulfilled (dev mode / free note).
+            // If Stripe is active, status will be "pending" — the user must complete payment first.
+            if (res.status === "fulfilled") {
+                // Set purchase status so the UI updates immediately
+                queryClient.setQueryData(["purchaseStatus", noteId], {
+                    purchased: true,
+                    purchased_at: res.purchased_at ?? new Date().toISOString(),
+                });
+
+                // Force refetch note data so has_full_access is recomputed server-side
+                await queryClient.refetchQueries({ queryKey: ["note", noteId], exact: true });
+
+                // Force refetch purchase status to confirm (awaited to prevent race)
+                await queryClient.refetchQueries({ queryKey: ["purchaseStatus", noteId], exact: true });
+
+                // Refresh purchase history (for My Notes / profile)
+                queryClient.invalidateQueries({ queryKey: ["purchaseHistory"] });
+                queryClient.invalidateQueries({ queryKey: ["myPurchases"] });
+
+                toast({ title: "Purchase successful!", description: "You now have full access to this note." });
+            } else if (res.client_secret) {
+                // Stripe payment flow — order created but payment pending
+                toast({
+                    title: "Payment required",
+                    description: "Complete payment to access this note.",
+                });
+            } else {
+                toast({ title: "Purchase initiated", description: "Your order is being processed." });
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Something went wrong";
+            toast({ title: "Purchase failed", description: msg, variant: "destructive" });
         } finally {
             setPurchasing(false);
         }
@@ -93,12 +133,17 @@ export default function NoteDetailPage() {
             router.push("/login");
             return;
         }
+        if (isOwned) {
+            toast({ title: "Already purchased", description: "You already own this note.", variant: "destructive" });
+            return;
+        }
         setAddingToCart(true);
         try {
             await addToCart(noteId);
             toast({ title: "Added to cart" });
-        } catch {
-            toast({ title: "Failed to add to cart", variant: "destructive" });
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to add to cart";
+            toast({ title: "Failed to add to cart", description: msg, variant: "destructive" });
         } finally {
             setAddingToCart(false);
         }
@@ -205,18 +250,18 @@ export default function NoteDetailPage() {
                                     PDF — {formatFileSize(note.pdf_size)}
                                 </Badge>
                             )}
-                            <Badge
-                                variant="outline"
-                                className={
-                                    note.status === "Approved"
-                                        ? "border-green-500/50 text-green-500"
-                                        : note.status === "Pending"
+                            {note.status !== "Approved" && (
+                                <Badge
+                                    variant="outline"
+                                    className={
+                                        note.status === "Pending"
                                             ? "border-yellow-500/50 text-yellow-500"
                                             : "border-red-500/50 text-red-500"
-                                }
-                            >
-                                {note.status}
-                            </Badge>
+                                    }
+                                >
+                                    {note.status}
+                                </Badge>
+                            )}
                         </div>
 
                         {/* Description */}
@@ -300,7 +345,7 @@ export default function NoteDetailPage() {
                                                     variant="outline"
                                                     className="gap-2"
                                                     onClick={handleAddToCart}
-                                                    disabled={addingToCart}
+                                                    disabled={addingToCart || isOwned}
                                                 >
                                                     {addingToCart ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -381,6 +426,7 @@ export default function NoteDetailPage() {
                         {note.has_pdf ? (
                             hasFullAccess ? (
                                 <PDFViewer
+                                    key={`full-${note.id}`}
                                     noteId={note.id}
                                     mode="full"
                                     maxHeight={700}
@@ -394,6 +440,7 @@ export default function NoteDetailPage() {
                                         </div>
                                     </div>
                                     <PDFViewer
+                                        key={`preview-${note.id}`}
                                         noteId={note.id}
                                         mode="preview"
                                         maxHeight={500}
@@ -415,7 +462,14 @@ export default function NoteDetailPage() {
             {/* Comments */}
             <div className="mt-4">
                 <Card className="border-border p-4">
-                    <CommentSection noteId={noteId} />
+                    {note.is_locked ? (
+                        <div className="flex items-center gap-2 text-sm text-orange-500 py-2">
+                            <Lock className="h-4 w-4" />
+                            This note is locked — comments are disabled.
+                        </div>
+                    ) : (
+                        <CommentSection noteId={noteId} isAdmin={!!isNoteAdmin} />
+                    )}
                 </Card>
             </div>
         </div>

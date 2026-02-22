@@ -323,7 +323,7 @@ When Stripe is not configured, orders **auto-fulfil** (dev mode).
 
 ## API Reference
 
-### Public (17 routes)
+### Public (14 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -342,7 +342,7 @@ When Stripe is not configured, orders **auto-fulfil** (dev mode).
 | `GET` | `/api/v1/auth/oauth/github/callback` | GitHub OAuth callback |
 | `POST` | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
 
-### Public with Optional Auth (10 routes)
+### Public with Optional Auth (11 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -356,8 +356,9 @@ When Stripe is not configured, orders **auto-fulfil** (dev mode).
 | `GET` | `/api/v1/subnoteries/:id` | Subnotery detail (admins, member count, min notoriety) |
 | `GET` | `/api/v1/subnoteries/:id/notes` | Approved notes in subnotery (paginated, sortable) |
 | `GET` | `/api/v1/notes/:id/thumbnail` | Note thumbnail image (24h cache) |
+| `GET` | `/api/v1/subnoteries/:id/banner` | Subnotery banner image (24h cache) |
 
-### Auth-Only (12 routes)
+### Auth-Only (14 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -376,7 +377,7 @@ When Stripe is not configured, orders **auto-fulfil** (dev mode).
 | `GET` | `/api/v1/me/comments` | Own comments (flat, paginated) |
 | `GET` | `/api/v1/orders/:order_id` | Order status |
 
-### Verified — Requires JWT + Verified Email (21 routes)
+### Verified — Requires JWT + Verified Email (25 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -400,15 +401,21 @@ When Stripe is not configured, orders **auto-fulfil** (dev mode).
 | `DELETE` | `/api/v1/comments/:comment_id/vote` | Remove comment vote |
 | `POST` | `/api/v1/orders/:order_id/confirm` | Manual order reconciliation |
 | `POST` | `/api/v1/subnoteries/:id/join` | Join subnotery |
+| `POST` | `/api/v1/subnoteries/:id/leave` | Leave subnotery (admin succession) |
 | `PATCH` | `/api/v1/subnoteries/:id/settings` | Update subnotery settings (admin only) |
+| `POST` | `/api/v1/subnoteries/:id/banner` | Upload subnotery banner (admin only, ≤ 5 MB) |
+| `DELETE` | `/api/v1/subnoteries/:id/banner` | Delete subnotery banner (admin only) |
+| `DELETE` | `/api/v1/subnoteries/:id/admins/:uid` | Remove admin (hierarchy-based) |
 
-### Admin (7 routes)
+### Admin (9 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/v1/notes/pending` | List pending notes (paginated) |
 | `PATCH` | `/api/v1/notes/:id/approve` | Approve note |
 | `PATCH` | `/api/v1/notes/:id/reject` | Reject note |
+| `PATCH` | `/api/v1/notes/:id/lock` | Lock note (disables comments) |
+| `PATCH` | `/api/v1/notes/:id/unlock` | Unlock note |
 | `DELETE` | `/api/v1/notes/:id` | Delete note |
 | `GET` | `/api/v1/admin/notes/:id/preview` | Preview PDF during approval |
 | `DELETE` | `/api/v1/admin/notes/:id/content` | Delete PDF content |

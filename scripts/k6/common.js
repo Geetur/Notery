@@ -14,7 +14,7 @@ export function jsonHeaders(token) {
 // Signup a user and return { access_token, refresh_token }.
 export function signup(email, password, username) {
     const res = http.post(
-        `${BASE_URL}/signup`,
+        `${BASE_URL}/auth/signup`,
         JSON.stringify({ email, password, username }),
         jsonHeaders()
     );
@@ -24,7 +24,7 @@ export function signup(email, password, username) {
 // Login and return { access_token, refresh_token }.
 export function login(email, password) {
     const res = http.post(
-        `${BASE_URL}/login`,
+        `${BASE_URL}/auth/login`,
         JSON.stringify({ email, password }),
         jsonHeaders()
     );

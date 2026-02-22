@@ -75,6 +75,10 @@ type Note struct {
 	// Hotness is the calculated Reddit-style hot score
 	Hotness float64 `json:"hotness" gorm:"index"`
 
+	// IsLocked prevents new comments from being added to this note.
+	// Admins can lock a note via the three-dot menu.
+	IsLocked bool `json:"is_locked" gorm:"default:false;not null"`
+
 	// ----- Timestamps -----
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

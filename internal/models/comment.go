@@ -86,6 +86,10 @@ const MaxWriteDepth = 15
 // unbounded memory use. The response includes continuation metadata when truncated.
 const MaxNodesPerRequest = 500
 
+// MaxPinnedComments is the maximum number of pinned comments allowed per note.
+// Admins can pin up to this many comments; additional pins are rejected.
+const MaxPinnedComments = 3
+
 // Comment represents a user's comment on a note.
 //
 // TREE STRUCTURE:
@@ -136,6 +140,11 @@ type Comment struct {
 	// IsDeleted marks a comment as soft-deleted.
 	// Soft-deleted comments display "[deleted]" but maintain tree structure.
 	IsDeleted bool `json:"is_deleted" gorm:"not null;default:false"`
+
+	// IsPinned marks a comment as pinned by an admin.
+	// Pinned comments are always displayed at the top of the comment list.
+	// Maximum 3 pinned comments per note.
+	IsPinned bool `json:"is_pinned" gorm:"not null;default:false"`
 
 	// EditedAt records when the comment was last edited outside the grace period.
 	// nil means never edited (or edited within EditGracePeriod of creation).

@@ -132,35 +132,63 @@ func (app *App) oauthFindOrCreateUser(provider, oauthID, email, displayName stri
 		return &user, nil
 	}
 
-	// Create new user — resolve duplicate usernames by appending numeric suffix
+	// Create new user — resolve duplicate usernames AND display names by
+	// appending numeric suffix. Both columns carry a partial unique index
+	// (WHERE col != ''), so we must deduplicate both. Uses a retry loop to
+	// handle race conditions with the unique index.
 	baseUsername := sanitizeUsername(displayName)
-	username := baseUsername
-	for i := 1; ; i++ {
-		var count int64
-		app.DB.Model(&models.User{}).Where("username = ?", username).Count(&count)
-		if count == 0 {
-			break
+	suffix := 0 // 0 = no suffix, 1 = "base1", 2 = "base2", etc.
+
+	var createErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		// Build candidate username
+		username := baseUsername
+		if suffix > 0 {
+			username = fmt.Sprintf("%s%d", baseUsername, suffix)
+			// Ensure suffixed name doesn't exceed max length
+			if len(username) > models.MaxUsernameLength {
+				trimLen := models.MaxUsernameLength - len(fmt.Sprintf("%d", suffix))
+				if trimLen < models.MinUsernameLength {
+					trimLen = models.MinUsernameLength
+				}
+				if trimLen > len(baseUsername) {
+					trimLen = len(baseUsername)
+				}
+				username = fmt.Sprintf("%s%d", baseUsername[:trimLen], suffix)
+			}
 		}
-		username = fmt.Sprintf("%s%d", baseUsername, i)
-		// Ensure suffixed name doesn't exceed max length
-		if len(username) > models.MaxUsernameLength {
-			baseUsername = baseUsername[:models.MaxUsernameLength-len(fmt.Sprintf("%d", i))]
-			username = fmt.Sprintf("%s%d", baseUsername, i)
+
+		// Check if username OR display_name is already taken
+		var nameCount int64
+		app.DB.Model(&models.User{}).Where("username = ? OR display_name = ?", username, username).Count(&nameCount)
+		if nameCount > 0 {
+			suffix++
+			continue
 		}
+
+		// Try to create the user — username IS display name (project convention).
+		user = models.User{
+			Email:            email,
+			Username:         username,
+			DisplayNameField: username,
+			OAuthProvider:    provider,
+			OAuthID:          oauthID,
+			EmailVerified:    true,
+			Hash:             "", // No password for OAuth users
+		}
+		if result := app.DB.Create(&user); result.Error != nil {
+			createErr = result.Error
+			// Concurrent insert took this name — bump suffix and re-scan
+			suffix++
+			continue
+		}
+		createErr = nil
+		break
 	}
-	user = models.User{
-		Email:            email,
-		Username:         username,
-		DisplayNameField: displayName,
-		OAuthProvider:    provider,
-		OAuthID:          oauthID,
-		EmailVerified:    true,
-		Hash:             "", // No password for OAuth users
+	if createErr != nil {
+		return nil, createErr
 	}
-	if result := app.DB.Create(&user); result.Error != nil {
-		return nil, result.Error
-	}
-	oauthLog.Log("CREATE", "OAuth user created", "provider", provider, "userID", user.ID, "email", email, "username", username)
+	oauthLog.Log("CREATE", "OAuth user created", "provider", provider, "userID", user.ID, "email", email, "username", user.Username)
 	return &user, nil
 }
 

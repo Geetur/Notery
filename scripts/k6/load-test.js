@@ -55,7 +55,7 @@ export default function (data) {
     if (Math.random() < 0.2) {
         const types = ["notes", "subnoteries", "users", "comments"];
         const t = types[Math.floor(Math.random() * types.length)];
-        const sorts = ["relevance", "hot", "new", "top"];
+        const sorts = ["hot", "new", "top", "controversial"];
         const s = sorts[Math.floor(Math.random() * sorts.length)];
         const res = http.get(`${BASE_URL}/search?q=test&type=${t}&sort=${s}`);
         searchDuration.add(res.timings.duration);

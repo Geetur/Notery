@@ -43,3 +43,27 @@ export async function uploadAvatar(
 export function deleteAvatar(): Promise<{ message: string }> {
     return apiDelete("/me/avatar");
 }
+
+/** POST /me/banner — Upload profile banner (multipart form data). */
+export async function uploadBanner(
+    file: File
+): Promise<{ message: string; banner_url: string }> {
+    const formData = new FormData();
+    formData.append("banner", file);
+    const token = getAccessToken();
+    const res = await fetch(`${API_V1}/me/banner`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Banner upload failed");
+    }
+    return res.json();
+}
+
+/** DELETE /me/banner — Delete current profile banner. */
+export function deleteBanner(): Promise<{ message: string }> {
+    return apiDelete("/me/banner");
+}

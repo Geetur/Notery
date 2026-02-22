@@ -19,18 +19,21 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { avatarUrl, formatDate, timeAgo } from "@/lib/format";
+import { avatarUrl, formatDate, timeAgo, userBannerUrl } from "@/lib/format";
 import { resendVerification } from "@/services/auth";
 import { getMyComments } from "@/services/comments";
 import { getMyNotes } from "@/services/notes";
-import { deleteAvatar, updateMyProfile, uploadAvatar } from "@/services/profile";
+import { deleteAvatar, deleteBanner, updateMyProfile, uploadAvatar, uploadBanner } from "@/services/profile";
+import { getPurchaseHistory } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
-import type { MyComment, Note, NoteStatus, ProfileVisibility } from "@/types";
+import type { MyComment, Note, NoteStatus, ProfileVisibility, PurchaseWithNote } from "@/types";
 import {
     AlertCircle,
+    BookOpen,
     Camera,
     CheckCircle,
     FileText,
+    ImageIcon,
     Loader2,
     Mail,
     MessageSquare,
@@ -41,7 +44,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type ProfileTab = "all" | "posts" | "comments" | "settings";
+type ProfileTab = "all" | "posts" | "purchased" | "comments" | "settings";
 
 export default function ProfilePage() {
     const router = useRouter();
@@ -57,6 +60,10 @@ export default function ProfilePage() {
     const [deletingAvatar, setDeletingAvatar] = useState(false);
     const avatarInputRef = useRef<HTMLInputElement>(null);
 
+    const [uploadingBanner, setUploadingBanner] = useState(false);
+    const [deletingBanner, setDeletingBanner] = useState(false);
+    const bannerInputRef = useRef<HTMLInputElement>(null);
+
     // My Notes state
     const [myNotes, setMyNotes] = useState<Note[]>([]);
     const [notesTotal, setNotesTotal] = useState(0);
@@ -69,6 +76,12 @@ export default function ProfilePage() {
     const [commentsTotal, setCommentsTotal] = useState(0);
     const [commentsPage, setCommentsPage] = useState(1);
     const [commentsLoading, setCommentsLoading] = useState(false);
+
+    // Purchased notes state
+    const [purchasedNotes, setPurchasedNotes] = useState<PurchaseWithNote[]>([]);
+    const [purchasedTotal, setPurchasedTotal] = useState(0);
+    const [purchasedPage, setPurchasedPage] = useState(1);
+    const [purchasedLoading, setPurchasedLoading] = useState(false);
 
     const fetchMyNotes = useCallback(async (page: number, status: NoteStatus | "all") => {
         setNotesLoading(true);
@@ -101,6 +114,19 @@ export default function ProfilePage() {
         }
     }, [toast]);
 
+    const fetchPurchased = useCallback(async (page: number) => {
+        setPurchasedLoading(true);
+        try {
+            const res = await getPurchaseHistory({ page, limit: 10 });
+            setPurchasedNotes(res.purchases || []);
+            setPurchasedTotal(res.total);
+        } catch {
+            toast({ title: "Failed to load purchased notes", variant: "destructive" });
+        } finally {
+            setPurchasedLoading(false);
+        }
+    }, [toast]);
+
     useEffect(() => {
         if (user) {
             setBio(user.bio || "");
@@ -126,12 +152,19 @@ export default function ProfilePage() {
         }
     }, [isAuthenticated, commentsPage, fetchMyComments]);
 
+    useEffect(() => {
+        if (isAuthenticated) {
+            fetchPurchased(purchasedPage);
+        }
+    }, [isAuthenticated, purchasedPage, fetchPurchased]);
+
     if (!isAuthenticated || !user) {
         return null;
     }
 
     const totalPages = Math.ceil(notesTotal / 10);
     const commentsTotalPages = Math.ceil(commentsTotal / 10);
+    const purchasedTotalPages = Math.ceil(purchasedTotal / 10);
 
     const handleSaveProfile = async () => {
         setSaving(true);
@@ -206,9 +239,48 @@ export default function ProfilePage() {
         }
     };
 
+    const handleBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+        if (!allowedTypes.includes(file.type)) {
+            toast({ title: "Invalid file type", description: "Only JPEG, PNG, WebP, and GIF images are allowed.", variant: "destructive" });
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            toast({ title: "File too large", description: "Maximum banner size is 5 MB.", variant: "destructive" });
+            return;
+        }
+        setUploadingBanner(true);
+        try {
+            const result = await uploadBanner(file);
+            setUser({ ...user, banner_url: result.banner_url });
+            toast({ title: "Banner updated" });
+        } catch {
+            toast({ title: "Failed to upload banner", variant: "destructive" });
+        } finally {
+            setUploadingBanner(false);
+            if (bannerInputRef.current) bannerInputRef.current.value = "";
+        }
+    };
+
+    const handleBannerDelete = async () => {
+        setDeletingBanner(true);
+        try {
+            await deleteBanner();
+            setUser({ ...user, banner_url: "" });
+            toast({ title: "Banner removed" });
+        } catch {
+            toast({ title: "Failed to delete banner", variant: "destructive" });
+        } finally {
+            setDeletingBanner(false);
+        }
+    };
+
     const tabs: { key: ProfileTab; label: string; icon: React.ReactNode }[] = [
         { key: "all", label: "All", icon: null },
         { key: "posts", label: "Posts", icon: <FileText className="h-4 w-4" /> },
+        { key: "purchased", label: "My Notes", icon: <BookOpen className="h-4 w-4" /> },
         { key: "comments", label: "Comments", icon: <MessageSquare className="h-4 w-4" /> },
         { key: "settings", label: "Settings", icon: <Settings className="h-4 w-4" /> },
     ];
@@ -216,8 +288,35 @@ export default function ProfilePage() {
     return (
         <div className="flex">
             <main className="flex-1 min-w-0 px-4 py-0">
-                {/* Profile banner */}
-                <div className="h-28 bg-gradient-to-r from-primary/30 via-primary/15 to-primary/5 -mx-4" />
+                {/* Profile banner — click to upload/change */}
+                <div className="relative h-28 -mx-4 group">
+                    {user.banner_url ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                            src={userBannerUrl(user.id, user.banner_url)}
+                            alt="Profile banner"
+                            className="w-full h-full object-cover"
+                        />
+                    ) : (
+                        <div className="h-full bg-gradient-to-r from-primary/30 via-primary/15 to-primary/5" />
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => bannerInputRef.current?.click()}
+                        disabled={uploadingBanner}
+                        className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                    >
+                        {uploadingBanner ? (
+                            <Loader2 className="h-6 w-6 text-white animate-spin" />
+                        ) : (
+                            <div className="flex items-center gap-2 text-white text-sm font-medium">
+                                <Camera className="h-5 w-5" />
+                                {user.banner_url ? "Change Banner" : "Upload Banner"}
+                            </div>
+                        )}
+                    </button>
+                    <input ref={bannerInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleBannerUpload} className="hidden" />
+                </div>
 
                 {/* Avatar + name row */}
                 <div className="max-w-3xl mx-auto">
@@ -450,6 +549,80 @@ export default function ProfilePage() {
                         </div>
                     )}
 
+                    {/* ─── Purchased (My Notes) Tab ─── */}
+                    {activeTab === "purchased" && (
+                        <div className="space-y-4 px-2">
+                            {purchasedLoading ? (
+                                <div className="space-y-3">
+                                    {Array.from({ length: 3 }).map((_, i) => (
+                                        <Skeleton key={i} className="h-16 w-full" />
+                                    ))}
+                                </div>
+                            ) : purchasedNotes.length === 0 ? (
+                                <Card className="border-border p-6 text-center">
+                                    <BookOpen className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                                    <p className="text-sm text-muted-foreground">
+                                        No purchased notes yet.
+                                    </p>
+                                    <Button variant="outline" size="sm" className="mt-3" asChild>
+                                        <Link href="/">Browse Notes</Link>
+                                    </Button>
+                                </Card>
+                            ) : (
+                                <div className="space-y-2">
+                                    {purchasedNotes.map((p) => (
+                                        <Card key={p.purchase_id} className="border-border p-3">
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-9 w-9 rounded bg-primary/10 flex items-center justify-center shrink-0">
+                                                    <FileText className="h-4 w-4 text-primary" />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <Link
+                                                        href={`/notes/${p.note_id}`}
+                                                        className="font-medium text-sm hover:text-primary block truncate"
+                                                    >
+                                                        {p.note_title}
+                                                    </Link>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        by {p.note_author} &bull; {timeAgo(p.purchased_at)}
+                                                    </p>
+                                                </div>
+                                                <span className="text-xs font-medium text-muted-foreground">
+                                                    {p.price_paid === 0 ? "Free" : `$${(p.price_paid / 100).toFixed(2)}`}
+                                                </span>
+                                            </div>
+                                        </Card>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Pagination */}
+                            {purchasedTotalPages > 1 && (
+                                <div className="flex items-center justify-center gap-4 mt-4">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={purchasedPage <= 1}
+                                        onClick={() => setPurchasedPage((p) => Math.max(1, p - 1))}
+                                    >
+                                        Previous
+                                    </Button>
+                                    <span className="text-xs text-muted-foreground">
+                                        Page {purchasedPage} of {purchasedTotalPages}
+                                    </span>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={purchasedPage >= purchasedTotalPages}
+                                        onClick={() => setPurchasedPage((p) => p + 1)}
+                                    >
+                                        Next
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* ─── Comments Tab ─── */}
                     {activeTab === "comments" && (
                         <div className="space-y-4 px-2">
@@ -561,6 +734,60 @@ export default function ProfilePage() {
                                                     disabled={deletingAvatar}
                                                 >
                                                     {deletingAvatar ? (
+                                                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                                    ) : (
+                                                        <Trash2 className="h-3 w-3 mr-1" />
+                                                    )}
+                                                    Remove
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+
+                            <Card className="border-border">
+                                <CardHeader className="py-3 px-4">
+                                    <CardTitle className="text-sm">Banner</CardTitle>
+                                </CardHeader>
+                                <CardContent className="px-4 pb-4 pt-0">
+                                    <div className="space-y-3">
+                                        <div className="w-full h-20 rounded-md overflow-hidden border">
+                                            {user.banner_url ? (
+                                                /* eslint-disable-next-line @next/next/no-img-element */
+                                                <img
+                                                    src={userBannerUrl(user.id, user.banner_url)}
+                                                    alt="Profile banner"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            ) : (
+                                                <div className="h-full bg-gradient-to-r from-primary/30 via-primary/15 to-primary/5" />
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs"
+                                                onClick={() => bannerInputRef.current?.click()}
+                                                disabled={uploadingBanner}
+                                            >
+                                                {uploadingBanner ? (
+                                                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                                ) : (
+                                                    <ImageIcon className="h-3 w-3 mr-1" />
+                                                )}
+                                                {user.banner_url ? "Change" : "Upload"}
+                                            </Button>
+                                            {user.banner_url && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-7 text-xs text-destructive hover:text-destructive"
+                                                    onClick={handleBannerDelete}
+                                                    disabled={deletingBanner}
+                                                >
+                                                    {deletingBanner ? (
                                                         <Loader2 className="h-3 w-3 animate-spin mr-1" />
                                                     ) : (
                                                         <Trash2 className="h-3 w-3 mr-1" />

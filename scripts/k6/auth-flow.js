@@ -27,7 +27,7 @@ export default function () {
 
     // 1. Signup
     const signupRes = http.post(
-        `${BASE_URL}/signup`,
+        `${BASE_URL}/auth/signup`,
         JSON.stringify({ email, password, username }),
         jsonHeaders()
     );
@@ -43,7 +43,7 @@ export default function () {
 
     // 2. Login
     const loginRes = http.post(
-        `${BASE_URL}/login`,
+        `${BASE_URL}/auth/login`,
         JSON.stringify({ email, password }),
         jsonHeaders()
     );
@@ -61,7 +61,7 @@ export default function () {
     // 4. Refresh token
     if (refreshToken) {
         const refreshRes = http.post(
-            `${BASE_URL}/refresh`,
+            `${BASE_URL}/auth/refresh`,
             JSON.stringify({ refresh_token: refreshToken }),
             jsonHeaders()
         );
@@ -71,7 +71,7 @@ export default function () {
     // 5. Logout
     if (refreshToken) {
         http.post(
-            `${BASE_URL}/logout`,
+            `${BASE_URL}/auth/logout`,
             JSON.stringify({ refresh_token: refreshToken }),
             jsonHeaders(token)
         );

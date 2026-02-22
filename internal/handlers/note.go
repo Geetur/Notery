@@ -262,6 +262,50 @@ func (app *App) DeleteNote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Note deleted successfully"})
 }
 
+// LockNote prevents new comments from being added to a note.
+// Only admins (global or subnotery-scoped) can lock notes.
+//
+// Route: PATCH /api/v1/notes/:id/lock
+func (app *App) LockNote(c *gin.Context) {
+	noteLog.Log("LOCK", "Processing note lock request")
+
+	note, ok := helpers.MustFetchNote(c, app.DB)
+	if !ok {
+		return
+	}
+
+	if err := app.DB.Model(note).Update("is_locked", true).Error; err != nil {
+		noteLog.Log("LOCK", "Failed to lock note", "noteID", note.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to lock note"})
+		return
+	}
+
+	noteLog.Log("LOCK", "Note locked successfully", "noteID", note.ID)
+	c.JSON(http.StatusOK, gin.H{"message": "Note locked successfully"})
+}
+
+// UnlockNote allows comments to be added to a note again.
+// Only admins (global or subnotery-scoped) can unlock notes.
+//
+// Route: PATCH /api/v1/notes/:id/unlock
+func (app *App) UnlockNote(c *gin.Context) {
+	noteLog.Log("UNLOCK", "Processing note unlock request")
+
+	note, ok := helpers.MustFetchNote(c, app.DB)
+	if !ok {
+		return
+	}
+
+	if err := app.DB.Model(note).Update("is_locked", false).Error; err != nil {
+		noteLog.Log("UNLOCK", "Failed to unlock note", "noteID", note.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unlock note"})
+		return
+	}
+
+	noteLog.Log("UNLOCK", "Note unlocked successfully", "noteID", note.ID)
+	c.JSON(http.StatusOK, gin.H{"message": "Note unlocked successfully"})
+}
+
 // RejectNote rejects a note, removing it from search/feed and deleting it from the DB.
 //
 // If the note was previously approved, it is removed from the Meilisearch index

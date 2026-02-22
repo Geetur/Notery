@@ -16,9 +16,10 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { formatFileSize, formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
 import { addBookmark, removeBookmark } from "@/services/bookmarks";
+import { lockNote, unlockNote } from "@/services/notes";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Note, ViewMode } from "@/types";
-import { Bookmark, BookmarkCheck, CheckCircle, FileText, Lock, MessageSquare, MoreVertical, Trash2 } from "lucide-react";
+import { Bookmark, BookmarkCheck, CheckCircle, FileText, Lock, LockOpen, MessageSquare, MoreVertical, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { VoteButtons } from "./vote-buttons";
@@ -39,6 +40,7 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdm
     const { isAuthenticated } = useAuthStore();
     const { toast } = useToast();
     const [bookmarked, setBookmarked] = useState(initialBookmarked ?? false);
+    const [locked, setLocked] = useState(note.is_locked ?? false);
 
     const toggleBookmark = async (e: React.MouseEvent) => {
         e.preventDefault();
@@ -108,6 +110,31 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdm
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                     <DropdownMenuItem
+                                        onClick={async (e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            try {
+                                                if (locked) {
+                                                    await unlockNote(note.id);
+                                                    setLocked(false);
+                                                    toast({ title: "Unlocked", description: "Comments re-enabled." });
+                                                } else {
+                                                    await lockNote(note.id);
+                                                    setLocked(true);
+                                                    toast({ title: "Locked", description: "Comments disabled." });
+                                                }
+                                            } catch {
+                                                toast({ title: "Error", description: "Failed to toggle lock.", variant: "destructive" });
+                                            }
+                                        }}
+                                    >
+                                        {locked ? (
+                                            <><LockOpen className="h-3.5 w-3.5 mr-2" /> Unlock Comments</>
+                                        ) : (
+                                            <><Lock className="h-3.5 w-3.5 mr-2" /> Lock Comments</>
+                                        )}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
                                         className="text-destructive focus:text-destructive"
                                         onClick={(e) => {
                                             e.preventDefault();
@@ -146,19 +173,24 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdm
                             </Badge>
                         )}
 
-                        {note.status && (
+                        {note.status && note.status !== "Approved" && (
                             <Badge
                                 variant="outline"
                                 className={
-                                    note.status === "Approved"
-                                        ? "text-xs border-green-500/50 text-green-500"
-                                        : note.status === "Pending"
-                                            ? "text-xs border-yellow-500/50 text-yellow-500"
-                                            : "text-xs border-red-500/50 text-red-500"
+                                    note.status === "Pending"
+                                        ? "text-xs border-yellow-500/50 text-yellow-500"
+                                        : "text-xs border-red-500/50 text-red-500"
                                 }
                             >
                                 {note.status}
                             </Badge>
+                        )}
+
+                        {locked && (
+                            <span className="flex items-center gap-1 text-xs text-orange-500">
+                                <Lock className="h-3 w-3" />
+                                Locked
+                            </span>
                         )}
 
                         {/* Purchase state */}

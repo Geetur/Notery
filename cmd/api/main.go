@@ -135,13 +135,16 @@ func main() {
 	api.GET("/search", optAuth, app.SearchAll)
 	api.GET("/users/:id/profile", app.GetUserProfile)
 	api.GET("/users/:id/avatar", app.GetAvatar)
+	api.GET("/users/:id/banner", app.GetUserBanner)
 	api.GET("/users/:id/notes", optAuth, app.GetUserNotes)
+	api.GET("/users/:id/comments", app.GetUserComments)
 	api.GET("/notes/:id/thumbnail", app.GetThumbnail)
 
 	// Subnotery browsing (public)
 	api.GET("/subnoteries", app.ListSubnoteries)
 	api.GET("/subnoteries/:subnotery_id", optAuth, app.GetSubnoteryDetail)
 	api.GET("/subnoteries/:subnotery_id/notes", optAuth, app.GetSubnoteryNotes)
+	api.GET("/subnoteries/:subnotery_id/banner", app.GetSubnoteryBanner)
 
 	// ── Authenticated Read-Only (login required, no verification) ──────────
 	// Unverified users can browse, view profile, check purchases — read-only.
@@ -187,6 +190,8 @@ func main() {
 	write.PATCH("/me/profile", app.UpdateMyProfile)
 	write.POST("/me/avatar", app.UploadAvatar)
 	write.DELETE("/me/avatar", app.DeleteAvatar)
+	write.POST("/me/banner", app.UploadUserBanner)
+	write.DELETE("/me/banner", app.DeleteUserBanner)
 
 	// Comments
 	write.POST("/notes/:id/comments", app.CreateComment)
@@ -194,12 +199,17 @@ func main() {
 	write.DELETE("/comments/:comment_id", app.DeleteComment)
 	write.POST("/comments/:comment_id/vote", app.VoteComment)
 	write.DELETE("/comments/:comment_id/vote", app.RemoveCommentVote)
+	write.POST("/comments/:comment_id/pin", app.PinComment)
+	write.DELETE("/comments/:comment_id/pin", app.UnpinComment)
 
 	// Orders & Subnoteries
 	write.POST("/orders/:order_id/confirm", app.ConfirmOrder)
 	write.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
 	write.POST("/subnoteries/:subnotery_id/leave", app.LeaveSubnotery)
 	write.PATCH("/subnoteries/:subnotery_id/settings", app.UpdateSubnoterySettings)
+	write.POST("/subnoteries/:subnotery_id/banner", app.UploadSubnoteryBanner)
+	write.DELETE("/subnoteries/:subnotery_id/banner", app.DeleteSubnoteryBanner)
+	write.DELETE("/subnoteries/:subnotery_id/admins/:uid", app.RemoveAdminFromSubnotery)
 
 	// Bookmarks
 	write.POST("/bookmarks/:note_id", app.AddBookmark)
@@ -211,6 +221,8 @@ func main() {
 	admin.PATCH("/notes/:id/approve", app.ApproveNote)
 	admin.PATCH("/notes/:id/reject", app.RejectNote)
 	admin.DELETE("/notes/:id", app.DeleteNote)
+	admin.PATCH("/notes/:id/lock", app.LockNote)
+	admin.PATCH("/notes/:id/unlock", app.UnlockNote)
 	admin.GET("/admin/notes/:id/preview", app.AdminPreviewPDF)
 	admin.DELETE("/admin/notes/:id/content", app.DeleteNotePDF)
 	admin.POST("/subnoteries/:subnotery_id/admins", app.AddAdminToSubnotery)

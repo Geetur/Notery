@@ -38,6 +38,8 @@ export interface Note {
     comment_count: number;
     /** Whether the requesting user has full PDF access (creator, admin, purchased, free). */
     has_full_access: boolean;
+    /** Whether comments are disabled on this note. */
+    is_locked: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -67,6 +69,8 @@ export interface SubnoteryDetail {
     description: string;
     content_type: string;
     rules: string;
+    banner_url: string;
+    background_color: string;
     min_post_notoriety: number;
     min_comment_notoriety: number;
     admins: { id: number; username: string }[];
@@ -173,6 +177,7 @@ export interface SelfProfile {
     display_name: string;
     bio: string;
     avatar_url: string;
+    banner_url: string;
     profile_visibility: ProfileVisibility;
     profile_updated_at: string | null;
     email_verified: boolean;
@@ -191,6 +196,7 @@ export interface PublicProfile {
     created_at: string;
     bio?: string;
     avatar_url?: string;
+    banner_url?: string;
 }
 
 export interface UpdateProfileRequest {
@@ -214,6 +220,7 @@ export interface CommentResponse {
     depth: number;
     is_deleted: boolean;
     is_edited: boolean;
+    is_pinned: boolean;
     created_at: string;
     user_vote: -1 | 0 | 1;
     children: CommentResponse[];

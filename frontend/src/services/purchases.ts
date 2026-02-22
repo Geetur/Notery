@@ -43,7 +43,7 @@ export function checkoutCart(
 export function purchaseNote(
     noteId: number
 ): Promise<SinglePurchaseResponse> {
-    return apiPost(`/notes/${noteId}/purchase`);
+    return apiPost(`/notes/${noteId}/purchase`, {});
 }
 
 // ─── Purchase Status ──────────────────────────────────────────────────────────

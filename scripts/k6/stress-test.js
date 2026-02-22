@@ -45,7 +45,7 @@ export default function (data) {
         const ok = check(res, { "feed ok": (r) => r.status === 200 });
         errorRate.add(!ok);
     } else if (r < 0.8) {
-        const sorts = ["relevance", "hot", "new", "top", "comments"];
+        const sorts = ["hot", "new", "top", "controversial"];
         const s = sorts[Math.floor(Math.random() * sorts.length)];
         const res = http.get(
             `${BASE_URL}/search?q=test&type=notes&sort=${s}`

@@ -101,3 +101,16 @@ export function thumbnailUrl(
     if (!thumbnailKey) return undefined;
     return `${API_V1}/notes/${noteId}/thumbnail?v=${encodeURIComponent(thumbnailKey)}`;
 }
+
+/**
+ * Build the banner proxy URL for a user.
+ * Returns undefined if the user has no banner.
+ * Appends a cache-bust `v` param to force reload after upload.
+ */
+export function userBannerUrl(
+    userId: number,
+    bannerKey: string | undefined | null
+): string | undefined {
+    if (!bannerKey) return undefined;
+    return `${API_V1}/users/${userId}/banner?v=${encodeURIComponent(bannerKey)}`;
+}

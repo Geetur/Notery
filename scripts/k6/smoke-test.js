@@ -24,14 +24,14 @@ export default function () {
     const username = `k6smoke${ts}`;
 
     const signupRes = http.post(
-        `${BASE_URL}/signup`,
+        `${BASE_URL}/auth/signup`,
         JSON.stringify({ email, password, username }),
         jsonHeaders()
     );
     check(signupRes, { "signup 2xx": (r) => r.status >= 200 && r.status < 300 });
 
     const loginRes = http.post(
-        `${BASE_URL}/login`,
+        `${BASE_URL}/auth/login`,
         JSON.stringify({ email, password }),
         jsonHeaders()
     );

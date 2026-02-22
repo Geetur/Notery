@@ -76,6 +76,14 @@ func (app *App) AddToCart(c *gin.Context) {
 		return
 	}
 
+	// Prevent adding notes the user has already purchased
+	var existingPurchase models.Purchase
+	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, note.ID).First(&existingPurchase).Error; err == nil {
+		cartLog.Log("ADD", "Already purchased", "userID", userID, "noteID", note.ID)
+		c.JSON(http.StatusConflict, gin.H{"error": "You have already purchased this note"})
+		return
+	}
+
 	// Add item to user's cart set in Redis
 	ctx := c.Request.Context()
 	key := helpers.CartKey(userID)

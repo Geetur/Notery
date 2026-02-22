@@ -31,7 +31,13 @@ type Subnotery struct {
 	ContentType string    `json:"content_type" gorm:"type:varchar(100)"`
 	Rules       string    `json:"rules" gorm:"type:text"`
 
-	// Minimum notoriety (karma) required to post/comment. 0 = no restriction.
+	// BannerURL is the R2 object key for the community banner image.
+	// Admins can upload/change banners via the settings panel.
+	BannerURL string `json:"banner_url" gorm:"type:text;default:''"` 
+
+	// BackgroundColor is a hex colour for the community's content background.
+	// Admins set this via the settings panel; empty means default theme background.
+	BackgroundColor string `json:"background_color" gorm:"type:varchar(7);default:''"`
 	MinPostNotoriety    float64 `json:"min_post_notoriety" gorm:"default:0;not null"`
 	MinCommentNotoriety float64 `json:"min_comment_notoriety" gorm:"default:0;not null"`
 

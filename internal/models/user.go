@@ -23,6 +23,7 @@ type User struct {
 	DisplayNameField string          `json:"display_name" gorm:"column:display_name;default:''"`
 	Bio              string          `json:"bio" gorm:"type:text;default:''"`
 	AvatarURL        string          `json:"avatar_url" gorm:"default:''"`
+	BannerURL        string          `json:"banner_url" gorm:"type:text;default:''"`
 	ProfileVisibility ProfileVisibility `json:"profile_visibility" gorm:"default:'public'"`
 	ProfileUpdatedAt *time.Time      `json:"profile_updated_at"`
 	EmailVerified    bool            `json:"email_verified" gorm:"default:false"`
@@ -89,6 +90,7 @@ func (u *User) PublicProfile() map[string]interface{} {
 	if u.ProfileVisibility == ProfilePublic {
 		profile["bio"] = u.Bio
 		profile["avatar_url"] = u.AvatarURL
+		profile["banner_url"] = u.BannerURL
 	}
 	return profile
 }
@@ -103,6 +105,7 @@ func (u *User) SelfProfile() map[string]interface{} {
 		"display_name":       u.DisplayNameField,
 		"bio":                u.Bio,
 		"avatar_url":         u.AvatarURL,
+		"banner_url":         u.BannerURL,
 		"profile_visibility": u.ProfileVisibility,
 		"profile_updated_at": u.ProfileUpdatedAt,
 		"email_verified":     u.EmailVerified,

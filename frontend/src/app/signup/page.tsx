@@ -12,7 +12,6 @@ import { signup } from "@/services/auth";
 import { getMyProfile } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth-store";
 import { Loader2 } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -53,7 +52,6 @@ export default function SignupPage() {
             <Card className="w-full max-w-sm">
                 <CardHeader className="text-center">
                     <div className="flex items-center justify-center gap-2 mb-2">
-                        <Image src="/notery-logo.png" alt="Notery" width={28} height={28} className="h-7 w-7" />
                         <span className="text-xl font-bold">notery</span>
                     </div>
                     <CardTitle className="text-lg">Sign Up</CardTitle>

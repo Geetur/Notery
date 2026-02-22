@@ -8,8 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { createNote, uploadNotePDF, uploadNoteThumbnail } from "@/services/notes";
+import { searchSubnoteries } from "@/services/search";
 import { useAuthStore } from "@/stores/auth-store";
-import { ArrowLeft, FileText, ImageIcon, Loader2, Upload, X } from "lucide-react";
+import type { Subnotery } from "@/types";
+import { ArrowLeft, FileText, Hash, ImageIcon, Loader2, Upload, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
@@ -33,11 +35,62 @@ export default function SubmitPage() {
     const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
 
+    // Subnotery autocomplete state
+    const [subnoterySuggestions, setSubnoterySuggestions] = useState<Subnotery[]>([]);
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+    const subnoteryInputRef = useRef<HTMLDivElement>(null);
+    const abortRef = useRef<AbortController | null>(null);
+
     useEffect(() => {
         if (!isAuthenticated && !loading) {
             router.push("/login");
         }
     }, [isAuthenticated, loading, router]);
+
+    // Debounced subnotery search
+    useEffect(() => {
+        if (!subnoteryName.trim() || subnoteryName.trim().length < 1) {
+            setSubnoterySuggestions([]);
+            setShowSuggestions(false);
+            return;
+        }
+        const timeout = setTimeout(async () => {
+            abortRef.current?.abort();
+            const controller = new AbortController();
+            abortRef.current = controller;
+            setSuggestionsLoading(true);
+            try {
+                const res = await searchSubnoteries(subnoteryName.trim(), { limit: 6 });
+                if (!controller.signal.aborted) {
+                    setSubnoterySuggestions(res.results ?? []);
+                    setShowSuggestions(true);
+                }
+            } catch {
+                if (!controller.signal.aborted) {
+                    setSubnoterySuggestions([]);
+                }
+            } finally {
+                if (!controller.signal.aborted) setSuggestionsLoading(false);
+            }
+        }, 200);
+        return () => {
+            clearTimeout(timeout);
+            abortRef.current?.abort();
+        };
+    }, [subnoteryName]);
+
+    // Close suggestions on click outside
+    useEffect(() => {
+        if (!showSuggestions) return;
+        const handleClick = (e: MouseEvent) => {
+            if (subnoteryInputRef.current && !subnoteryInputRef.current.contains(e.target as Node)) {
+                setShowSuggestions(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClick);
+        return () => document.removeEventListener("mousedown", handleClick);
+    }, [showSuggestions]);
 
     if (!isAuthenticated) {
         return null;
@@ -257,18 +310,55 @@ export default function SubmitPage() {
                             </p>
                         </div>
 
-                        {/* Community name */}
+                        {/* Community name with autocomplete */}
                         <div className="space-y-1.5">
                             <Label htmlFor="subnotery">
                                 Community (Subnotery) <span className="text-destructive">*</span>
                             </Label>
-                            <Input
-                                id="subnotery"
-                                placeholder="e.g. ComputerScience"
-                                value={subnoteryName}
-                                onChange={(e) => setSubnoteryName(e.target.value)}
-                                required
-                            />
+                            <div className="relative" ref={subnoteryInputRef}>
+                                <Input
+                                    id="subnotery"
+                                    placeholder="e.g. ComputerScience"
+                                    value={subnoteryName}
+                                    onChange={(e) => setSubnoteryName(e.target.value)}
+                                    onFocus={() => {
+                                        if (subnoterySuggestions.length > 0) setShowSuggestions(true);
+                                    }}
+                                    autoComplete="off"
+                                    required
+                                />
+                                {showSuggestions && (subnoterySuggestions.length > 0 || suggestionsLoading) && (
+                                    <div className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-lg shadow-lg z-50 overflow-hidden max-h-52 overflow-y-auto">
+                                        {suggestionsLoading && subnoterySuggestions.length === 0 ? (
+                                            <div className="flex items-center justify-center py-3">
+                                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                            </div>
+                                        ) : (
+                                            subnoterySuggestions.map((sub) => (
+                                                <button
+                                                    key={sub.id}
+                                                    type="button"
+                                                    className="flex items-center gap-2.5 px-3 py-2 hover:bg-accent transition-colors w-full text-left"
+                                                    onClick={() => {
+                                                        setSubnoteryName(sub.name);
+                                                        setShowSuggestions(false);
+                                                    }}
+                                                >
+                                                    <Hash className="h-4 w-4 text-muted-foreground shrink-0" />
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="text-sm font-medium">n/{sub.name}</p>
+                                                        {sub.member_count !== undefined && (
+                                                            <p className="text-xs text-muted-foreground">
+                                                                {sub.member_count} member{sub.member_count !== 1 ? "s" : ""}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                             <p className="text-xs text-muted-foreground">
                                 Enter a community name. A new one will be created if it doesn&apos;t exist.
                             </p>

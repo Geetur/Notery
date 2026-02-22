@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   title: "Notery — Note Marketplace",
   description:
     "Buy and sell study notes, lecture summaries, and educational content.",
+  icons: {
+    icon: "/notery-logo.png",
+  },
 };
 
 export default function RootLayout({

@@ -22,6 +22,7 @@ import { CommentThread } from "./comment-thread";
 
 interface CommentSectionProps {
     noteId: number;
+    isAdmin?: boolean;
 }
 
 const SORT_OPTIONS: { value: CommentSortOrder; label: string }[] = [
@@ -31,7 +32,7 @@ const SORT_OPTIONS: { value: CommentSortOrder; label: string }[] = [
     { value: "controversial", label: "Controversial" },
 ];
 
-export function CommentSection({ noteId }: CommentSectionProps) {
+export function CommentSection({ noteId, isAdmin }: CommentSectionProps) {
     const { isAuthenticated } = useAuthStore();
     const { toast } = useToast();
     const queryClient = useQueryClient();
@@ -156,6 +157,7 @@ export function CommentSection({ noteId }: CommentSectionProps) {
                                 key={comment.id}
                                 comment={comment}
                                 noteId={noteId}
+                                isAdmin={isAdmin}
                                 onCommentUpdated={handleCommentUpdated}
                             />
                         ))}

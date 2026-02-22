@@ -349,6 +349,73 @@ func TestRejectNote_HappyPath(t *testing.T) {
 	}
 }
 
+// ===== LOCK / UNLOCK NOTE =====
+
+func TestLockNote_HappyPath(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "lockadmin")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	w := serve("PATCH", "/notes/:id/lock", fmt.Sprintf("/notes/%d/lock", noteID),
+		nil, app.LockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify is_locked is true in DB
+	var note models.Note
+	app.DB.First(&note, noteID)
+	if !note.IsLocked {
+		t.Fatal("expected note to be locked")
+	}
+}
+
+func TestLockNote_NotFound(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "locknf")
+
+	w := serve("PATCH", "/notes/:id/lock", "/notes/99999/lock",
+		nil, app.LockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestLockNote_InvalidID(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "lockbadid")
+
+	w := serve("PATCH", "/notes/:id/lock", "/notes/abc/lock",
+		nil, app.LockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestUnlockNote_HappyPath(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "unlockadmin")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Lock first
+	app.DB.Model(&models.Note{}).Where("id = ?", noteID).Update("is_locked", true)
+
+	// Then unlock
+	w := serve("PATCH", "/notes/:id/unlock", fmt.Sprintf("/notes/%d/unlock", noteID),
+		nil, app.UnlockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify is_locked is false in DB
+	var note models.Note
+	app.DB.First(&note, noteID)
+	if note.IsLocked {
+		t.Fatal("expected note to be unlocked")
+	}
+}
+
+func TestUnlockNote_NotFound(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "unlocknf")
+
+	w := serve("PATCH", "/notes/:id/unlock", "/notes/99999/unlock",
+		nil, app.UnlockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusNotFound)
+}
+
 // ===== HELPER =====
 
 func parseJSONArray(t *testing.T, w *httptest.ResponseRecorder, dest interface{}) {

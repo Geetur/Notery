@@ -15,6 +15,7 @@ export interface SubnoterySidebarData {
     content_type?: string;
     rules?: string;
     member_count: number;
+    admins?: { id: number; username: string }[];
     created_at: string;
 }
 
@@ -87,6 +88,31 @@ export function RightSidebar({ children, subnotery }: RightSidebarProps) {
                                 )}
                             </CardContent>
                         </Card>
+
+                        {/* Admins card */}
+                        {subnotery.admins && subnotery.admins.length > 0 && (
+                            <Card className="border-border">
+                                <CardHeader className="py-3 px-4">
+                                    <CardTitle className="text-sm font-semibold">
+                                        Admins
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="px-4 pb-4 pt-0">
+                                    <ul className="space-y-1.5">
+                                        {subnotery.admins.map((admin) => (
+                                            <li key={admin.id}>
+                                                <Link
+                                                    href={`/user/${admin.id}`}
+                                                    className="text-xs text-foreground hover:text-primary transition-colors"
+                                                >
+                                                    u/{admin.username}
+                                                </Link>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </CardContent>
+                            </Card>
+                        )}
                     </>
                 ) : (
                     <>

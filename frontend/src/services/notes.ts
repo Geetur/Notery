@@ -143,6 +143,16 @@ export function deleteNoteThumbnail(id: number): Promise<{ message: string }> {
     return apiDelete(`/notes/${id}/thumbnail`);
 }
 
+/** PATCH /notes/:id/lock — Lock a note (disable comments). Admin only. */
+export function lockNote(id: number): Promise<{ message: string }> {
+    return apiPatch(`/notes/${id}/lock`);
+}
+
+/** PATCH /notes/:id/unlock — Unlock a note (re-enable comments). Admin only. */
+export function unlockNote(id: number): Promise<{ message: string }> {
+    return apiPatch(`/notes/${id}/unlock`);
+}
+
 /** GET /users/:id/notes — List a user's approved notes (public, paginated). */
 export function getUserNotes(
     userId: number,

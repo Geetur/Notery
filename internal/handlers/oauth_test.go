@@ -185,6 +185,10 @@ func TestOAuthFindOrCreate_DuplicateUsername(t *testing.T) {
 	if user.Username != "TestUser1" {
 		t.Fatalf("expected TestUser1, got %s", user.Username)
 	}
+	// display_name must also be deduped (unique index)
+	if user.DisplayNameField != "TestUser1" {
+		t.Fatalf("expected DisplayNameField=TestUser1, got %s", user.DisplayNameField)
+	}
 }
 
 func TestOAuthFindOrCreate_MultipleDuplicates(t *testing.T) {
@@ -192,7 +196,7 @@ func TestOAuthFindOrCreate_MultipleDuplicates(t *testing.T) {
 
 	// Create TestDup and TestDup1
 	seedUser(t, app.DB, "TestDup")
-	app.DB.Create(&models.User{Email: "dup1seed@test.com", Username: "TestDup1"})
+	app.DB.Create(&models.User{Email: "dup1seed@test.com", Username: "TestDup1", DisplayNameField: "TestDup1"})
 
 	// Should get TestDup2
 	user, err := app.oauthFindOrCreateUser("github", "gh-dup2", "dup2@test.com", "TestDup")
@@ -201,6 +205,68 @@ func TestOAuthFindOrCreate_MultipleDuplicates(t *testing.T) {
 	}
 	if user.Username != "TestDup2" {
 		t.Fatalf("expected TestDup2, got %s", user.Username)
+	}
+	if user.DisplayNameField != "TestDup2" {
+		t.Fatalf("expected DisplayNameField=TestDup2, got %s", user.DisplayNameField)
+	}
+}
+
+func TestOAuthFindOrCreate_DisplayNameConflict(t *testing.T) {
+	app := testApp(t)
+
+	// Create a user where display_name is "OAuthName" but username differs
+	app.DB.Create(&models.User{
+		Email: "existing-dn@test.com", Username: "differentUser", DisplayNameField: "OAuthName",
+	})
+
+	// OAuth user whose sanitized display name collides with existing display_name
+	user, err := app.oauthFindOrCreateUser("google", "goog-dn1", "newdn@test.com", "OAuthName")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Must not collide with the existing display_name
+	if user.DisplayNameField == "OAuthName" {
+		t.Fatal("expected display_name to be deduped, got OAuthName")
+	}
+	if user.Username != "OAuthName1" {
+		t.Fatalf("expected username OAuthName1, got %s", user.Username)
+	}
+	if user.DisplayNameField != "OAuthName1" {
+		t.Fatalf("expected DisplayNameField OAuthName1, got %s", user.DisplayNameField)
+	}
+}
+
+func TestOAuthFindOrCreate_ThreeGoogleSameName(t *testing.T) {
+	app := testApp(t)
+
+	// Three different Google accounts all with display name "JohnDoe"
+	u1, err := app.oauthFindOrCreateUser("google", "goog-j1", "john1@test.com", "JohnDoe")
+	if err != nil {
+		t.Fatalf("user1 error: %v", err)
+	}
+	if u1.Username != "JohnDoe" {
+		t.Fatalf("expected JohnDoe, got %s", u1.Username)
+	}
+
+	u2, err := app.oauthFindOrCreateUser("google", "goog-j2", "john2@test.com", "JohnDoe")
+	if err != nil {
+		t.Fatalf("user2 error: %v", err)
+	}
+	if u2.Username != "JohnDoe1" {
+		t.Fatalf("expected JohnDoe1, got %s", u2.Username)
+	}
+
+	u3, err := app.oauthFindOrCreateUser("google", "goog-j3", "john3@test.com", "JohnDoe")
+	if err != nil {
+		t.Fatalf("user3 error: %v", err)
+	}
+	if u3.Username != "JohnDoe2" {
+		t.Fatalf("expected JohnDoe2, got %s", u3.Username)
+	}
+
+	// All three must have different IDs
+	if u1.ID == u2.ID || u2.ID == u3.ID || u1.ID == u3.ID {
+		t.Fatalf("expected 3 different users, got IDs %d, %d, %d", u1.ID, u2.ID, u3.ID)
 	}
 }
 

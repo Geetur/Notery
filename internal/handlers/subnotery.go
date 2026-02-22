@@ -2,12 +2,16 @@
 //
 // ENDPOINTS:
 //
-//	GET  /subnoteries                        List all subnoteries (paginated)
-//	GET  /subnoteries/:subnotery_id          Get a single subnotery with admin/member info
-//	GET  /subnoteries/:subnotery_id/notes    List approved notes in a subnotery (paginated)
-//	POST /subnoteries/:subnotery_id/join     Join a subnotery as a member
-//	POST /subnoteries/:subnotery_id/leave    Leave a subnotery as a member
-//	POST /subnoteries/:subnotery_id/admins   Grant admin privileges to a user
+//	GET    /subnoteries                           List all subnoteries (paginated)
+//	GET    /subnoteries/:subnotery_id             Get a single subnotery with admin/member info
+//	GET    /subnoteries/:subnotery_id/notes       List approved notes in a subnotery (paginated)
+//	POST   /subnoteries/:subnotery_id/join        Join a subnotery as a member
+//	POST   /subnoteries/:subnotery_id/leave       Leave a subnotery (admin succession if last admin)
+//	POST   /subnoteries/:subnotery_id/admins      Grant admin privileges to a user
+//	DELETE /subnoteries/:subnotery_id/admins/:uid  Remove admin (older admins can remove younger)
+//	POST   /subnoteries/:subnotery_id/banner      Upload community banner image
+//	DELETE /subnoteries/:subnotery_id/banner       Delete community banner image
+//	GET    /subnoteries/:subnotery_id/banner       Proxy community banner image (public, cached)
 //
 // DESIGN:
 //
@@ -16,12 +20,22 @@
 //	stored via GORM many-to-many associations (user_memberships, user_admins).
 //	Auto-creation of subnoteries happens in the note creation flow (note.go),
 //	not here.
+//
+//	Admin hierarchy: older admins (by join-table row creation time) can remove
+//	younger admins. When the last admin leaves, the oldest member is promoted.
+//	If no members remain, the next person to join becomes admin automatically.
 package handlers
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 
 	"github.com/Geetur/Notery/internal/helpers"
@@ -134,6 +148,18 @@ func (app *App) JoinSubnotery(c *gin.Context) {
 		return
 	}
 
+	// If the subnotery has no admins, promote this user to admin automatically
+	var adminCount int64
+	app.DB.Table("user_admins").Where("subnotery_id = ?", subnoteryID).Count(&adminCount)
+	if adminCount == 0 {
+		if err := app.DB.Model(subnotery).Association("Admins").Append(user); err != nil {
+			subnoteryLog.Log("JOIN", "Failed to auto-promote to admin", "error", err)
+		} else {
+			subnoteryLog.Log("JOIN", "Auto-promoted first joiner to admin",
+				"userID", userID, "subnoteryID", subnoteryID)
+		}
+	}
+
 	subnoteryLog.Log("JOIN", "User joined successfully", "userID", userID, "subnoteryID", subnoteryID)
 	c.JSON(http.StatusOK, gin.H{"message": "Joined subnotery successfully"})
 }
@@ -171,17 +197,51 @@ func (app *App) LeaveSubnotery(c *gin.Context) {
 		return
 	}
 
-	// Prevent admins from leaving (they must be removed by another admin)
-	var adminCount int64
+	// Check if the user is an admin
+	var isAdmin int64
 	app.DB.Table("user_admins").
 		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
-		Count(&adminCount)
-	if adminCount > 0 {
-		subnoteryLog.Log("LEAVE", "Admin cannot leave", "userID", userID, "subnoteryID", subnoteryID)
-		c.JSON(http.StatusForbidden, gin.H{"error": "Admins cannot leave their subnotery"})
-		return
+		Count(&isAdmin)
+
+	if isAdmin > 0 {
+		// Admin is leaving — handle succession
+		var totalAdmins int64
+		app.DB.Table("user_admins").Where("subnotery_id = ?", subnoteryID).Count(&totalAdmins)
+
+		// Remove this user from admins
+		if err := app.DB.Model(subnotery).Association("Admins").Delete(user); err != nil {
+			subnoteryLog.Log("LEAVE", "Failed to remove admin", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to leave subnotery"})
+			return
+		}
+
+		if totalAdmins <= 1 {
+			// This was the last admin — promote the oldest remaining member
+			type memberRow struct {
+				UserID uint64
+			}
+			var oldest memberRow
+			err := app.DB.Table("user_memberships").
+				Select("user_id").
+				Where("subnotery_id = ? AND user_id != ?", subnoteryID, userID).
+				Order("user_id ASC").
+				Limit(1).
+				Scan(&oldest).Error
+			if err == nil && oldest.UserID != 0 {
+				var newAdmin models.User
+				if err := app.DB.First(&newAdmin, oldest.UserID).Error; err == nil {
+					app.DB.Model(subnotery).Association("Admins").Append(&newAdmin)
+					subnoteryLog.Log("LEAVE", "Promoted oldest member to admin",
+						"newAdminID", newAdmin.ID, "subnoteryID", subnoteryID)
+				}
+			} else {
+				subnoteryLog.Log("LEAVE", "No members to promote — subnotery has no admin",
+					"subnoteryID", subnoteryID)
+			}
+		}
 	}
 
+	// Remove user from members
 	if err := app.DB.Model(subnotery).Association("Members").Delete(user); err != nil {
 		subnoteryLog.Log("LEAVE", "Failed to remove member", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to leave subnotery"})
@@ -305,6 +365,8 @@ func (app *App) GetSubnoteryDetail(c *gin.Context) {
 		"description":           subnotery.Description,
 		"content_type":          subnotery.ContentType,
 		"rules":                 subnotery.Rules,
+		"banner_url":            subnotery.BannerURL,
+		"background_color":      subnotery.BackgroundColor,
 		"min_post_notoriety":    subnotery.MinPostNotoriety,
 		"min_comment_notoriety": subnotery.MinCommentNotoriety,
 		"admins":                admins,
@@ -454,6 +516,8 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 		Description         *string  `json:"description"`
 		ContentType         *string  `json:"content_type"`
 		Rules               *string  `json:"rules"`
+		BannerURL           *string  `json:"banner_url"`
+		BackgroundColor     *string  `json:"background_color"`
 		MinPostNotoriety    *float64 `json:"min_post_notoriety"`
 		MinCommentNotoriety *float64 `json:"min_comment_notoriety"`
 	}
@@ -471,6 +535,12 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 	}
 	if req.Rules != nil {
 		updates["rules"] = *req.Rules
+	}
+	if req.BannerURL != nil {
+		updates["banner_url"] = *req.BannerURL
+	}
+	if req.BackgroundColor != nil {
+		updates["background_color"] = *req.BackgroundColor
 	}
 	if req.MinPostNotoriety != nil {
 		updates["min_post_notoriety"] = *req.MinPostNotoriety
@@ -497,4 +567,302 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 		"content_type": subnotery.ContentType,
 		"rules":        subnotery.Rules,
 	})
+}
+
+// RemoveAdminFromSubnotery removes admin privileges from a user.
+//
+// Older admins (by user_admins row ID) can remove younger admins. Global admins
+// can remove anyone. A user cannot remove themselves.
+//
+// Route: DELETE /api/v1/subnoteries/:subnotery_id/admins/:uid
+func (app *App) RemoveAdminFromSubnotery(c *gin.Context) {
+	subnoteryLog.Log("REMOVE_ADMIN", "Processing remove admin request")
+
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+	targetUID, err := strconv.ParseUint(c.Param("uid"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	requesterID := helpers.GetUserID(c)
+
+	// Fetch requester
+	var requester models.User
+	if err := app.DB.Select("id", "is_global_admin").First(&requester, requesterID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+		return
+	}
+
+	// Global admins can remove anyone
+	if !requester.IsGlobalAdmin {
+		// Check requester is admin of this subnotery
+		type adminRow struct {
+			UserID uint64
+			ID     uint
+		}
+		var requesterRow adminRow
+		app.DB.Table("user_admins").Select("user_id, id").
+			Where("user_id = ? AND subnotery_id = ?", requesterID, subnoteryID).
+			Scan(&requesterRow)
+		if requesterRow.UserID == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You are not an admin of this community"})
+			return
+		}
+
+		// Check target is admin
+		var targetRow adminRow
+		app.DB.Table("user_admins").Select("user_id, id").
+			Where("user_id = ? AND subnotery_id = ?", targetUID, subnoteryID).
+			Scan(&targetRow)
+		if targetRow.UserID == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Target user is not an admin of this community"})
+			return
+		}
+
+		// Cannot remove yourself
+		if requesterID == targetUID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "You cannot remove yourself — use the leave endpoint instead"})
+			return
+		}
+
+		// Older admin (lower row ID) can remove younger admin (higher row ID)
+		if requesterRow.ID >= targetRow.ID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You can only remove admins who were added after you"})
+			return
+		}
+	}
+
+	// Remove the target from admins
+	var target models.User
+	if err := app.DB.First(&target, targetUID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	var sub models.Subnotery
+	if err := app.DB.First(&sub, subnoteryID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
+		return
+	}
+	if err := app.DB.Model(&sub).Association("Admins").Delete(&target); err != nil {
+		subnoteryLog.Log("REMOVE_ADMIN", "Failed to remove admin", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove admin"})
+		return
+	}
+
+	subnoteryLog.Log("REMOVE_ADMIN", "Admin removed", "subnoteryID", subnoteryID, "targetUserID", targetUID, "requesterID", requesterID)
+	c.JSON(http.StatusOK, gin.H{"message": "Admin removed successfully"})
+}
+
+// UploadSubnoteryBanner handles banner image upload for a subnotery.
+//
+// Validates image type (JPEG/PNG/WebP/GIF) and magic bytes, stores in R2 at
+// `banners/{subnotery_id}/banner.{ext}`, and updates the BannerURL field.
+//
+// Route: POST /api/v1/subnoteries/:subnotery_id/banner
+func (app *App) UploadSubnoteryBanner(c *gin.Context) {
+	subnoteryLog.Log("BANNER_UPLOAD", "Processing banner upload request")
+
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+	userID := helpers.GetUserID(c)
+
+	// Verify admin permission
+	if !app.isSubnoteryAdmin(userID, uint(subnoteryID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can upload banners"})
+		return
+	}
+
+	if app.R2 == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "File storage not configured"})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("banner")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No banner file provided"})
+		return
+	}
+	defer file.Close()
+
+	if header.Size > 5*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Banner must be under 5 MB"})
+		return
+	}
+
+	// Read file bytes for magic-byte validation
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
+		return
+	}
+
+	ext := detectImageType(data)
+	if ext == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid image type. Allowed: JPEG, PNG, WebP, GIF"})
+		return
+	}
+
+	objectKey := fmt.Sprintf("banners/%d/banner.%s", subnoteryID, ext)
+	contentType := "image/" + ext
+	if ext == "jpg" {
+		contentType = "image/jpeg"
+	}
+
+	_, err = app.R2.S3Client.PutObject(c.Request.Context(), &s3.PutObjectInput{
+		Bucket:        aws.String(app.R2.BucketName),
+		Key:           aws.String(objectKey),
+		Body:          bytes.NewReader(data),
+		ContentLength: aws.Int64(int64(len(data))),
+		ContentType:   aws.String(contentType),
+	})
+	if err != nil {
+		subnoteryLog.Log("BANNER_UPLOAD", "R2 upload failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload banner"})
+		return
+	}
+
+	// Update the BannerURL in the database
+	if err := app.DB.Model(&models.Subnotery{}).Where("id = ?", subnoteryID).
+		Update("banner_url", objectKey).Error; err != nil {
+		subnoteryLog.Log("BANNER_UPLOAD", "DB update failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update banner"})
+		return
+	}
+
+	subnoteryLog.Log("BANNER_UPLOAD", "Banner uploaded", "subnoteryID", subnoteryID, "key", objectKey)
+	c.JSON(http.StatusOK, gin.H{"message": "Banner uploaded successfully", "banner_url": objectKey})
+}
+
+// DeleteSubnoteryBanner removes the banner image for a subnotery.
+//
+// Route: DELETE /api/v1/subnoteries/:subnotery_id/banner
+func (app *App) DeleteSubnoteryBanner(c *gin.Context) {
+	subnoteryLog.Log("BANNER_DELETE", "Processing banner delete request")
+
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+	userID := helpers.GetUserID(c)
+
+	if !app.isSubnoteryAdmin(userID, uint(subnoteryID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can delete banners"})
+		return
+	}
+
+	// Clear banner URL in DB
+	if err := app.DB.Model(&models.Subnotery{}).Where("id = ?", subnoteryID).
+		Update("banner_url", "").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete banner"})
+		return
+	}
+
+	// Best-effort R2 cleanup
+	if app.R2 != nil {
+		ctx := c.Request.Context()
+		for _, ext := range []string{"jpg", "png", "webp", "gif"} {
+			_, _ = app.R2.S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(app.R2.BucketName),
+				Key:    aws.String(fmt.Sprintf("banners/%d/banner.%s", subnoteryID, ext)),
+			})
+		}
+	}
+
+	subnoteryLog.Log("BANNER_DELETE", "Banner deleted", "subnoteryID", subnoteryID)
+	c.JSON(http.StatusOK, gin.H{"message": "Banner deleted successfully"})
+}
+
+// GetSubnoteryBanner proxies the banner image from R2 with 24h cache headers.
+//
+// Route: GET /api/v1/subnoteries/:subnotery_id/banner
+func (app *App) GetSubnoteryBanner(c *gin.Context) {
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+
+	var sub models.Subnotery
+	if err := app.DB.Select("id", "banner_url").First(&sub, subnoteryID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
+		return
+	}
+
+	if sub.BannerURL == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No banner set"})
+		return
+	}
+
+	if app.R2 == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "File storage not configured"})
+		return
+	}
+
+	result, err := app.R2.S3Client.GetObject(c.Request.Context(), &s3.GetObjectInput{
+		Bucket: aws.String(app.R2.BucketName),
+		Key:    aws.String(sub.BannerURL),
+	})
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Banner not found"})
+		return
+	}
+	defer result.Body.Close()
+
+	contentLength := int64(0)
+	if result.ContentLength != nil {
+		contentLength = *result.ContentLength
+	}
+	contentType := "application/octet-stream"
+	if result.ContentType != nil {
+		contentType = *result.ContentType
+	}
+
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.DataFromReader(http.StatusOK, contentLength, contentType, result.Body, nil)
+}
+
+// isSubnoteryAdmin checks if a user is an admin of a specific subnotery (or global admin).
+func (app *App) isSubnoteryAdmin(userID uint64, subnoteryID uint) bool {
+	var user models.User
+	if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
+		return false
+	}
+	if user.IsGlobalAdmin {
+		return true
+	}
+	var count int64
+	app.DB.Table("user_admins").
+		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
+		Count(&count)
+	return count > 0
+}
+
+// detectImageType returns the file extension based on magic bytes, or "" if unknown.
+func detectImageType(data []byte) string {
+	if len(data) < 4 {
+		return ""
+	}
+	// JPEG: FF D8 FF
+	if data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return "jpg"
+	}
+	// PNG: 89 50 4E 47
+	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+		return "png"
+	}
+	// GIF: GIF87a or GIF89a
+	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
+		return "gif"
+	}
+	// WebP: RIFF....WEBP
+	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+		data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
+		return "webp"
+	}
+	return ""
 }
