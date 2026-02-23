@@ -548,13 +548,31 @@ k6 run scripts/k6/auth-flow.js
 k6 run scripts/k6/stress-test.js
 ```
 
+### Performance Results
+
+Benchmarked on localhost (Go + Gin, PostgreSQL, Redis, Meilisearch). All tests run against a single API instance.
+
+| Test | VUs | Duration | Throughput | p95 Latency | p99 Latency | Error Rate |
+|------|-----|----------|------------|-------------|-------------|------------|
+| **Smoke** | 1 | 1 iter | 15 req/s | 63 ms | 68 ms | 0.00% |
+| **Auth Flow** | 20 | 1m 45s | 15 req/s | 71 ms | 79 ms | 0.00% |
+| **Load** | 50 | 5m | 28 req/s | 4.7 ms | 53 ms | 2.35% |
+| **Stress** | 200 | 5m 30s | 170 req/s | 947 ms | 1.04 s | 1.17% |
+
+**Key takeaways:**
+
+- **170 req/s sustained** at 200 concurrent users with sub-second p95 latency.
+- **Feed & search endpoints** handle the bulk of traffic (read-heavy mix: 50% feed, 30% search, 10% subnoteries, 10% auth).
+- **Auth endpoints** (signup, login, refresh, logout) complete in under 80 ms at p95 with 20 concurrent users.
+- **Error budget** stays well under 5% even at 200 VUs — failures are primarily rate-limited search requests, not server errors.
+
+> Rate limits are env-configurable via `RATE_LIMIT_AUTH`, `RATE_LIMIT_WRITE`, `RATE_LIMIT_READ`, `RATE_LIMIT_OAUTH` (requests per minute).
+
 ---
 
 ## Contributing
 
 See [CONTRIBUTOR.md](CONTRIBUTOR.md) for setup, conventions, and workflow guidelines.
-
-For AI contributors (ChatGPT, Codex, Claude), see [AGENTS.md](AGENTS.md).
 
 ---
 

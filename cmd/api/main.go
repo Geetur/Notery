@@ -25,6 +25,7 @@ func main() {
 	// ── Configuration ──────────────────────────────────────────────────────
 	log.Println("loading configuration...")
 	cfg := config.Load()
+	middleware.LoadRateLimitOverrides()
 
 	// ── Dependencies ───────────────────────────────────────────────────────
 	db, err := database.InitDatabase()

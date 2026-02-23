@@ -636,6 +636,12 @@ func (app *App) GetPurchaseHistory(c *gin.Context) {
 	}
 
 	purchaseLog.Log("HISTORY", "fetched", "user_id", userID, "count", len(purchases), "total", total)
+
+	// Ensure JSON [] (not null) for empty results.
+	if purchases == nil {
+		purchases = []PurchaseWithNote{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"purchases": purchases,
 		"page":      pag.Page,
@@ -920,5 +926,11 @@ func (app *App) GetMyPurchases(c *gin.Context) {
 	}
 
 	purchaseLog.Log("MY_PURCHASES", "success", "user_id", userID, "count", len(purchasedNotes))
+
+	// Ensure JSON [] (not null) for empty results.
+	if purchasedNotes == nil {
+		purchasedNotes = []PurchasedNote{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"purchases": purchasedNotes})
 }
