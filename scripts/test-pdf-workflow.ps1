@@ -128,9 +128,9 @@ if (-not $noteResponse) {
     Write-Host "Failed to create note. Exiting." -ForegroundColor Red
     exit 1
 }
-$noteId = $noteResponse.ID
+$noteId = $noteResponse.id
 Write-Host "   Note ID: $noteId" -ForegroundColor Gray
-Write-Host "   Status: $($noteResponse.Status)" -ForegroundColor Gray
+Write-Host "   Status: $($noteResponse.status)" -ForegroundColor Gray
 
 # ============================================
 # STEP 3: Upload PDF for the note
@@ -266,8 +266,9 @@ $purchaseResponse = Test-Endpoint -Method "POST" -Url "$BaseUrl/notes/$noteId/pu
 } -Description "Buyer purchasing the note"
 
 if ($purchaseResponse) {
-    Write-Host "   Purchase ID: $($purchaseResponse.purchase.id)" -ForegroundColor Gray
-    Write-Host "   Price Paid: $($purchaseResponse.purchase.price_paid)" -ForegroundColor Gray
+    Write-Host "   Order ID: $($purchaseResponse.order_id)" -ForegroundColor Gray
+    Write-Host "   Status: $($purchaseResponse.status)" -ForegroundColor Gray
+    Write-Host "   Price Paid: $($purchaseResponse.price_paid)" -ForegroundColor Gray
 }
 
 # ============================================
@@ -319,8 +320,8 @@ $historyResponse = Test-Endpoint -Method "GET" -Url "$BaseUrl/me/purchases/histo
     Authorization = "Bearer $buyerToken"
 } -Description "Getting purchase history"
 
-if ($historyResponse -and $historyResponse.purchases) {
-    Write-Host "   Total purchases: $($historyResponse.purchases.Count)" -ForegroundColor Gray
+if ($historyResponse) {
+    Write-Host "   Total purchases: $($historyResponse.total)" -ForegroundColor Gray
 }
 
 # ============================================

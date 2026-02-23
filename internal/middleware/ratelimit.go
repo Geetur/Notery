@@ -15,6 +15,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -40,9 +41,9 @@ var DefaultWriteRateLimit = RateLimitConfig{
 }
 
 // DefaultAuthRateLimit is the limit for authentication endpoints
-// (login, signup, password reset): 5 requests per minute to slow brute-force.
+// (login, signup, password reset): 15 requests per minute to slow brute-force.
 var DefaultAuthRateLimit = RateLimitConfig{
-	MaxRequests: 5,
+	MaxRequests: 15,
 	Window:      1 * time.Minute,
 }
 
@@ -59,6 +60,32 @@ var DefaultReadRateLimit = RateLimitConfig{
 var DefaultOAuthRateLimit = RateLimitConfig{
 	MaxRequests: 30,
 	Window:      1 * time.Minute,
+}
+
+// LoadRateLimitOverrides reads optional RATE_LIMIT_* env vars and applies them.
+// Must be called after godotenv.Load() so .env values are available.
+// Supported: RATE_LIMIT_AUTH, RATE_LIMIT_WRITE, RATE_LIMIT_READ, RATE_LIMIT_OAUTH.
+func LoadRateLimitOverrides() {
+	if v := os.Getenv("RATE_LIMIT_AUTH"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			DefaultAuthRateLimit.MaxRequests = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_WRITE"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			DefaultWriteRateLimit.MaxRequests = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_READ"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			DefaultReadRateLimit.MaxRequests = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_OAUTH"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			DefaultOAuthRateLimit.MaxRequests = n
+		}
+	}
 }
 
 // RateLimit returns a Gin middleware that enforces per-user rate limiting.

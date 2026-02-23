@@ -357,7 +357,7 @@ $pendingNote = Api "POST" "$base/notes" -Headers $hdrsA -Body @{
 $pendingId = $pendingNote.id
 
 try {
-    Api "POST" "$base/notes/$pendingId/comments" -Headers $hdrsA -Body @{
+    Api "POST" "$base/notes/$pendingId/comments" -Headers $hdrsB -Body @{
         body = "Should fail."
     }
     Assert "Comment on pending note blocked" $false
