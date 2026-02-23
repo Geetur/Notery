@@ -8,8 +8,9 @@ export type NoteStatus = "Pending" | "Approved" | "Rejected";
 export type VoteDirection = "up" | "down";
 export type OrderStatus = "pending" | "paid" | "fulfilled" | "failed" | "refunded";
 export type ProfileVisibility = "public" | "private";
-export type CommentSortOrder = "best" | "new" | "top" | "controversial" | "old";
-export type SearchType = "notes" | "subnoteries" | "users" | "comments";
+export type CommentSortOrder = "hot" | "new" | "top" | "controversial";
+export type SearchType = "notes" | "subnoteries" | "users" | "comments" | "all";
+export type SearchSort = "hot" | "new" | "top" | "controversial";
 
 // ─── Domain Models ────────────────────────────────────────────────────────────
 
@@ -18,15 +19,27 @@ export interface Note {
     creator_id: number;
     title: string;
     author: string;
+    description: string;
     status: NoteStatus;
     subnotery_id: number;
+    subnotery_name: string;
     price: number; // cents
     has_pdf: boolean;
     pdf_size: number;
     pdf_uploaded_at: string | null;
+    has_thumbnail: boolean;
+    thumbnail_url: string;
     upvotes: number;
     downvotes: number;
     hotness: number;
+    /** Current user's vote direction: "up", "down", or "" (no vote). */
+    user_vote: string;
+    /** Total number of comments on this note. */
+    comment_count: number;
+    /** Whether the requesting user has full PDF access (creator, admin, purchased, free). */
+    has_full_access: boolean;
+    /** Whether comments are disabled on this note. */
+    is_locked: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -36,8 +49,42 @@ export interface Subnotery {
     name: string;
     admins?: User[];
     members?: User[];
+    admin_count?: number;
+    member_count?: number;
     created_at: string;
     updated_at: string;
+}
+
+export interface SubnoteryListItem {
+    id: number;
+    name: string;
+    admin_count: number;
+    member_count: number;
+    created_at: string;
+}
+
+export interface SubnoteryDetail {
+    id: number;
+    name: string;
+    description: string;
+    content_type: string;
+    rules: string;
+    banner_url: string;
+    background_color: string;
+    min_post_notoriety: number;
+    min_comment_notoriety: number;
+    admins: { id: number; username: string }[];
+    member_count: number;
+    is_member: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface SubnoteryListResponse {
+    subnoteries: SubnoteryListItem[];
+    total: number;
+    page: number;
+    limit: number;
 }
 
 export interface User {
@@ -116,9 +163,9 @@ export interface ResetPasswordRequest {
     new_password: string;
 }
 
-export interface ChangePasswordRequest {
-    current_password: string;
-    new_password: string;
+export interface OAuthProviders {
+    google: boolean;
+    github: boolean;
 }
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
@@ -130,9 +177,12 @@ export interface SelfProfile {
     display_name: string;
     bio: string;
     avatar_url: string;
+    banner_url: string;
     profile_visibility: ProfileVisibility;
     profile_updated_at: string | null;
     email_verified: boolean;
+    post_karma: number;
+    comment_karma: number;
     created_at: string;
     updated_at: string;
 }
@@ -141,13 +191,15 @@ export interface PublicProfile {
     id: number;
     username: string;
     display_name: string;
+    post_karma: number;
+    comment_karma: number;
     created_at: string;
     bio?: string;
     avatar_url?: string;
+    banner_url?: string;
 }
 
 export interface UpdateProfileRequest {
-    display_name?: string;
     bio?: string;
     avatar_url?: string;
     profile_visibility?: ProfileVisibility;
@@ -168,6 +220,7 @@ export interface CommentResponse {
     depth: number;
     is_deleted: boolean;
     is_edited: boolean;
+    is_pinned: boolean;
     created_at: string;
     user_vote: -1 | 0 | 1;
     children: CommentResponse[];
@@ -216,7 +269,7 @@ export interface VoteResponse {
 
 export interface CreateNoteRequest {
     title: string;
-    author: string;
+    description?: string;
     subnotery_name: string;
     price: number; // cents
 }
@@ -317,6 +370,23 @@ export interface CommentsListResponse {
     truncated: boolean;
 }
 
+export interface MyComment {
+    id: number;
+    note_id: number;
+    note_title: string;
+    body: string;
+    upvotes: number;
+    downvotes: number;
+    created_at: string;
+}
+
+export interface MyCommentsResponse {
+    comments: MyComment[];
+    total: number;
+    page: number;
+    limit: number;
+}
+
 // ─── Order Status ─────────────────────────────────────────────────────────────
 
 export interface OrderStatusResponse {
@@ -346,6 +416,6 @@ export interface PaginationParams {
 
 // ─── Feed Sort (UI-only, not in API) ──────────────────────────────────────────
 
-export type FeedSort = "hot" | "new" | "top";
+export type FeedSort = "hot" | "new" | "top" | "controversial";
 export type TimeFilter = "day" | "week" | "month" | "year" | "all";
 export type ViewMode = "card" | "compact";

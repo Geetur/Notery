@@ -46,6 +46,15 @@ type App struct {
 
 	// BaseURL is the public URL for this API instance (used in email links).
 	BaseURL string
+
+	// FrontendURL is the public URL for the frontend (used for OAuth redirects).
+	FrontendURL string
+
+	// OAuth2 configuration for Google and GitHub login.
+	GoogleClientID     string
+	GoogleClientSecret string
+	GitHubClientID     string
+	GitHubClientSecret string
 }
 
 // AppConfig holds the configuration options for creating an App instance.
@@ -59,21 +68,33 @@ type AppConfig struct {
 	Payment     payment.Service
 	Mailer      email.Mailer
 	BaseURL     string
+	FrontendURL string
+
+	// OAuth2
+	GoogleClientID     string
+	GoogleClientSecret string
+	GitHubClientID     string
+	GitHubClientSecret string
 }
 
 // NewApp creates and returns a new App instance with the given configuration.
 // All dependencies are required except R2 and Meilisearch which are optional.
 func NewApp(cfg AppConfig) *App {
 	app := &App{
-		DB:          cfg.DB,
-		RDB:         cfg.Redis,
-		R2:          cfg.R2,
-		Search:      cfg.Meilisearch,
-		SearchIndex: cfg.SearchIndex,
-		JWTSecret:   cfg.JWTSecret,
-		Payment:     cfg.Payment,
-		Mailer:      cfg.Mailer,
-		BaseURL:     cfg.BaseURL,
+		DB:                 cfg.DB,
+		RDB:                cfg.Redis,
+		R2:                 cfg.R2,
+		Search:             cfg.Meilisearch,
+		SearchIndex:        cfg.SearchIndex,
+		JWTSecret:          cfg.JWTSecret,
+		Payment:            cfg.Payment,
+		Mailer:             cfg.Mailer,
+		BaseURL:            cfg.BaseURL,
+		FrontendURL:        cfg.FrontendURL,
+		GoogleClientID:     cfg.GoogleClientID,
+		GoogleClientSecret: cfg.GoogleClientSecret,
+		GitHubClientID:     cfg.GitHubClientID,
+		GitHubClientSecret: cfg.GitHubClientSecret,
 	}
 
 	appLog.Log("INIT", "App initialized", "hasDB", cfg.DB != nil, "hasRedis", cfg.Redis != nil, "hasR2", cfg.R2 != nil, "hasMeili", cfg.Meilisearch != nil, "hasJWT", cfg.JWTSecret != "", "hasPayment", cfg.Payment != nil)

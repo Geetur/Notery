@@ -20,7 +20,7 @@ export function getCart(): Promise<CartResponse> {
 
 /** POST /cart — Add a note to cart. */
 export function addToCart(noteId: number): Promise<{ message: string }> {
-    return apiPost("/cart", { note_id: noteId });
+    return apiPost("/cart", { item_id: String(noteId) });
 }
 
 /** DELETE /cart/:itemId — Remove a note from cart. */
@@ -43,7 +43,7 @@ export function checkoutCart(
 export function purchaseNote(
     noteId: number
 ): Promise<SinglePurchaseResponse> {
-    return apiPost(`/notes/${noteId}/purchase`);
+    return apiPost(`/notes/${noteId}/purchase`, {});
 }
 
 // ─── Purchase Status ──────────────────────────────────────────────────────────

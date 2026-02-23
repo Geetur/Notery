@@ -53,6 +53,27 @@ func validSearchType(t SearchType) bool {
 	return false
 }
 
+// SearchSort enumerates the allowed sort options for search results.
+type SearchSort string
+
+const (
+	SortRelevance     SearchSort = "relevance"
+	SortHot           SearchSort = "hot"
+	SortNew           SearchSort = "new"
+	SortTop           SearchSort = "top"
+	SortComments      SearchSort = "comments"
+	SortControversial SearchSort = "controversial"
+)
+
+// validSearchSort returns true if the given sort option is recognized.
+func validSearchSort(s SearchSort) bool {
+	switch s {
+	case SortRelevance, SortHot, SortNew, SortTop, SortComments, SortControversial:
+		return true
+	}
+	return false
+}
+
 // Search handles the unified search endpoint.
 //
 // Dispatches to type-specific search functions based on the "type" query param.
@@ -87,38 +108,63 @@ func (app *App) SearchAll(c *gin.Context) {
 
 	pag := helpers.ParsePagination(c)
 
-	searchLog.Log("SEARCH", "processing", "query", query, "type", string(searchType), "page", pag.Page)
+	sort := SearchSort(c.DefaultQuery("sort", string(SortRelevance)))
+	if !validSearchSort(sort) {
+		sort = SortRelevance
+	}
+
+	searchLog.Log("SEARCH", "processing", "query", query, "type", string(searchType), "sort", string(sort), "page", pag.Page)
 
 	switch searchType {
 	case SearchNotes:
-		app.searchNotes(c, query, pag)
+		app.searchNotes(c, query, pag, sort)
 	case SearchSubnoteries:
-		app.searchSubnoteries(c, query, pag)
+		app.searchSubnoteries(c, query, pag, sort)
 	case SearchUsers:
-		app.searchUsers(c, query, pag)
+		app.searchUsers(c, query, pag, sort)
 	case SearchComments:
-		app.searchComments(c, query, pag)
+		app.searchComments(c, query, pag, sort)
 	}
 }
 
 // searchNotes queries approved notes via Meilisearch full-text search.
+// For comment-count sorting, falls back to a database query since Meilisearch
+// does not store comment counts.
 //
-// DB: None — reads from Meilisearch index (synced on note approval).
-// Technologies: Meilisearch (offset/limit pagination).
-func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination) {
-	if app.Search == nil || app.SearchIndex == "" {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Search is not configured"})
+// DB: Meilisearch (default) or PostgreSQL (comment-count fallback).
+// Technologies: Meilisearch (offset/limit pagination), GORM.
+func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
+	// Comment-count and controversial sorts require DB computation — fall back to DB search.
+	if sort == SortComments || sort == SortControversial {
+		app.searchNotesDB(c, query, pag, sort)
 		return
+	}
+
+	if app.Search == nil || app.SearchIndex == "" {
+		// Meilisearch unavailable — fall back to DB for all sorts.
+		app.searchNotesDB(c, query, pag, sort)
+		return
+	}
+
+	var meiliSort []string
+	switch sort {
+	case SortHot:
+		meiliSort = []string{"hotness:desc"}
+	case SortNew:
+		meiliSort = []string{"created_at:desc"}
+	case SortTop:
+		meiliSort = []string{"upvotes:desc"}
 	}
 
 	index := app.Search.Index(app.SearchIndex)
 	results, err := index.Search(query, &meilisearch.SearchRequest{
 		Offset: int64(pag.Offset),
 		Limit:  int64(pag.Limit),
+		Sort:   meiliSort,
 	})
 	if err != nil {
-		searchLog.Log("SEARCH", "meilisearch error", "query", query, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
+		searchLog.Log("SEARCH", "meilisearch error, falling back to DB", "query", query, "error", err)
+		app.searchNotesDB(c, query, pag, sort)
 		return
 	}
 
@@ -132,20 +178,84 @@ func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination
 	})
 }
 
+// searchNotesDB searches approved notes via PostgreSQL ILIKE as a fallback
+// when Meilisearch is unavailable or when the sort requires DB computation
+// (e.g., comment count).
+//
+// DB: COUNT + SELECT from notes WHERE status=Approved AND title/author ILIKE.
+// Technologies: PostgreSQL (GORM ILIKE + optional subquery for comment count).
+func (app *App) searchNotesDB(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
+	pattern := "%" + query + "%"
+
+	var total int64
+	app.DB.Model(&models.Note{}).
+		Where("status = ? AND (title ILIKE ? OR author ILIKE ?)", models.StatusApproved, pattern, pattern).
+		Count(&total)
+
+	q := app.DB.Where("status = ? AND (title ILIKE ? OR author ILIKE ?)", models.StatusApproved, pattern, pattern)
+
+	switch sort {
+	case SortComments:
+		q = q.Select("notes.*, (SELECT COUNT(*) FROM comments WHERE comments.note_id = notes.id AND comments.is_deleted = false) as comment_count").
+			Order("comment_count DESC")
+	case SortHot:
+		q = q.Order("hotness DESC")
+	case SortNew:
+		q = q.Order("created_at DESC")
+	case SortTop:
+		q = q.Order("(upvotes - downvotes) DESC")
+	case SortControversial:
+		q = q.Order("(upvotes + downvotes) * 1.0 / CASE WHEN ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) < 1 THEN 1 ELSE ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) END DESC, created_at DESC")
+	default:
+		q = q.Order("created_at DESC")
+	}
+
+	var notes []models.Note
+	if err := q.Offset(pag.Offset).Limit(pag.Limit).Find(&notes).Error; err != nil {
+		searchLog.Log("SEARCH", "notes db error", "query", query, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
+		return
+	}
+
+	// Populate subnotery names for display
+	app.populateSubnoteryNames(notes)
+
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
+	searchLog.Log("SEARCH", "notes db results", "query", query, "count", len(notes))
+	c.JSON(http.StatusOK, gin.H{
+		"type":    "notes",
+		"results": notes,
+		"total":   total,
+		"page":    pag.Page,
+		"limit":   pag.Limit,
+	})
+}
+
 // searchSubnoteries queries subnotery names via database ILIKE pattern matching.
 //
 // DB: COUNT + SELECT from subnoteries WHERE name ILIKE. Paginated with OFFSET/LIMIT.
 // Technologies: PostgreSQL (GORM ILIKE).
-func (app *App) searchSubnoteries(c *gin.Context, query string, pag helpers.Pagination) {
+func (app *App) searchSubnoteries(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"
 
 	var total int64
 	app.DB.Model(&models.Subnotery{}).Where("name ILIKE ?", pattern).Count(&total)
 
+	orderClause := "name ASC"
+	switch sort {
+	case SortNew:
+		orderClause = "created_at DESC"
+	case SortHot, SortTop:
+		// Sort by member count as popularity proxy
+		orderClause = "(SELECT COUNT(*) FROM subnotery_members WHERE subnotery_members.subnotery_id = subnoteries.id) DESC"
+	}
+
 	var results []models.Subnotery
 	if err := app.DB.Where("name ILIKE ?", pattern).
 		Offset(pag.Offset).Limit(pag.Limit).
-		Order("name ASC").
+		Order(orderClause).
 		Find(&results).Error; err != nil {
 		searchLog.Log("SEARCH", "subnotery db error", "query", query, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
@@ -167,7 +277,7 @@ func (app *App) searchSubnoteries(c *gin.Context, query string, pag helpers.Pagi
 //
 // DB: COUNT + SELECT from users WHERE username/display_name ILIKE. Paginated.
 // Technologies: PostgreSQL (GORM ILIKE).
-func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination) {
+func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"
 
 	var total int64
@@ -175,10 +285,18 @@ func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination
 		Where("username ILIKE ? OR display_name ILIKE ?", pattern, pattern).
 		Count(&total)
 
+	orderClause := "username ASC"
+	switch sort {
+	case SortNew:
+		orderClause = "created_at DESC"
+	case SortHot, SortTop:
+		orderClause = "created_at DESC"
+	}
+
 	var users []models.User
 	if err := app.DB.Where("username ILIKE ? OR display_name ILIKE ?", pattern, pattern).
 		Offset(pag.Offset).Limit(pag.Limit).
-		Order("username ASC").
+		Order(orderClause).
 		Find(&users).Error; err != nil {
 		searchLog.Log("SEARCH", "user db error", "query", query, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
@@ -208,7 +326,7 @@ func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination
 // DB: COUNT + SELECT from comments JOIN notes WHERE status=Approved AND body ILIKE.
 //     Fetches usernames via fetchCommentUsernames helper. Paginated.
 // Technologies: PostgreSQL (GORM ILIKE + JOIN).
-func (app *App) searchComments(c *gin.Context, query string, pag helpers.Pagination) {
+func (app *App) searchComments(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"
 
 	var total int64
@@ -218,13 +336,21 @@ func (app *App) searchComments(c *gin.Context, query string, pag helpers.Paginat
 			models.StatusApproved, false, pattern).
 		Count(&total)
 
+	orderClause := "comments.created_at DESC"
+	switch sort {
+	case SortHot, SortTop:
+		orderClause = "(comments.upvotes - comments.downvotes) DESC"
+	case SortNew:
+		orderClause = "comments.created_at DESC"
+	}
+
 	var comments []models.Comment
 	if err := app.DB.
 		Joins("JOIN notes ON notes.id = comments.note_id").
 		Where("notes.status = ? AND comments.is_deleted = ? AND comments.body ILIKE ?",
 			models.StatusApproved, false, pattern).
 		Offset(pag.Offset).Limit(pag.Limit).
-		Order("comments.created_at DESC").
+		Order(orderClause).
 		Find(&comments).Error; err != nil {
 		searchLog.Log("SEARCH", "comment db error", "query", query, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})

@@ -120,6 +120,20 @@ func RequireAdmin(db *gorm.DB) gin.HandlerFunc {
 			}
 		}
 
+		// Try resolving subnotery from query parameter (e.g. GET /notes/pending?subnotery_id=X).
+		if subnoteryID == 0 {
+			if qsID := c.Query("subnotery_id"); qsID != "" {
+				parsedID, err := strconv.ParseUint(qsID, 10, 64)
+				if err != nil {
+					mwLog.Log("ADMIN", "Invalid subnotery_id query param", "value", qsID)
+					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid subnotery ID"})
+					return
+				}
+				subnoteryID = parsedID
+				mwLog.Log("ADMIN", "Resolved subnotery from query param", "subnoteryID", subnoteryID)
+			}
+		}
+
 		// If no subnotery context could be resolved, deny access.
 		// Subnotery admins must always operate within a resolved subnotery scope.
 		// Without a specific subnotery to check against, we cannot verify authorization.

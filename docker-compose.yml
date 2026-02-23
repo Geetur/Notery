@@ -1,8 +1,7 @@
-
 services:
   # database
   postgres:
-    image:  postgres:16-alpine
+    image: postgres:16-alpine
     container_name: notery_db
     environment:
       POSTGRES_USER: ${DB_USER}
@@ -16,7 +15,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: notery_cache
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD}" ]
     ports:
       - "6379:6379"
     volumes:
@@ -31,6 +30,7 @@ services:
       - "7700:7700"
     volumes:
       - meilisearch_data:/data.ms
+
 volumes:
   postgres_data:
   redis_data:

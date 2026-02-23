@@ -4,7 +4,7 @@
 # Tests the complete PDF upload, approval, purchase, and viewing workflow.
 # Updated to include username on signup.
 
-# need to add {"error":"Title, SubnoteryName, Author, and Price are required"}
+# Author is auto-derived from the creating user's display name.
 
 $BaseUrl = "http://localhost:8080/api/v1"
 
@@ -59,7 +59,7 @@ $buyerEmail   = "buyer_$timestamp@test.com"
 # ============================================
 Write-Host "`n`n=== STEP 1: Create Test Users ===" -ForegroundColor Cyan
 
-$creatorSignup = Test-Endpoint -Method "POST" -Url "$BaseUrl/signup" -Body @{
+$creatorSignup = Test-Endpoint -Method "POST" -Url "$BaseUrl/auth/signup" -Body @{
     email    = $creatorEmail
     username = "creator$timestamp"
     password = "Test123!"
@@ -70,7 +70,10 @@ if (-not $creatorSignup) {
     exit 1
 }
 
-$creatorLogin = Test-Endpoint -Method "POST" -Url "$BaseUrl/login" -Body @{
+# Verify emails directly in DB (write endpoints require verified email)
+docker exec notery_db psql -U admin -d notery_db -qc "UPDATE users SET email_verified=true WHERE email='$creatorEmail';" 2>$null
+
+$creatorLogin = Test-Endpoint -Method "POST" -Url "$BaseUrl/auth/login" -Body @{
     email    = $creatorEmail
     password = "Test123!"
 } -Description "Logging in as creator"
@@ -82,7 +85,7 @@ if (-not $creatorLogin) {
 $creatorToken = $creatorLogin.access_token
 Write-Host "   Creator token: $($creatorToken.Substring(0,20))..." -ForegroundColor Gray
 
-$buyerSignup = Test-Endpoint -Method "POST" -Url "$BaseUrl/signup" -Body @{
+$buyerSignup = Test-Endpoint -Method "POST" -Url "$BaseUrl/auth/signup" -Body @{
     email    = $buyerEmail
     username = "buyer$timestamp"
     password = "Test123!"
@@ -93,7 +96,10 @@ if (-not $buyerSignup) {
     exit 1
 }
 
-$buyerLogin = Test-Endpoint -Method "POST" -Url "$BaseUrl/login" -Body @{
+# Verify buyer email too
+docker exec notery_db psql -U admin -d notery_db -qc "UPDATE users SET email_verified=true WHERE email='$buyerEmail';" 2>$null
+
+$buyerLogin = Test-Endpoint -Method "POST" -Url "$BaseUrl/auth/login" -Body @{
     email    = $buyerEmail
     password = "Test123!"
 } -Description "Logging in as buyer"
@@ -114,7 +120,6 @@ $noteResponse = Test-Endpoint -Method "POST" -Url "$BaseUrl/notes" -Headers @{
     Authorization = "Bearer $creatorToken"
 } -Body @{
     title          = "Test Note with PDF"
-    author         = "Test Author"
     price          = 999
     subnotery_name = "TestSubnotery_$timestamp"
 } -Description "Creating a new note"

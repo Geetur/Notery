@@ -1,0 +1,133 @@
+# ci.yml — Notery CI pipeline.
+# Runs on every push and pull request to main.
+# Jobs: Go lint/vet/test/race/build, Frontend lint/build/test.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GO_VERSION: "1.25"
+  NODE_VERSION: "20"
+
+jobs:
+  # ─── Go Backend ──────────────────────────────────────────────────────────────
+
+  go-lint:
+    name: Go Lint & Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          gofmt -l .
+          test -z "$(gofmt -l .)" || (echo "Run gofmt to fix formatting" && exit 1)
+
+  go-test:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    needs: go-lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+
+      - name: Run tests
+        run: go test ./... -count=1 -timeout 120s -v
+        env:
+          CGO_ENABLED: 1
+
+      - name: Run tests with race detector
+        run: go test -race ./... -count=1 -timeout 180s
+        env:
+          CGO_ENABLED: 1
+
+  go-build:
+    name: Go Build
+    runs-on: ubuntu-latest
+    needs: go-lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+
+      - name: Build binary
+        run: go build -o notery-api ./cmd/api
+
+  # ─── Frontend ────────────────────────────────────────────────────────────────
+
+  frontend-build:
+    name: Frontend Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test -- --ci --coverage
+
+      - name: Build
+        run: npm run build
+
+  # ─── Final Gate ──────────────────────────────────────────────────────────────
+
+  ci-pass:
+    name: CI Pass
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [go-lint, go-test, go-build, frontend-build]
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.go-lint.result }}" != "success" ]] || \
+             [[ "${{ needs.go-test.result }}" != "success" ]] || \
+             [[ "${{ needs.go-build.result }}" != "success" ]] || \
+             [[ "${{ needs.frontend-build.result }}" != "success" ]]; then
+            echo "One or more CI jobs failed"
+            exit 1
+          fi
+          echo "All CI checks passed"

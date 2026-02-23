@@ -48,12 +48,15 @@ const (
 
 	// SortOld ranks by creation time, oldest first.
 	SortOld CommentSortOrder = "old"
+
+	// SortHot is an alias for SortBest — exposed under "hot" for UI consistency.
+	SortHot CommentSortOrder = "hot"
 )
 
 // ValidSortOrder returns true if the given sort order is recognized.
 func ValidSortOrder(s CommentSortOrder) bool {
 	switch s {
-	case SortBest, SortNew, SortTop, SortControversial, SortOld:
+	case SortBest, SortNew, SortTop, SortControversial, SortOld, SortHot:
 		return true
 	}
 	return false
@@ -82,6 +85,10 @@ const MaxWriteDepth = 15
 // Even if depth and pagination would allow more, we cap total tree nodes to prevent
 // unbounded memory use. The response includes continuation metadata when truncated.
 const MaxNodesPerRequest = 500
+
+// MaxPinnedComments is the maximum number of pinned comments allowed per note.
+// Admins can pin up to this many comments; additional pins are rejected.
+const MaxPinnedComments = 3
 
 // Comment represents a user's comment on a note.
 //
@@ -133,6 +140,11 @@ type Comment struct {
 	// IsDeleted marks a comment as soft-deleted.
 	// Soft-deleted comments display "[deleted]" but maintain tree structure.
 	IsDeleted bool `json:"is_deleted" gorm:"not null;default:false"`
+
+	// IsPinned marks a comment as pinned by an admin.
+	// Pinned comments are always displayed at the top of the comment list.
+	// Maximum 3 pinned comments per note.
+	IsPinned bool `json:"is_pinned" gorm:"not null;default:false"`
 
 	// EditedAt records when the comment was last edited outside the grace period.
 	// nil means never edited (or edited within EditGracePeriod of creation).

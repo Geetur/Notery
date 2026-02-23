@@ -19,7 +19,7 @@ interface NoteFeedProps {
 }
 
 export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
-    const { sort, viewMode, setSort } = useFeedStore();
+    const { sort, timeFilter, setSort } = useFeedStore();
     const loadMoreRef = useRef<HTMLDivElement>(null);
 
     // Sync initial sort from route if provided
@@ -40,13 +40,19 @@ export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
         isError,
         error,
     } = useInfiniteQuery({
-        queryKey: ["feed", sort],
+        queryKey: ["feed", sort, (sort === "top" || sort === "controversial") ? timeFilter : null],
         queryFn: async ({ pageParam = 1 }) => {
-            // Use hot feed for "hot" sort, approved notes for others
             if (sort === "hot") {
                 return getHotFeed({ page: pageParam, limit: 25 });
             }
-            return getApprovedNotes({ page: pageParam, limit: 25 });
+            // For "new", "top", "controversial": use the approved notes endpoint.
+            // Time filter applies to "top" and "controversial".
+            return getApprovedNotes({
+                page: pageParam,
+                limit: 25,
+                sort: sort,
+                time: (sort === "top" || sort === "controversial") ? timeFilter : undefined,
+            });
         },
         getNextPageParam: (lastPage, allPages) => {
             // Hot feed doesn't return total, so check if we got a full page
@@ -106,12 +112,11 @@ export function NoteFeed({ initialSort }: NoteFeedProps = {}) {
                     <p className="text-muted-foreground">No notes yet. Be the first to post!</p>
                 </div>
             ) : (
-                <div className="space-y-2">
+                <div className="space-y-4">
                     {allNotes.map((note) => (
                         <NoteCard
                             key={note.id}
                             note={note}
-                            viewMode={viewMode}
                         />
                     ))}
                 </div>

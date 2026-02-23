@@ -35,6 +35,16 @@ type Config struct {
 	SMTPUser string
 	SMTPPass string
 	SMTPFrom string
+
+	// OAuth2 configuration for Google and GitHub login.
+	GoogleClientID     string
+	GoogleClientSecret string
+	GitHubClientID     string
+	GitHubClientSecret string
+
+	// FrontendURL is the public URL for the frontend (used for OAuth redirects).
+	// Loaded from FRONTEND_URL env var. Defaults to http://localhost:3000.
+	FrontendURL string
 }
 
 // Load reads the .env file (if present) and returns a populated Config.
@@ -49,6 +59,11 @@ func Load() *Config {
 		baseURL = "http://localhost:8080"
 	}
 
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
 	cfg := &Config{
 		JWTSecret:           os.Getenv("JWT_SECRET"),
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
@@ -60,6 +75,11 @@ func Load() *Config {
 		SMTPUser:            os.Getenv("SMTP_USER"),
 		SMTPPass:            os.Getenv("SMTP_PASS"),
 		SMTPFrom:            os.Getenv("SMTP_FROM"),
+		GoogleClientID:      os.Getenv("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:  os.Getenv("GOOGLE_CLIENT_SECRET"),
+		GitHubClientID:      os.Getenv("GITHUB_CLIENT_ID"),
+		GitHubClientSecret:  os.Getenv("GITHUB_CLIENT_SECRET"),
+		FrontendURL:         frontendURL,
 	}
 
 	if cfg.JWTSecret == "" {

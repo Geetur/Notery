@@ -53,6 +53,14 @@ var DefaultReadRateLimit = RateLimitConfig{
 	Window:      1 * time.Minute,
 }
 
+// DefaultOAuthRateLimit is the limit for OAuth redirect/callback endpoints:
+// 30 requests per minute. Higher than auth because each OAuth flow consumes
+// two requests (redirect + callback) and users may retry after failures.
+var DefaultOAuthRateLimit = RateLimitConfig{
+	MaxRequests: 30,
+	Window:      1 * time.Minute,
+}
+
 // RateLimit returns a Gin middleware that enforces per-user rate limiting.
 // It requires a Redis client and a configuration. The keyPrefix is prepended to
 // the rate-limit key so different route groups can have independent counters

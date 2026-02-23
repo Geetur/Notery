@@ -200,6 +200,14 @@ func (app *App) GetHotFeed(c *gin.Context) {
 	// Fetch full note data from database
 	notes := app.fetchNotes(noteIDs)
 
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
+	// Populate user votes if authenticated
+	if authenticated {
+		app.populateUserVotes(userID, notes)
+	}
+
 	duration := time.Since(start)
 	feedLog.Log("GET_FEED", "served", "count", len(notes), "page", pag.Page, "duration_ms", duration.Milliseconds())
 
@@ -308,7 +316,97 @@ func (app *App) fetchNotes(noteIDs []string) []models.Note {
 		}
 	}
 
+	// Populate subnotery names
+	app.populateSubnoteryNames(ordered)
+
 	return ordered
+}
+
+// populateSubnoteryNames batch-fetches subnotery names and populates SubnoteryName on each note.
+func (app *App) populateSubnoteryNames(notes []models.Note) {
+	if len(notes) == 0 {
+		return
+	}
+	// Collect unique subnotery IDs
+	idSet := make(map[uint]struct{})
+	for _, n := range notes {
+		idSet[n.SubnoteryID] = struct{}{}
+	}
+	ids := make([]uint, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	// Batch fetch names
+	var subs []models.Subnotery
+	app.DB.Select("id, name").Where("id IN ?", ids).Find(&subs)
+	nameMap := make(map[uint]string, len(subs))
+	for _, s := range subs {
+		nameMap[s.ID] = s.Name
+	}
+	// Populate
+	for i := range notes {
+		notes[i].SubnoteryName = nameMap[notes[i].SubnoteryID]
+	}
+}
+
+// populateCommentCounts batch-fetches comment counts for a slice of notes
+// and populates the CommentCount field on each note.
+func (app *App) populateCommentCounts(notes []models.Note) {
+	if len(notes) == 0 {
+		return
+	}
+	noteIDs := make([]uint, 0, len(notes))
+	for _, n := range notes {
+		noteIDs = append(noteIDs, n.ID)
+	}
+
+	type countRow struct {
+		NoteID uint
+		Cnt    int
+	}
+	var rows []countRow
+	if err := app.DB.Model(&models.Comment{}).
+		Select("note_id, COUNT(*) as cnt").
+		Where("note_id IN ?", noteIDs).
+		Group("note_id").
+		Scan(&rows).Error; err != nil {
+		feedLog.Log("HELPER", "failed to batch-fetch comment counts", "error", err)
+		return
+	}
+
+	countMap := make(map[uint]int, len(rows))
+	for _, r := range rows {
+		countMap[r.NoteID] = r.Cnt
+	}
+	for i := range notes {
+		notes[i].CommentCount = countMap[notes[i].ID]
+	}
+}
+
+// populateUserVotes batch-fetches a user's vote directions for a slice of notes
+// and populates the UserVote field on each note ("up", "down", or "").
+func (app *App) populateUserVotes(userID uint64, notes []models.Note) {
+	if len(notes) == 0 {
+		return
+	}
+	noteIDs := make([]uint64, 0, len(notes))
+	for _, n := range notes {
+		noteIDs = append(noteIDs, uint64(n.ID))
+	}
+
+	var votes []models.Vote
+	if err := app.DB.Where("user_id = ? AND note_id IN ?", userID, noteIDs).Find(&votes).Error; err != nil {
+		feedLog.Log("HELPER", "failed to batch-fetch user votes", "error", err, "user_id", userID)
+		return
+	}
+
+	voteMap := make(map[uint64]string, len(votes))
+	for _, v := range votes {
+		voteMap[v.NoteID] = string(v.Direction)
+	}
+	for i := range notes {
+		notes[i].UserVote = voteMap[uint64(notes[i].ID)]
+	}
 }
 
 // Upvote handles upvoting a note. Delegates to the unified voteNote handler.
@@ -355,6 +453,13 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		return
 	}
 
+	// Only approved notes can be voted on
+	if note.Status != models.StatusApproved {
+		feedLog.Log("VOTE", "vote rejected — note not approved", "note_id", noteID, "status", note.Status)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot vote on a note that is not approved"})
+		return
+	}
+
 	noteIDUint := uint64(note.ID)
 	opposite := models.VoteDown
 	if direction == models.VoteDown {
@@ -368,6 +473,9 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		if err == nil {
 			if existing.Direction == direction {
 				// Toggle off: remove vote in the same direction.
+				// 1. Reverse prior karma ledger entry
+				app.reverseNoteKarmaLedger(tx, existing.ID, note.CreatorID)
+
 				if err := tx.Delete(&existing).Error; err != nil {
 					return err
 				}
@@ -381,6 +489,9 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 				feedLog.Log("VOTE", "toggled off", "user_id", userID, "note_id", noteID, "was", action)
 			} else {
 				// Switch direction.
+				// 1. Reverse prior karma ledger entry
+				app.reverseNoteKarmaLedger(tx, existing.ID, note.CreatorID)
+
 				if err := tx.Model(&existing).Update("direction", direction).Error; err != nil {
 					return err
 				}
@@ -396,6 +507,36 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 				if err := tx.Model(&note).Update(addCol, gorm.Expr(addCol+" + 1")).Error; err != nil {
 					return err
 				}
+
+				// 2. Re-read note to get accurate counts for karma calc
+				var updated models.Note
+				if err := tx.First(&updated, note.ID).Error; err != nil {
+					return err
+				}
+
+				// 3. Calculate and apply new karma
+				v := 1
+				if direction == models.VoteDown {
+					v = -1
+				}
+				delta := models.CalculatePostKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+				ledger := models.KarmaLedger{
+					AuthorID:  note.CreatorID,
+					VoterID:   userID,
+					VoteType:  models.KarmaPost,
+					VoteID:    existing.ID,
+					TargetID:  noteIDUint,
+					KarmaType: models.KarmaPost,
+					Delta:     delta,
+				}
+				if err := tx.Create(&ledger).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&models.User{}).Where("id = ?", note.CreatorID).
+					Update("post_karma", gorm.Expr("post_karma + ?", delta)).Error; err != nil {
+					return err
+				}
+
 				feedLog.Log("VOTE", "switched", "user_id", userID, "note_id", noteID,
 					"from", string(opposite), "to", action)
 			}
@@ -412,6 +553,36 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 			if err := tx.Model(&note).Update(col, gorm.Expr(col+" + 1")).Error; err != nil {
 				return err
 			}
+
+			// Re-read note to get accurate counts for karma calc
+			var updated models.Note
+			if err := tx.First(&updated, note.ID).Error; err != nil {
+				return err
+			}
+
+			// Calculate and apply karma
+			v := 1
+			if direction == models.VoteDown {
+				v = -1
+			}
+			delta := models.CalculatePostKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+			ledger := models.KarmaLedger{
+				AuthorID:  note.CreatorID,
+				VoterID:   userID,
+				VoteType:  models.KarmaPost,
+				VoteID:    vote.ID,
+				TargetID:  noteIDUint,
+				KarmaType: models.KarmaPost,
+				Delta:     delta,
+			}
+			if err := tx.Create(&ledger).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.User{}).Where("id = ?", note.CreatorID).
+				Update("post_karma", gorm.Expr("post_karma + ?", delta)).Error; err != nil {
+				return err
+			}
+
 			feedLog.Log("VOTE", "created", "user_id", userID, "note_id", noteID, "direction", action)
 		}
 		return nil
@@ -450,4 +621,19 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		"downvotes": note.Downvotes,
 		"hotness":   note.Hotness,
 	})
+}
+
+// reverseNoteKarmaLedger finds the most recent karma ledger entry for a note vote
+// and reverses its delta from the author's post_karma.
+func (app *App) reverseNoteKarmaLedger(tx *gorm.DB, voteID uint, authorID uint64) {
+	var ledger models.KarmaLedger
+	if err := tx.Where("vote_type = ? AND vote_id = ?", models.KarmaPost, voteID).
+		Order("created_at DESC").First(&ledger).Error; err != nil {
+		return // no ledger entry found — nothing to reverse
+	}
+	// Reverse the delta
+	tx.Model(&models.User{}).Where("id = ?", authorID).
+		Update("post_karma", gorm.Expr("post_karma - ?", ledger.Delta))
+	// Delete the ledger entry
+	tx.Delete(&ledger)
 }

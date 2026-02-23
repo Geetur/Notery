@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/Geetur/Notery/internal/models"
 	redisLib "github.com/redis/go-redis/v9"
 )
 
@@ -97,6 +98,30 @@ func TestRemoveFromCart_HappyPath(t *testing.T) {
 	w := serve("DELETE", "/cart/:item_id", "/cart/"+itemID,
 		nil, app.RemoveFromCart, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
+}
+
+func TestAddToCart_AlreadyPurchased(t *testing.T) {
+	app := testAppWithRedis(t)
+	if app == nil {
+		t.Skip("Redis not available")
+	}
+	creator := seedUser(t, app.DB, "cartcreator2")
+	buyer := seedUser(t, app.DB, "cartbuyer2")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	// Create purchase record so buyer already owns the note
+	purchase := models.Purchase{
+		UserID: uint(buyer),
+		NoteID: noteID,
+	}
+	app.DB.Create(&purchase)
+
+	// Attempt to add already-purchased note to cart should fail with 409
+	w := serve("POST", "/cart", "/cart",
+		jsonBody(map[string]string{
+			"item_id": fmt.Sprintf("%d", noteID),
+		}), app.AddToCart, authMW(buyer))
+	assertStatus(t, w, http.StatusConflict)
 }
 
 // testAppWithRedis creates a test app with Redis if available.

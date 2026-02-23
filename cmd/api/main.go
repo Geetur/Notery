@@ -22,74 +22,45 @@ import (
 )
 
 func main() {
-	// ----- Load configuration once at startup -----
+	// ── Configuration ──────────────────────────────────────────────────────
 	log.Println("loading configuration...")
 	cfg := config.Load()
-	log.Println("configuration loaded.")
 
-	// ----- setting up the database connection ----------------------------------------------
-	log.Println("initializing database...")
+	// ── Dependencies ───────────────────────────────────────────────────────
 	db, err := database.InitDatabase()
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatalf("database init failed: %v", err)
 	}
-	log.Println("database initialized. Connection pool established.")
-	// ----- setting up the database connection ----------------------------------------------
 
-	// ------ initializing Redis connection ------------------------------------------------
-	log.Println("initializing Redis...")
 	redisClient, err := database.InitRedis()
 	if err != nil {
-		log.Fatalf("Failed to initialize Redis: %v", err)
+		log.Fatalf("redis init failed: %v", err)
 	}
-	log.Println("Redis initialized.")
-	// ------ initializing Redis connection ------------------------------------------------
 
-	// ------ initializing Meilisearch connection ----------------------------------------------
-	log.Println("initializing Meilisearch...")
 	meiliClient, meiliIndex, err := database.InitMeilisearch()
 	if err != nil {
-		log.Fatalf("Failed to initialize Meilisearch: %v", err)
+		log.Fatalf("meilisearch init failed: %v", err)
 	}
-	log.Println("Meilisearch initialized.")
-	// ------ initializing Meilisearch connection ----------------------------------------------
 
-	// ------ initializing Cloudflare R2 connection ------------------------------------------
-	// R2 stores PDF content for notes. PDFs are served through proxy endpoints,
-	// never directly exposed to users. This prevents unauthorized downloads.
-	log.Println("initializing Cloudflare R2...")
 	r2Client, err := database.InitR2()
 	if err != nil {
-		log.Fatalf("Failed to initialize Cloudflare R2: %v", err)
+		log.Printf("R2 not configured — file storage disabled (development mode): %v", err)
 	}
-	log.Println("Cloudflare R2 initialized.")
-	// ------ initializing Cloudflare R2 connection ------------------------------------------
 
-	// ------ initializing payment service ---------------------------------------------------
 	var paymentService payment.Service
 	if cfg.StripeSecretKey != "" {
-		log.Println("initializing Stripe payment service...")
 		paymentService = payment.NewStripeService(cfg.StripeSecretKey, cfg.StripeWebhookSecret)
-		log.Println("Stripe payment service initialized.")
+		log.Println("stripe payment service active")
 	} else {
-		log.Println("Stripe not configured — purchases will auto-fulfil (development mode).")
+		log.Println("stripe not configured — dev mode (auto-fulfil purchases)")
 	}
-	// ------ initializing payment service ---------------------------------------------------
 
-	// ------ initializing email service -----------------------------------------------------
 	mailer := email.NewMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
-	// ------ initializing email service -----------------------------------------------------
 
-	// setting up the Gin router with middleware attached
+	// ── Router & Global Middleware ─────────────────────────────────────────
 	router := gin.Default()
 	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
-
-	// ----- Global middleware -----
-
-	// Security headers (nosniff, DENY frame, strict referrer, etc.)
 	router.Use(middleware.SecurityHeaders())
-
-	// CORS — origins loaded from CORS_ORIGINS env var (default: localhost dev ports).
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -99,180 +70,164 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// Initialize the unified App handler with all dependencies
+	// ── App Handler (all dependencies injected) ────────────────────────────
 	app := handlers.NewApp(handlers.AppConfig{
-		DB:          db,
-		Redis:       redisClient,
-		R2:          r2Client,
-		Meilisearch: meiliClient,
-		SearchIndex: meiliIndex,
-		JWTSecret:   cfg.JWTSecret,
-		Payment:     paymentService,
-		Mailer:      mailer,
-		BaseURL:     cfg.BaseURL,
+		DB:                 db,
+		Redis:              redisClient,
+		R2:                 r2Client,
+		Meilisearch:        meiliClient,
+		SearchIndex:        meiliIndex,
+		JWTSecret:          cfg.JWTSecret,
+		Payment:            paymentService,
+		Mailer:             mailer,
+		BaseURL:            cfg.BaseURL,
+		FrontendURL:        cfg.FrontendURL,
+		GoogleClientID:     cfg.GoogleClientID,
+		GoogleClientSecret: cfg.GoogleClientSecret,
+		GitHubClientID:     cfg.GitHubClientID,
+		GitHubClientSecret: cfg.GitHubClientSecret,
 	})
 
-	// health check endpoint
+	// ── Health ─────────────────────────────────────────────────────────────
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "OK",
-			"message": "Notery API is alive",
-		})
+		c.JSON(http.StatusOK, gin.H{"status": "OK", "message": "Notery API is alive"})
 	})
 
 	api := router.Group("/api/v1")
 
-	// ----- Auth Endpoints (public, rate-limited) -----
+	// ── Auth (public, rate-limited) ────────────────────────────────────────
 	auth := api.Group("/auth")
 	if redisClient != nil {
 		auth.Use(middleware.RateLimit(redisClient, middleware.DefaultAuthRateLimit, "auth:"))
 	}
-	{
-		auth.POST("/signup", app.Signup)
-		auth.POST("/login", app.Login)
-		auth.POST("/refresh", app.RefreshAccessToken)
-		auth.POST("/logout", app.Logout)
-		auth.POST("/forgot-password", app.ForgotPassword)
-		auth.POST("/reset-password", app.ResetPassword)
-		auth.GET("/verify-email", app.VerifyEmail)
+	auth.POST("/signup", app.Signup)
+	auth.POST("/login", app.Login)
+	auth.POST("/refresh", app.RefreshAccessToken)
+	auth.POST("/logout", app.Logout)
+	auth.POST("/forgot-password", app.ForgotPassword)
+	auth.POST("/reset-password", app.ResetPassword)
+	auth.GET("/verify-email", app.VerifyEmail)
+
+	// OAuth routes (public, separate rate limit — each flow uses 2 requests)
+	oauth := api.Group("/auth")
+	if redisClient != nil {
+		oauth.Use(middleware.RateLimit(redisClient, middleware.DefaultOAuthRateLimit, "oauth:"))
 	}
+	oauth.GET("/oauth/providers", app.OAuthProviders)
+	oauth.GET("/oauth/google", app.OAuthGoogle)
+	oauth.GET("/oauth/google/callback", app.OAuthGoogleCallback)
+	oauth.GET("/oauth/github", app.OAuthGitHub)
+	oauth.GET("/oauth/github/callback", app.OAuthGitHubCallback)
 
-	// Auth endpoints that require authentication
-	authProtected := auth.Group("")
-	authProtected.Use(middleware.RequireAuth(cfg.JWTSecret))
-	{
-		authProtected.POST("/logout-all", app.LogoutAll)
-		authProtected.POST("/resend-verification", app.ResendVerification)
-		authProtected.POST("/change-password", app.ChangePassword)
-	}
+	// Auth endpoints requiring login (not verification)
+	authProtected := auth.Group("", middleware.RequireAuth(cfg.JWTSecret))
+	authProtected.POST("/logout-all", app.LogoutAll)
+	authProtected.POST("/resend-verification", app.ResendVerification)
 
-	// Legacy auth routes (backward compatibility)
-	api.POST("/signup", app.Signup)
-	api.POST("/login", app.Login)
-
-	// Stripe webhook (public — secured via Stripe signature verification, not JWT)
+	// Stripe webhook (secured via Stripe signature, not JWT)
 	api.POST("/webhooks/stripe", app.HandleStripeWebhook)
 
-	// feed endpoint (public with optional auth for personalization)
-	api.GET("/feed/hot", middleware.OptionalAuth(cfg.JWTSecret), app.GetHotFeed)
-
-	// ----- Comment Read Endpoints (public, optional auth for user_vote field) -----
-	// FIX #6: Comment listing is publicly readable. Auth is optional so logged-in
-	// users get their vote state attached to each comment.
-	api.GET("/notes/:id/comments",
-		middleware.OptionalAuth(cfg.JWTSecret),
-		app.GetNoteComments)
-	api.GET("/comments/:comment_id",
-		middleware.OptionalAuth(cfg.JWTSecret),
-		app.GetComment)
-
-	// ----- Public User Profile Read -----
+	// ── Public Endpoints (optional auth for personalization) ───────────────
+	optAuth := middleware.OptionalAuth(cfg.JWTSecret)
+	api.GET("/feed/hot", optAuth, app.GetHotFeed)
+	api.GET("/notes/:id/comments", optAuth, app.GetNoteComments)
+	api.GET("/comments/:comment_id", optAuth, app.GetComment)
+	api.GET("/search", optAuth, app.SearchAll)
 	api.GET("/users/:id/profile", app.GetUserProfile)
-
-	// ----- Public Avatar Proxy (24h cache) -----
 	api.GET("/users/:id/avatar", app.GetAvatar)
+	api.GET("/users/:id/banner", app.GetUserBanner)
+	api.GET("/users/:id/notes", optAuth, app.GetUserNotes)
+	api.GET("/users/:id/comments", app.GetUserComments)
+	api.GET("/notes/:id/thumbnail", app.GetThumbnail)
 
-	// ----- Search (public, optional auth for personalization) -----
-	api.GET("/search", middleware.OptionalAuth(cfg.JWTSecret), app.SearchAll)
+	// Subnotery browsing (public)
+	api.GET("/subnoteries", app.ListSubnoteries)
+	api.GET("/subnoteries/:subnotery_id", optAuth, app.GetSubnoteryDetail)
+	api.GET("/subnoteries/:subnotery_id/notes", optAuth, app.GetSubnoteryNotes)
+	api.GET("/subnoteries/:subnotery_id/banner", app.GetSubnoteryBanner)
 
-	// ----- Auth-Only Endpoints (login required, email verification NOT required) -----
-	// These endpoints allow unverified users to read data, view their profile,
-	// and check statuses. They can use the app as a reader until verified.
-	authOnly := api.Group("")
-	authOnly.Use(middleware.RequireAuth(cfg.JWTSecret))
-	{
-		// Read-only note endpoints
-		authOnly.GET("/notes/:id", app.GetNoteByID)
-		authOnly.GET("/notes/approved", app.GetApprovedNotes)
-		// View/stream PDF content (requires purchase or admin access)
-		authOnly.GET("/notes/:id/content", app.GetNotePDFContent)
+	// ── Authenticated Read-Only (login required, no verification) ──────────
+	// Unverified users can browse, view profile, check purchases — read-only.
+	readOnly := api.Group("", middleware.RequireAuth(cfg.JWTSecret))
+	readOnly.GET("/notes/:id", app.GetNoteByID)
+	readOnly.GET("/notes/approved", app.GetApprovedNotes)
+	readOnly.GET("/notes/:id/content", app.GetNotePDFContent)
+	readOnly.GET("/notes/:id/preview", app.GetNotePreview)
+	readOnly.GET("/cart", app.GetCart)
+	readOnly.GET("/notes/:id/purchased", app.CheckPurchaseStatus)
+	readOnly.GET("/me/purchases", app.GetMyPurchases)
+	readOnly.GET("/me/purchases/history", app.GetPurchaseHistory)
+	readOnly.GET("/me/profile", app.GetMyProfile)
+	readOnly.GET("/orders/:order_id", app.GetOrderStatus)
+	readOnly.GET("/me/notes", app.GetMyNotes)
+	readOnly.GET("/me/comments", app.GetMyComments)
+	readOnly.GET("/bookmarks", app.GetBookmarks)
+	readOnly.GET("/bookmarks/:note_id", app.CheckBookmark)
 
-		// Read-only cart endpoint
-		authOnly.GET("/cart", app.GetCart)
+	// ── Verified Write Endpoints (login + email verification) ──────────────
+	// All mutating operations require a verified email. Unverified → 403.
+	write := api.Group("",
+		middleware.RequireAuth(cfg.JWTSecret),
+		middleware.RequireVerified(db),
+		middleware.RateLimit(redisClient, middleware.DefaultWriteRateLimit, "write:"),
+	)
 
-		// Read-only purchase endpoints
-		authOnly.GET("/notes/:id/purchased", app.CheckPurchaseStatus)
-		authOnly.GET("/me/purchases", app.GetMyPurchases)
-		authOnly.GET("/me/purchases/history", app.GetPurchaseHistory)
+	// Notes
+	write.POST("/notes", app.CreateNote)
+	write.POST("/notes/:id/content", app.UploadNotePDF)
+	write.POST("/notes/:id/thumbnail", app.UploadThumbnail)
+	write.DELETE("/notes/:id/thumbnail", app.DeleteThumbnail)
+	write.POST("/notes/:id/upvote", app.Upvote)
+	write.POST("/notes/:id/downvote", app.Downvote)
 
-		// Self-profile (read own profile, needed for verification banner)
-		authOnly.GET("/me/profile", app.GetMyProfile)
+	// Cart & Checkout
+	write.POST("/cart", app.AddToCart)
+	write.DELETE("/cart/:item_id", app.RemoveFromCart)
+	write.POST("/checkout", app.CheckoutCart)
+	write.POST("/notes/:id/purchase", app.PurchaseSingleNote)
 
-		// Read-only order status
-		authOnly.GET("/orders/:order_id", app.GetOrderStatus)
+	// Profile & Avatar
+	write.PATCH("/me/profile", app.UpdateMyProfile)
+	write.POST("/me/avatar", app.UploadAvatar)
+	write.DELETE("/me/avatar", app.DeleteAvatar)
+	write.POST("/me/banner", app.UploadUserBanner)
+	write.DELETE("/me/banner", app.DeleteUserBanner)
 
-		// Own created notes (for "My Notes" tab on profile)
-		authOnly.GET("/me/notes", app.GetMyNotes)
-	}
+	// Comments
+	write.POST("/notes/:id/comments", app.CreateComment)
+	write.PUT("/comments/:comment_id", app.EditComment)
+	write.DELETE("/comments/:comment_id", app.DeleteComment)
+	write.POST("/comments/:comment_id/vote", app.VoteComment)
+	write.DELETE("/comments/:comment_id/vote", app.RemoveCommentVote)
+	write.POST("/comments/:comment_id/pin", app.PinComment)
+	write.DELETE("/comments/:comment_id/pin", app.UnpinComment)
 
-	// ----- Verified Endpoints (login + email verification required) -----
-	// All write/mutating operations require a verified email address.
-	// Unverified users get 403 with code "EMAIL_NOT_VERIFIED".
-	protected := api.Group("")
-	protected.Use(middleware.RequireAuth(cfg.JWTSecret))
-	protected.Use(middleware.RequireVerified(db))
-	protected.Use(middleware.RateLimit(redisClient, middleware.DefaultWriteRateLimit, "write:"))
-	{
-		// note write endpoints
-		protected.POST("/notes", app.CreateNote)
+	// Orders & Subnoteries
+	write.POST("/orders/:order_id/confirm", app.ConfirmOrder)
+	write.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
+	write.POST("/subnoteries/:subnotery_id/leave", app.LeaveSubnotery)
+	write.PATCH("/subnoteries/:subnotery_id/settings", app.UpdateSubnoterySettings)
+	write.POST("/subnoteries/:subnotery_id/banner", app.UploadSubnoteryBanner)
+	write.DELETE("/subnoteries/:subnotery_id/banner", app.DeleteSubnoteryBanner)
+	write.DELETE("/subnoteries/:subnotery_id/admins/:uid", app.RemoveAdminFromSubnotery)
 
-		// ----- PDF Content Endpoints -----
-		protected.POST("/notes/:id/content", app.UploadNotePDF)
+	// Bookmarks
+	write.POST("/bookmarks/:note_id", app.AddBookmark)
+	write.DELETE("/bookmarks/:note_id", app.RemoveBookmark)
 
-		// voting endpoints
-		protected.POST("/notes/:id/upvote", app.Upvote)
-		protected.POST("/notes/:id/downvote", app.Downvote)
+	// ── Admin Endpoints (verified + admin role) ────────────────────────────
+	admin := write.Group("", middleware.RequireAdmin(db))
+	admin.GET("/notes/pending", app.GetPendingNotes)
+	admin.PATCH("/notes/:id/approve", app.ApproveNote)
+	admin.PATCH("/notes/:id/reject", app.RejectNote)
+	admin.DELETE("/notes/:id", app.DeleteNote)
+	admin.PATCH("/notes/:id/lock", app.LockNote)
+	admin.PATCH("/notes/:id/unlock", app.UnlockNote)
+	admin.GET("/admin/notes/:id/preview", app.AdminPreviewPDF)
+	admin.DELETE("/admin/notes/:id/content", app.DeleteNotePDF)
+	admin.POST("/subnoteries/:subnotery_id/admins", app.AddAdminToSubnotery)
 
-		// cart write endpoints
-		protected.POST("/cart", app.AddToCart)
-		protected.DELETE("/cart/:item_id", app.RemoveFromCart)
-
-		// ----- Purchase Endpoints -----
-		protected.POST("/checkout", app.CheckoutCart)
-		protected.POST("/notes/:id/purchase", app.PurchaseSingleNote)
-
-		// ----- User Profile Write Endpoints -----
-		protected.PATCH("/me/profile", app.UpdateMyProfile)
-
-		// ----- Avatar Endpoints -----
-		protected.POST("/me/avatar", app.UploadAvatar)
-		protected.DELETE("/me/avatar", app.DeleteAvatar)
-
-		// ----- Comment Write Endpoints -----
-		protected.POST("/notes/:id/comments", app.CreateComment)
-		protected.PUT("/comments/:comment_id", app.EditComment)
-		protected.DELETE("/comments/:comment_id", app.DeleteComment)
-		protected.POST("/comments/:comment_id/vote", app.VoteComment)
-		protected.DELETE("/comments/:comment_id/vote", app.RemoveCommentVote)
-
-		// ----- Order Endpoints -----
-		protected.POST("/orders/:order_id/confirm", app.ConfirmOrder)
-
-		// subnotery endpoints
-		protected.POST("/subnoteries/:subnotery_id/join", app.JoinSubnotery)
-	}
-
-	// applying the RequireAdmin middleware to admin-only routes
-	adminProtected := protected.Group("")
-	adminProtected.Use(middleware.RequireAdmin(db))
-	{
-		// note admin endpoints
-		adminProtected.GET("/notes/pending", app.GetPendingNotes)
-		adminProtected.PATCH("/notes/:id/approve", app.ApproveNote)
-		adminProtected.PATCH("/notes/:id/reject", app.RejectNote)
-		adminProtected.DELETE("/notes/:id", app.DeleteNote)
-
-		// ----- PDF Admin Endpoints -----
-		// Preview PDF during approval (same as user view but uses admin access)
-		adminProtected.GET("/admin/notes/:id/preview", app.AdminPreviewPDF)
-		// Delete PDF content only (without deleting note)
-		adminProtected.DELETE("/admin/notes/:id/content", app.DeleteNotePDF)
-
-		// subnotery admin endpoints
-		adminProtected.POST("/subnoteries/:subnotery_id/admins", app.AddAdminToSubnotery)
-	}
-
-	// H6/H7: HTTP server with timeouts and graceful shutdown
+	// ── Server Start & Graceful Shutdown ───────────────────────────────────
 	srv := &http.Server{
 		Addr:         ":8080",
 		Handler:      router,
@@ -281,26 +236,22 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in a goroutine so graceful shutdown can proceed
 	go func() {
-		log.Println("Server starting on port 8080...")
+		log.Println("server starting on :8080")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+			log.Fatalf("server failed: %v", err)
 		}
 	}()
 
-	// Wait for interrupt signal to trigger graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down server...")
+	log.Println("shutting down...")
 
-	// Give outstanding requests up to 10 seconds to complete
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		log.Fatalf("forced shutdown: %v", err)
 	}
-
-	log.Println("Server stopped.")
+	log.Println("server stopped.")
 }

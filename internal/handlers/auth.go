@@ -117,6 +117,17 @@ func (app *App) Signup(c *gin.Context) {
 		return
 	}
 
+	// Check username uniqueness before creating user
+	if authReq.Username != "" {
+		var usernameCount int64
+		app.DB.Model(&models.User{}).Where("username = ?", authReq.Username).Count(&usernameCount)
+		if usernameCount > 0 {
+			authLog.Log("SIGNUP", "Username already taken", "username", authReq.Username)
+			c.JSON(http.StatusConflict, gin.H{"error": "Username is already taken"})
+			return
+		}
+	}
+
 	user := &models.User{Email: authReq.Email, Username: authReq.Username}
 	if err := user.SetPassword(authReq.Password); err != nil {
 		authLog.Log("SIGNUP", "Failed to hash password", "error", err)
@@ -147,8 +158,13 @@ func (app *App) Signup(c *gin.Context) {
 		return
 	}
 
-	// Send verification email (best-effort — don't block signup on email failure)
-	app.sendVerificationEmail(uint64(user.ID), user.Email)
+	// Dev mode (no SMTP): auto-verify user. Production: send verification email.
+	if _, isLog := app.Mailer.(*email.LogMailer); isLog {
+		app.DB.Model(user).Update("email_verified", true)
+		authLog.Log("SIGNUP", "Dev mode — auto-verified user", "userID", user.ID)
+	} else {
+		app.sendVerificationEmail(uint64(user.ID), user.Email)
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":       "User created successfully",

@@ -232,7 +232,7 @@ func (app *App) DeleteAvatar(c *gin.Context) {
 //
 // Route: GET /api/v1/users/:id/avatar
 func (app *App) GetAvatar(c *gin.Context) {
-	userIDParam := c.Param("user_id")
+	userIDParam := c.Param("id")
 
 	if app.R2 == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "File storage not configured"})

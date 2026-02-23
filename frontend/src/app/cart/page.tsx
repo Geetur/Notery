@@ -63,7 +63,14 @@ export default function CartPage() {
             const res = await checkoutCart(key);
             if (res.status === "fulfilled") {
                 toast({ title: "Purchase complete!", description: `${res.purchased_count} note(s) purchased.` });
-                queryClient.invalidateQueries({ queryKey: ["cart"] });
+                // Await critical invalidations so My Notes page has fresh data when we redirect
+                await Promise.all([
+                    queryClient.invalidateQueries({ queryKey: ["cart"] }),
+                    queryClient.invalidateQueries({ queryKey: ["purchaseHistory"] }),
+                    queryClient.invalidateQueries({ queryKey: ["myPurchases"] }),
+                    queryClient.invalidateQueries({ queryKey: ["purchaseStatus"] }),
+                    queryClient.invalidateQueries({ queryKey: ["note"] }),
+                ]);
                 router.push("/purchases");
             } else if (res.client_secret) {
                 // Stripe payment flow would go here

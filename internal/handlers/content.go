@@ -15,7 +15,7 @@
 // |----------------------|-------------------|---------------------|
 // | Anonymous            | No                | No                  |
 // | Authenticated        | No                | Only if purchased   |
-// | Note Creator         | Yes (own notes)   | Yes (own notes)     |
+// | Note Creator         | No                | Yes (own notes)     |
 // | Subnotery Admin      | Yes (their sub)   | Yes (their sub)     |
 // | Global Admin         | Yes (all)         | Yes (all)           |
 //
@@ -105,8 +105,14 @@ func (app *App) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
 		return AccessSubAdmin
 	}
 
-	// For approved notes, check if user purchased it
+	// For approved notes, check if the note is free or user purchased it
 	if note.Status == models.StatusApproved {
+		// Free notes are accessible to any authenticated user
+		if note.Price == 0 {
+			contentLog.Log("ACCESS_GRANTED", "free note", "user_id", userID, "note_id", note.ID)
+			return AccessPurchased
+		}
+
 		var purchaseCount int64
 		app.DB.Model(&models.Purchase{}).
 			Where("user_id = ? AND note_id = ?", userID, note.ID).
@@ -345,6 +351,7 @@ func (app *App) GetNotePDFContent(c *gin.Context) {
 	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private")
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("X-Frame-Options", "SAMEORIGIN") // Only allow embedding on same origin
+	c.Header("X-Notery-Access", "full")
 
 	// Stream the PDF content to the response
 	c.Status(http.StatusOK)
@@ -417,4 +424,79 @@ func (app *App) DeleteNotePDF(c *gin.Context) {
 
 	contentLog.Log("DELETE", "completed successfully", "note_id", noteID)
 	c.JSON(http.StatusOK, gin.H{"message": "PDF deleted successfully"})
+}
+
+// GetNotePreview serves a PDF preview for any authenticated user.
+//
+// Only approved notes with a PDF are previewable. The full PDF is served to the
+// client — the frontend enforces page-based preview limits (1 page per 5 total)
+// using react-pdf. This avoids raw byte truncation which produces an invalid PDF
+// that PDF.js cannot parse due to broken xref tables / trailers.
+//
+// Admins, creators, and users who purchased the note get the full PDF via
+// GetNotePDFContent instead. This endpoint is specifically for the free preview.
+//
+// Route: GET /api/v1/notes/:id/preview
+func (app *App) GetNotePreview(c *gin.Context) {
+	contentLog.Log("PREVIEW", "request received")
+
+	noteID, ok := helpers.MustParseNoteID(c)
+	if !ok {
+		return
+	}
+
+	// Fetch the note
+	var note models.Note
+	if err := app.DB.First(&note, noteID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+		return
+	}
+
+	// Only approved notes can be previewed publicly; admins can preview any note.
+	if note.Status != models.StatusApproved {
+		userID := helpers.GetUserID(c)
+		if userID == 0 || !app.CanViewPendingNote(userID, &note) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Note is not available for preview"})
+			return
+		}
+		contentLog.Log("PREVIEW", "admin viewing non-approved note", "note_id", noteID, "status", note.Status)
+	}
+
+	if !note.HasPDF {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No PDF content available"})
+		return
+	}
+
+	// Fetch PDF from R2
+	ctx := c.Request.Context()
+	pdfContent, contentLength, err := app.R2.GetPDFContent(ctx, uint(noteID))
+	if err != nil {
+		contentLog.Log("PREVIEW", "R2 fetch failed", "note_id", noteID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve PDF"})
+		return
+	}
+	defer pdfContent.Close()
+
+	// Serve the full PDF — the frontend enforces page-based preview limits
+	// (1 page per 5 total). Raw byte truncation produces an invalid PDF
+	// (broken xref/trailer) that PDF.js cannot parse, so we send the
+	// complete file and let the viewer restrict navigation.
+	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Disposition", "inline")
+	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
+	c.Header("Cache-Control", "public, max-age=3600") // previews can be cached
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("X-Frame-Options", "SAMEORIGIN")
+	c.Header("X-Notery-Access", "preview")
+
+	c.Status(http.StatusOK)
+	if _, err := io.Copy(c.Writer, pdfContent); err != nil {
+		contentLog.Log("PREVIEW", "stream failed", "note_id", noteID, "error", err)
+	}
+
+	contentLog.Log("PREVIEW", "served successfully", "note_id", noteID, "bytes", contentLength)
 }

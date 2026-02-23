@@ -1,6 +1,7 @@
 // page.tsx — Login page.
 "use client";
 
+import OAuthButtons from "@/components/auth/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,7 +11,7 @@ import { ApiRequestError } from "@/lib/api-client";
 import { login } from "@/services/auth";
 import { getMyProfile } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth-store";
-import { FileText, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -50,12 +51,12 @@ export default function LoginPage() {
             <Card className="w-full max-w-sm">
                 <CardHeader className="text-center">
                     <div className="flex items-center justify-center gap-2 mb-2">
-                        <FileText className="h-6 w-6 text-primary" />
                         <span className="text-xl font-bold">notery</span>
                     </div>
                     <CardTitle className="text-lg">Log In</CardTitle>
                 </CardHeader>
                 <CardContent>
+                    <OAuthButtons action="Log in" />
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
                             <Label htmlFor="email">Email</Label>

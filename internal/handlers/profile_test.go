@@ -60,21 +60,6 @@ func TestGetMyProfile_DefaultValues(t *testing.T) {
 
 // ===== PATCH /me/profile =====
 
-func TestUpdateProfile_DisplayName(t *testing.T) {
-	app := testApp(t)
-	uid := seedUser(t, app.DB, "updater")
-
-	w := serve("PATCH", "/me/profile", "/me/profile",
-		jsonBody(map[string]string{"display_name": "New Name"}),
-		app.UpdateMyProfile, authMW(uid))
-	assertStatus(t, w, http.StatusOK)
-
-	r := respJSON(t, w)
-	if r["display_name"] != "New Name" {
-		t.Fatalf("display_name=%v, want 'New Name'", r["display_name"])
-	}
-}
-
 func TestUpdateProfile_Bio(t *testing.T) {
 	app := testApp(t)
 	uid := seedUser(t, app.DB, "bioupdater")
@@ -141,7 +126,6 @@ func TestUpdateProfile_MultipleFieldsAtOnce(t *testing.T) {
 
 	w := serve("PATCH", "/me/profile", "/me/profile",
 		jsonBody(map[string]string{
-			"display_name":       "Multi User",
 			"bio":                "Bio text here",
 			"profile_visibility": "private",
 		}),
@@ -149,7 +133,7 @@ func TestUpdateProfile_MultipleFieldsAtOnce(t *testing.T) {
 	assertStatus(t, w, http.StatusOK)
 
 	r := respJSON(t, w)
-	if r["display_name"] != "Multi User" || r["bio"] != "Bio text here" || r["profile_visibility"] != "private" {
+	if r["bio"] != "Bio text here" || r["profile_visibility"] != "private" {
 		t.Fatalf("unexpected response: %v", r)
 	}
 }
@@ -160,58 +144,22 @@ func TestUpdateProfile_ClearFieldsToEmpty(t *testing.T) {
 
 	// Set initial values
 	app.DB.Model(&models.User{}).Where("id = ?", uid).Updates(map[string]interface{}{
-		"display_name": "Old Name",
-		"bio":          "Old bio",
+		"bio": "Old bio",
 	})
 
 	// Clear them
 	w := serve("PATCH", "/me/profile", "/me/profile",
-		jsonBody(map[string]string{"display_name": "", "bio": ""}),
+		jsonBody(map[string]string{"bio": ""}),
 		app.UpdateMyProfile, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
 
 	r := respJSON(t, w)
-	if r["display_name"] != "" {
-		t.Fatalf("display_name=%v, want ''", r["display_name"])
-	}
 	if r["bio"] != "" {
 		t.Fatalf("bio=%v, want ''", r["bio"])
 	}
 }
 
 // ===== VALIDATION TESTS =====
-
-func TestUpdateProfile_DisplayNameTooShort(t *testing.T) {
-	app := testApp(t)
-	uid := seedUser(t, app.DB, "shortdn")
-
-	w := serve("PATCH", "/me/profile", "/me/profile",
-		jsonBody(map[string]string{"display_name": "X"}),
-		app.UpdateMyProfile, authMW(uid))
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestUpdateProfile_DisplayNameTooLong(t *testing.T) {
-	app := testApp(t)
-	uid := seedUser(t, app.DB, "longdn")
-
-	long := strings.Repeat("A", models.MaxDisplayNameLength+1)
-	w := serve("PATCH", "/me/profile", "/me/profile",
-		jsonBody(map[string]string{"display_name": long}),
-		app.UpdateMyProfile, authMW(uid))
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestUpdateProfile_DisplayNameInvalidChars(t *testing.T) {
-	app := testApp(t)
-	uid := seedUser(t, app.DB, "baddn")
-
-	// Test names starting with a special character
-	w := serve("PATCH", "/me/profile", "/me/profile",
-		jsonBody(map[string]string{"display_name": "@evil"}),
-		app.UpdateMyProfile, authMW(uid))
-	assertStatus(t, w, http.StatusBadRequest)
-}
 
 func TestUpdateProfile_BioTooLong(t *testing.T) {
 	app := testApp(t)
@@ -295,13 +243,13 @@ func TestUpdateProfile_WhitespaceNormalization(t *testing.T) {
 	uid := seedUser(t, app.DB, "normws")
 
 	w := serve("PATCH", "/me/profile", "/me/profile",
-		jsonBody(map[string]string{"display_name": "  John   Doe  "}),
+		jsonBody(map[string]string{"bio": "  Hello   World  "}),
 		app.UpdateMyProfile, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
 
 	r := respJSON(t, w)
-	if r["display_name"] != "John Doe" {
-		t.Fatalf("expected normalized 'John Doe', got %v", r["display_name"])
+	if r["bio"] != "Hello   World" {
+		t.Fatalf("expected trimmed bio, got %v", r["bio"])
 	}
 }
 

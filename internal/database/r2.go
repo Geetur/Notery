@@ -51,56 +51,75 @@ type R2Client struct {
 // - R2_ACCESS_KEY_ID: R2 API access key
 // - R2_SECRET_ACCESS_KEY: R2 API secret key
 // - R2_BUCKET_NAME: The bucket to store PDFs in
+//
+// For local development, set R2_ENDPOINT to point to a local S3-compatible
+// service like MinIO (e.g. http://localhost:9000). When R2_ENDPOINT is set,
+// R2_ACCOUNT_ID is not required.
 func InitR2() (*R2Client, error) {
-	log.Println("Initializing Cloudflare R2 client...")
+	log.Println("Initializing S3-compatible storage client...")
 
 	accountID := getenv("R2_ACCOUNT_ID", "")
 	accessKeyID := getenv("R2_ACCESS_KEY_ID", "")
 	secretAccessKey := getenv("R2_SECRET_ACCESS_KEY", "")
 	bucketName := getenv("R2_BUCKET_NAME", "notery-pdfs")
+	customEndpoint := getenv("R2_ENDPOINT", "") // e.g. http://localhost:9000 for MinIO
 
 	// Validate required configuration
-	if accountID == "" || accessKeyID == "" || secretAccessKey == "" {
-		return nil, fmt.Errorf("R2 configuration incomplete: ensure R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY are set")
+	if accessKeyID == "" || secretAccessKey == "" {
+		// If no credentials at all, check if we should use MinIO defaults
+		if customEndpoint == "" {
+			return nil, fmt.Errorf("R2/S3 configuration incomplete: set R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY (and R2_ACCOUNT_ID for Cloudflare R2, or R2_ENDPOINT for MinIO/local S3)")
+		}
 	}
 
-	// R2 uses a custom endpoint based on your Cloudflare account ID.
-	// The endpoint format is: https://{account_id}.r2.cloudflarestorage.com
-	// We use "auto" as the region since R2 doesn't use traditional AWS regions.
+	// Determine the endpoint URL
+	var endpointURL string
+	var signingRegion string
+	if customEndpoint != "" {
+		// Local S3-compatible service (e.g. MinIO)
+		endpointURL = customEndpoint
+		signingRegion = "us-east-1"
+		log.Printf("Using custom S3 endpoint: %s (dev mode)", customEndpoint)
+	} else if accountID != "" {
+		// Cloudflare R2
+		endpointURL = "https://" + accountID + ".r2.cloudflarestorage.com"
+		signingRegion = "auto"
+	} else {
+		return nil, fmt.Errorf("R2 configuration incomplete: set R2_ACCOUNT_ID (for Cloudflare R2) or R2_ENDPOINT (for local S3)")
+	}
+
 	customResolver := aws.EndpointResolverWithOptionsFunc(
 		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-			if service == s3.ServiceID && region == "auto" {
-				return aws.Endpoint{
-					URL:           "https://" + accountID + ".r2.cloudflarestorage.com",
-					SigningRegion: "auto",
-				}, nil
-			}
-			// Fall back to default resolution for other services
-			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+			return aws.Endpoint{
+				URL:               endpointURL,
+				SigningRegion:     signingRegion,
+				HostnameImmutable: true,
+			}, nil
 		},
 	)
 
-	// Load AWS config with R2 credentials and custom endpoint.
-	// We use static credentials since R2 has its own access keys separate from AWS.
+	// Load AWS config with credentials and custom endpoint.
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithEndpointResolverWithOptions(customResolver),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			accessKeyID,
 			secretAccessKey,
-			"", // session token not used with R2
+			"", // session token not used
 		)),
-		config.WithRegion("auto"), // R2 uses "auto" region
+		config.WithRegion(signingRegion),
 	)
 	if err != nil {
-		log.Printf("Failed to load R2 config: %v", err)
+		log.Printf("Failed to load S3 config: %v", err)
 		return nil, err
 	}
 
-	// Initialize the S3 client for R2 operations.
-	client := s3.NewFromConfig(cfg)
+	// Initialize the S3 client with path-style addressing (required for MinIO).
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	})
 	presignClient := s3.NewPresignClient(client)
 
-	log.Println("Cloudflare R2 client initialized successfully.")
+	log.Println("S3-compatible storage client initialized successfully.")
 
 	return &R2Client{
 		S3Client:      client,

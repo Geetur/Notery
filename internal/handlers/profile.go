@@ -76,11 +76,10 @@ func (app *App) GetMyProfile(c *gin.Context) {
 // UpdateProfileRequest defines the allowed fields for profile updates.
 // All fields are optional (pointer types) for partial update semantics.
 type UpdateProfileRequest struct {
-	DisplayName *string `json:"display_name"`
-	Bio         *string `json:"bio"`
-	AvatarURL   *string `json:"avatar_url"`
-	Visibility  *string `json:"profile_visibility"`
-	Username    *string `json:"username"`
+	Bio        *string `json:"bio"`
+	AvatarURL  *string `json:"avatar_url"`
+	Visibility *string `json:"profile_visibility"`
+	Username   *string `json:"username"`
 }
 
 // UpdateMyProfile handles partial updates to the authenticated user's profile.
@@ -127,35 +126,6 @@ func (app *App) UpdateMyProfile(c *gin.Context) {
 			}
 		}
 		updates["username"] = username
-	}
-
-	// --- Display name validation ---
-	if req.DisplayName != nil {
-		dn := helpers.NormalizeWhitespace(*req.DisplayName)
-		if dn != "" {
-			runeCount := utf8.RuneCountInString(dn)
-			if runeCount < models.MinDisplayNameLength {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error": "Display name too short",
-					"min":   models.MinDisplayNameLength,
-				})
-				return
-			}
-			if runeCount > models.MaxDisplayNameLength {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error": "Display name too long",
-					"max":   models.MaxDisplayNameLength,
-				})
-				return
-			}
-			if !helpers.DisplayNameRegex.MatchString(dn) {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error": "Display name contains invalid characters (letters, digits, spaces, hyphens, underscores, periods allowed)",
-				})
-				return
-			}
-		}
-		updates["display_name"] = dn
 	}
 
 	// --- Bio validation ---

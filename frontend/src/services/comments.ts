@@ -5,6 +5,7 @@ import type {
     CommentsListResponse,
     CommentSortOrder,
     CommentVoteResponse,
+    MyCommentsResponse,
     PaginationParams,
 } from "@/types";
 
@@ -71,4 +72,41 @@ export function removeCommentVote(
     commentId: number
 ): Promise<{ message: string }> {
     return apiDelete(`/comments/${commentId}/vote`);
+}
+
+/** POST /comments/:id/pin — Pin a comment (admin only). */
+export function pinComment(
+    commentId: number
+): Promise<{ message: string }> {
+    return apiPost(`/comments/${commentId}/pin`);
+}
+
+/** DELETE /comments/:id/pin — Unpin a comment (admin only). */
+export function unpinComment(
+    commentId: number
+): Promise<{ message: string }> {
+    return apiDelete(`/comments/${commentId}/pin`);
+}
+
+/** GET /me/comments — Own comments (flat, paginated). */
+export function getMyComments(
+    params?: PaginationParams
+): Promise<MyCommentsResponse> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return apiGet(`/me/comments${qs ? `?${qs}` : ""}`);
+}
+
+/** GET /users/:id/comments — Public user comments (flat, paginated). */
+export function getUserComments(
+    userId: number,
+    params?: PaginationParams
+): Promise<MyCommentsResponse> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return apiGet(`/users/${userId}/comments${qs ? `?${qs}` : ""}`);
 }

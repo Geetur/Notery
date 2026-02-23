@@ -23,9 +23,18 @@ type User struct {
 	DisplayNameField string          `json:"display_name" gorm:"column:display_name;default:''"`
 	Bio              string          `json:"bio" gorm:"type:text;default:''"`
 	AvatarURL        string          `json:"avatar_url" gorm:"default:''"`
+	BannerURL        string          `json:"banner_url" gorm:"type:text;default:''"`
 	ProfileVisibility ProfileVisibility `json:"profile_visibility" gorm:"default:'public'"`
 	ProfileUpdatedAt *time.Time      `json:"profile_updated_at"`
 	EmailVerified    bool            `json:"email_verified" gorm:"default:false"`
+	OAuthProvider    string          `json:"-" gorm:"column:oauth_provider;default:''"` // "google", "github", or "" for email/password
+	OAuthID          string          `json:"-" gorm:"column:oauth_id;default:''"` // Provider's unique user ID
+
+	// ----- Notoriety (Karma) Fields -----
+	// Stored as float64 for precision; displayed rounded to the user.
+	PostKarma    float64 `json:"post_karma" gorm:"default:0;not null"`
+	CommentKarma float64 `json:"comment_karma" gorm:"default:0;not null"`
+
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -71,14 +80,17 @@ func (u *User) DisplayName() string {
 // Sensitive fields (email, hash, admin status) are excluded.
 func (u *User) PublicProfile() map[string]interface{} {
 	profile := map[string]interface{}{
-		"id":           u.ID,
-		"username":     u.Username,
-		"display_name": u.DisplayNameField,
-		"created_at":   u.CreatedAt,
+		"id":            u.ID,
+		"username":      u.Username,
+		"display_name":  u.DisplayNameField,
+		"post_karma":    u.PostKarma,
+		"comment_karma": u.CommentKarma,
+		"created_at":    u.CreatedAt,
 	}
 	if u.ProfileVisibility == ProfilePublic {
 		profile["bio"] = u.Bio
 		profile["avatar_url"] = u.AvatarURL
+		profile["banner_url"] = u.BannerURL
 	}
 	return profile
 }
@@ -93,9 +105,12 @@ func (u *User) SelfProfile() map[string]interface{} {
 		"display_name":       u.DisplayNameField,
 		"bio":                u.Bio,
 		"avatar_url":         u.AvatarURL,
+		"banner_url":         u.BannerURL,
 		"profile_visibility": u.ProfileVisibility,
 		"profile_updated_at": u.ProfileUpdatedAt,
 		"email_verified":     u.EmailVerified,
+		"post_karma":         u.PostKarma,
+		"comment_karma":      u.CommentKarma,
 		"created_at":         u.CreatedAt,
 		"updated_at":         u.UpdatedAt,
 	}

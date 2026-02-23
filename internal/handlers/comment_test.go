@@ -46,12 +46,17 @@ func testApp(t *testing.T) *App {
 		&models.RefreshToken{},
 		&models.EmailVerification{},
 		&models.PasswordReset{},
+		&models.KarmaLedger{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// Create join tables for subnotery admins and memberships
-	db.Exec("CREATE TABLE IF NOT EXISTS user_admins (user_id INTEGER, subnotery_id INTEGER)")
-	db.Exec("CREATE TABLE IF NOT EXISTS user_memberships (user_id INTEGER, subnotery_id INTEGER)")
+	// Recreate join tables with auto-increment ID for admin hierarchy tests.
+	// GORM's AutoMigrate creates these as simple (user_id, subnotery_id) tables,
+	// but our admin removal logic needs row IDs for seniority comparison.
+	db.Exec("DROP TABLE IF EXISTS user_admins")
+	db.Exec("DROP TABLE IF EXISTS user_memberships")
+	db.Exec("CREATE TABLE user_admins (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, subnotery_id INTEGER)")
+	db.Exec("CREATE TABLE user_memberships (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, subnotery_id INTEGER)")
 	return &App{DB: db}
 }
 
@@ -597,6 +602,38 @@ func TestCreateComment_PendingNoteBlocked(t *testing.T) {
 	assertStatus(t, w, http.StatusForbidden)
 }
 
+// ===== COMMENT ON LOCKED NOTE =====
+
+func TestCreateComment_LockedNoteBlocked(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "lockcomm")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Lock the note
+	app.DB.Model(&models.Note{}).Where("id = ?", noteID).Update("is_locked", true)
+
+	w := serve("POST", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments", noteID),
+		jsonBody(map[string]string{"body": "should fail on locked"}), app.CreateComment, authMW(uid))
+	assertStatus(t, w, http.StatusForbidden)
+	r := respJSON(t, w)
+	if msg, ok := r["error"].(string); !ok || msg != "This note is locked — comments are disabled" {
+		t.Fatalf("expected locked note error, got %v", r["error"])
+	}
+}
+
+func TestCreateComment_UnlockedNoteAllowed(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "unlockcomm")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Note is not locked — comment should succeed
+	w := serve("POST", "/notes/:id/comments",
+		fmt.Sprintf("/notes/%d/comments", noteID),
+		jsonBody(map[string]string{"body": "this should work"}), app.CreateComment, authMW(uid))
+	assertStatus(t, w, http.StatusCreated)
+}
+
 // ===== REPLY TO DELETED COMMENT BLOCKED =====
 
 func TestCreateComment_ReplyToDeletedBlocked(t *testing.T) {
@@ -1089,5 +1126,189 @@ func TestSortSlice_BestTieBreaksDeterministically(t *testing.T) {
 
 	if nodes[0].ID != 1 || nodes[1].ID != 2 {
 		t.Fatalf("best sort tie-break should be deterministic by id for equal timestamp/score, got [%d, %d]", nodes[0].ID, nodes[1].ID)
+	}
+}
+
+// ===== GET /users/:id/comments TESTS =====
+
+func TestGetUserComments_Empty(t *testing.T) {
+	app := testApp(t)
+	user := seedUser(t, app.DB, "ucempty")
+
+	w := serve("GET", "/users/:id/comments", fmt.Sprintf("/users/%d/comments", user),
+		nil, app.GetUserComments)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	comments, ok := r["comments"].([]interface{})
+	if !ok || len(comments) != 0 {
+		t.Fatalf("expected empty comments list, got %v", r["comments"])
+	}
+}
+
+func TestGetUserComments_WithComments(t *testing.T) {
+	app := testApp(t)
+	creator := seedUser(t, app.DB, "uccreator")
+	commenter := seedUser(t, app.DB, "uccommenter")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	// Create two comments for the user
+	for i := 0; i < 2; i++ {
+		app.DB.Create(&models.Comment{
+			NoteID: uint(noteID),
+			UserID: commenter,
+			Body:   fmt.Sprintf("User comment %d", i),
+		})
+	}
+
+	w := serve("GET", "/users/:id/comments", fmt.Sprintf("/users/%d/comments", commenter),
+		nil, app.GetUserComments)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	comments := r["comments"].([]interface{})
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments, got %d", len(comments))
+	}
+	total := int(r["total"].(float64))
+	if total != 2 {
+		t.Fatalf("expected total=2, got %d", total)
+	}
+}
+
+func TestGetUserComments_ExcludesDeleted(t *testing.T) {
+	app := testApp(t)
+	creator := seedUser(t, app.DB, "uccdel")
+	commenter := seedUser(t, app.DB, "uccdelc")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	app.DB.Create(&models.Comment{
+		NoteID: uint(noteID),
+		UserID: commenter,
+		Body:   "visible comment",
+	})
+	app.DB.Create(&models.Comment{
+		NoteID:    uint(noteID),
+		UserID:    commenter,
+		Body:      "deleted comment",
+		IsDeleted: true,
+	})
+
+	w := serve("GET", "/users/:id/comments", fmt.Sprintf("/users/%d/comments", commenter),
+		nil, app.GetUserComments)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	comments := r["comments"].([]interface{})
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 visible comment, got %d", len(comments))
+	}
+}
+
+func TestGetUserComments_UserNotFound(t *testing.T) {
+	app := testApp(t)
+
+	w := serve("GET", "/users/:id/comments", "/users/99999/comments",
+		nil, app.GetUserComments)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// ===== PIN / UNPIN TESTS =====
+
+func TestPinComment_HappyPath(t *testing.T) {
+	app := testApp(t)
+	admin := seedUser(t, app.DB, "pinadmin")
+	creator := seedUser(t, app.DB, "pincreator")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	// Make admin a global admin
+	app.DB.Model(&models.User{}).Where("id = ?", admin).Update("is_global_admin", true)
+
+	comment := models.Comment{NoteID: uint(noteID), UserID: uint64(creator), Body: "Pin me"}
+	app.DB.Create(&comment)
+
+	w := serve("POST", "/comments/:comment_id/pin", fmt.Sprintf("/comments/%d/pin", comment.ID),
+		nil, app.PinComment, authMW(admin))
+	assertStatus(t, w, http.StatusOK)
+
+	var updated models.Comment
+	app.DB.First(&updated, comment.ID)
+	if !updated.IsPinned {
+		t.Fatal("expected comment to be pinned")
+	}
+}
+
+func TestPinComment_MaxLimit(t *testing.T) {
+	app := testApp(t)
+	admin := seedUser(t, app.DB, "pinlimitadmin")
+	creator := seedUser(t, app.DB, "pinlimitcreator")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	app.DB.Model(&models.User{}).Where("id = ?", admin).Update("is_global_admin", true)
+
+	// Create 3 pinned comments
+	for i := 0; i < 3; i++ {
+		c := models.Comment{NoteID: uint(noteID), UserID: uint64(creator), Body: fmt.Sprintf("Pinned %d", i), IsPinned: true}
+		app.DB.Create(&c)
+	}
+
+	// Try to pin a 4th
+	extra := models.Comment{NoteID: uint(noteID), UserID: uint64(creator), Body: "Extra pin"}
+	app.DB.Create(&extra)
+
+	w := serve("POST", "/comments/:comment_id/pin", fmt.Sprintf("/comments/%d/pin", extra.ID),
+		nil, app.PinComment, authMW(admin))
+	assertStatus(t, w, http.StatusConflict)
+}
+
+func TestPinComment_OnlyTopLevel(t *testing.T) {
+	app := testApp(t)
+	admin := seedUser(t, app.DB, "pintladmin")
+	creator := seedUser(t, app.DB, "pintlcreator")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	app.DB.Model(&models.User{}).Where("id = ?", admin).Update("is_global_admin", true)
+
+	parent := models.Comment{NoteID: uint(noteID), UserID: uint64(creator), Body: "Parent"}
+	app.DB.Create(&parent)
+	parentID := parent.ID
+	child := models.Comment{NoteID: uint(noteID), UserID: uint64(creator), Body: "Reply", ParentID: &parentID, Depth: 1}
+	app.DB.Create(&child)
+
+	w := serve("POST", "/comments/:comment_id/pin", fmt.Sprintf("/comments/%d/pin", child.ID),
+		nil, app.PinComment, authMW(admin))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestPinComment_NonAdminDenied(t *testing.T) {
+	app := testApp(t)
+	regular := seedUser(t, app.DB, "pinnonadmin")
+	creator := seedUser(t, app.DB, "pinnacreator")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	comment := models.Comment{NoteID: uint(noteID), UserID: uint64(creator), Body: "Can't pin me"}
+	app.DB.Create(&comment)
+
+	w := serve("POST", "/comments/:comment_id/pin", fmt.Sprintf("/comments/%d/pin", comment.ID),
+		nil, app.PinComment, authMW(regular))
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestUnpinComment_HappyPath(t *testing.T) {
+	app := testApp(t)
+	admin := seedUser(t, app.DB, "unpinadmin")
+	creator := seedUser(t, app.DB, "unpincreator")
+	noteID := seedApprovedNote(t, app.DB, creator)
+
+	app.DB.Model(&models.User{}).Where("id = ?", admin).Update("is_global_admin", true)
+
+	comment := models.Comment{NoteID: uint(noteID), UserID: uint64(creator), Body: "Pinned", IsPinned: true}
+	app.DB.Create(&comment)
+
+	w := serve("DELETE", "/comments/:comment_id/pin", fmt.Sprintf("/comments/%d/pin", comment.ID),
+		nil, app.UnpinComment, authMW(admin))
+	assertStatus(t, w, http.StatusOK)
+
+	var updated models.Comment
+	app.DB.First(&updated, comment.ID)
+	if updated.IsPinned {
+		t.Fatal("expected comment to be unpinned")
 	}
 }

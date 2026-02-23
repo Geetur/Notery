@@ -32,10 +32,36 @@ type SMTPMailer struct {
 	From string
 }
 
+// loginAuth implements smtp.Auth using the LOGIN mechanism.
+// Some providers (e.g. Outlook/Office365) require LOGIN instead of PLAIN.
+type loginAuth struct {
+	username, password string
+}
+
+func (a *loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	return "LOGIN", nil, nil
+}
+
+func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if !more {
+		return nil, nil
+	}
+	prompt := strings.TrimSpace(string(fromServer))
+	switch strings.ToLower(prompt) {
+	case "username:":
+		return []byte(a.username), nil
+	case "password:":
+		return []byte(a.password), nil
+	default:
+		return nil, fmt.Errorf("unexpected LOGIN prompt: %q", prompt)
+	}
+}
+
 // Send delivers an email via SMTP.
+// Uses LOGIN auth for providers that don't support PLAIN (e.g. Outlook/Office365),
+// falling back to PLAIN auth for providers that support it.
 func (m *SMTPMailer) Send(to, subject, body string) error {
 	addr := m.Host + ":" + m.Port
-	auth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
 
 	msg := strings.Join([]string{
 		"From: " + m.From,
@@ -47,7 +73,15 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 		body,
 	}, "\r\n")
 
-	return smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg))
+	// Try LOGIN auth first (required by Outlook/Office365), then fall back to PLAIN.
+	auth := &loginAuth{username: m.User, password: m.Pass}
+	err := smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg))
+	if err != nil && strings.Contains(err.Error(), "Unrecognized authentication type") {
+		// Fall back to PLAIN auth for providers that don't support LOGIN
+		plainAuth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
+		return smtp.SendMail(addr, plainAuth, m.From, []string{to}, []byte(msg))
+	}
+	return err
 }
 
 // LogMailer logs emails to stdout instead of sending them.

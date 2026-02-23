@@ -15,7 +15,9 @@ import {
     createComment,
     deleteComment,
     editComment,
+    pinComment,
     removeCommentVote,
+    unpinComment,
     voteComment,
 } from "@/services/comments";
 import { useAuthStore } from "@/stores/auth-store";
@@ -29,19 +31,23 @@ import {
     Edit2,
     MessageSquare,
     MoreHorizontal,
+    Pin,
     Trash2,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 interface CommentThreadProps {
     comment: CommentResponse;
     noteId: number;
+    isAdmin?: boolean;
     onCommentUpdated?: () => void;
 }
 
 export function CommentThread({
     comment,
     noteId,
+    isAdmin,
     onCommentUpdated,
 }: CommentThreadProps) {
     const { user, isAuthenticated } = useAuthStore();
@@ -57,8 +63,10 @@ export function CommentThread({
     const [submitting, setSubmitting] = useState(false);
     const [isDeleted, setIsDeleted] = useState(comment.is_deleted);
     const [body, setBody] = useState(comment.body);
+    const [isPinned, setIsPinned] = useState(comment.is_pinned);
 
     const isOwnComment = user?.id === comment.user_id;
+    const canDelete = isOwnComment || isAdmin;
     const netScore = upvotes - downvotes;
 
     const handleVote = async (value: 1 | -1) => {
@@ -128,6 +136,23 @@ export function CommentThread({
         }
     };
 
+    const handleTogglePin = async () => {
+        try {
+            if (isPinned) {
+                await unpinComment(comment.id);
+                setIsPinned(false);
+                toast({ title: "Comment unpinned" });
+            } else {
+                await pinComment(comment.id);
+                setIsPinned(true);
+                toast({ title: "Comment pinned" });
+            }
+            onCommentUpdated?.();
+        } catch {
+            toast({ title: isPinned ? "Failed to unpin" : "Failed to pin", variant: "destructive" });
+        }
+    };
+
     return (
         <div
             className={cn(
@@ -149,7 +174,14 @@ export function CommentThread({
                 </button>
 
                 <span className="font-semibold text-foreground">
-                    {isDeleted ? "[deleted]" : comment.username}
+                    {isDeleted ? "[deleted]" : (
+                        <Link
+                            href={`/user/${comment.user_id}`}
+                            className="hover:underline"
+                        >
+                            {comment.username}
+                        </Link>
+                    )}
                 </span>
                 <span className="text-muted-foreground">•</span>
                 <span className="text-muted-foreground">
@@ -159,6 +191,11 @@ export function CommentThread({
                 </span>
                 {comment.is_edited && (
                     <span className="text-muted-foreground italic">(edited)</span>
+                )}
+                {isPinned && (
+                    <span className="text-xs font-medium text-primary flex items-center gap-0.5">
+                        <Pin className="h-3 w-3" /> Pinned
+                    </span>
                 )}
                 {collapsed && (
                     <span className="text-muted-foreground">
@@ -265,7 +302,7 @@ export function CommentThread({
                             )}
 
                             {/* More options */}
-                            {isOwnComment && (
+                            {(canDelete || isAdmin) && (
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                         <Button
@@ -277,22 +314,32 @@ export function CommentThread({
                                         </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="start">
-                                        <DropdownMenuItem
-                                            onClick={() => {
-                                                setEditing(true);
-                                                setEditText(body);
-                                            }}
-                                        >
-                                            <Edit2 className="h-3.5 w-3.5 mr-2" />
-                                            Edit
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                            onClick={handleDelete}
-                                            className="text-destructive"
-                                        >
-                                            <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                            Delete
-                                        </DropdownMenuItem>
+                                        {isOwnComment && (
+                                            <DropdownMenuItem
+                                                onClick={() => {
+                                                    setEditing(true);
+                                                    setEditText(body);
+                                                }}
+                                            >
+                                                <Edit2 className="h-3.5 w-3.5 mr-2" />
+                                                Edit
+                                            </DropdownMenuItem>
+                                        )}
+                                        {isAdmin && comment.depth === 0 && !isDeleted && (
+                                            <DropdownMenuItem onClick={handleTogglePin}>
+                                                <Pin className="h-3.5 w-3.5 mr-2" />
+                                                {isPinned ? "Unpin" : "Pin"}
+                                            </DropdownMenuItem>
+                                        )}
+                                        {canDelete && (
+                                            <DropdownMenuItem
+                                                onClick={handleDelete}
+                                                className="text-destructive"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                                Delete
+                                            </DropdownMenuItem>
+                                        )}
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             )}
@@ -340,6 +387,7 @@ export function CommentThread({
                                     key={child.id}
                                     comment={child}
                                     noteId={noteId}
+                                    isAdmin={isAdmin}
                                     onCommentUpdated={onCommentUpdated}
                                 />
                             ))}

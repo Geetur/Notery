@@ -36,6 +36,9 @@ type Note struct {
 	Title  string `json:"title" gorm:"index"`
 	Author string `json:"author" gorm:"index"`
 
+	// Description is optional text describing the note's content
+	Description string `json:"description" gorm:"type:text"`
+
 	// Status tracks the approval state: StatusPending, StatusApproved, or StatusRejected
 	Status NoteStatus `json:"status" gorm:"index"`
 
@@ -57,6 +60,13 @@ type Note struct {
 	// PDFUploadedAt tracks when the PDF was last uploaded/updated
 	PDFUploadedAt *time.Time `json:"pdf_uploaded_at"`
 
+	// ----- Thumbnail Fields -----
+	// HasThumbnail indicates whether a thumbnail image has been uploaded.
+	HasThumbnail bool `json:"has_thumbnail" gorm:"default:false"`
+
+	// ThumbnailURL stores the R2 object key for the thumbnail image.
+	ThumbnailURL string `json:"thumbnail_url" gorm:"default:''"`
+
 	// ----- Voting/Hotness Fields -----
 	// Upvotes and Downvotes track community engagement
 	Upvotes   uint64 `json:"upvotes" gorm:"default:0"`
@@ -65,7 +75,27 @@ type Note struct {
 	// Hotness is the calculated Reddit-style hot score
 	Hotness float64 `json:"hotness" gorm:"index"`
 
+	// IsLocked prevents new comments from being added to this note.
+	// Admins can lock a note via the three-dot menu.
+	IsLocked bool `json:"is_locked" gorm:"default:false;not null"`
+
 	// ----- Timestamps -----
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// ----- Computed (non-DB) Fields -----
+	// SubnoteryName is populated at query time — not stored in the database.
+	SubnoteryName string `json:"subnotery_name" gorm:"-"`
+
+	// UserVote is the current user's vote direction ("up", "down", or "").
+	// Populated at query time for authenticated requests — not stored in the database.
+	UserVote string `json:"user_vote" gorm:"-"`
+
+	// CommentCount is the total number of comments on this note.
+	// Populated at query time — not stored in the database.
+	CommentCount int `json:"comment_count" gorm:"-"`
+
+	// HasFullAccess indicates whether the requesting user has full PDF access.
+	// Populated at query time for the single-note endpoint — not stored in the database.
+	HasFullAccess bool `json:"has_full_access" gorm:"-"`
 }

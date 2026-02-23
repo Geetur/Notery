@@ -22,21 +22,21 @@ import { CommentThread } from "./comment-thread";
 
 interface CommentSectionProps {
     noteId: number;
+    isAdmin?: boolean;
 }
 
 const SORT_OPTIONS: { value: CommentSortOrder; label: string }[] = [
-    { value: "best", label: "Best" },
-    { value: "top", label: "Top" },
+    { value: "hot", label: "Hot" },
     { value: "new", label: "New" },
+    { value: "top", label: "Top" },
     { value: "controversial", label: "Controversial" },
-    { value: "old", label: "Old" },
 ];
 
-export function CommentSection({ noteId }: CommentSectionProps) {
+export function CommentSection({ noteId, isAdmin }: CommentSectionProps) {
     const { isAuthenticated } = useAuthStore();
     const { toast } = useToast();
     const queryClient = useQueryClient();
-    const [sort, setSort] = useState<CommentSortOrder>("best");
+    const [sort, setSort] = useState<CommentSortOrder>("hot");
     const [newComment, setNewComment] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [page, setPage] = useState(1);
@@ -157,6 +157,7 @@ export function CommentSection({ noteId }: CommentSectionProps) {
                                 key={comment.id}
                                 comment={comment}
                                 noteId={noteId}
+                                isAdmin={isAdmin}
                                 onCommentUpdated={handleCommentUpdated}
                             />
                         ))}

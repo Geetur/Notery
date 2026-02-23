@@ -1,4 +1,4 @@
-import { TopNav } from "@/components/layout";
+import { SidebarLayout, TopNav } from "@/components/layout";
 import { Providers } from "@/components/providers";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   title: "Notery — Note Marketplace",
   description:
     "Buy and sell study notes, lecture summaries, and educational content.",
+  icons: {
+    icon: "/notery-logo.png",
+  },
 };
 
 export default function RootLayout({
@@ -33,7 +36,9 @@ export default function RootLayout({
       >
         <Providers>
           <TopNav />
-          <div className="min-h-[calc(100vh-48px)]">{children}</div>
+          <div className="min-h-[calc(100vh-48px)]">
+            <SidebarLayout>{children}</SidebarLayout>
+          </div>
         </Providers>
       </body>
     </html>

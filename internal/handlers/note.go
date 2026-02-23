@@ -25,8 +25,10 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/meilisearch/meilisearch-go"
@@ -72,7 +74,7 @@ func (app *App) CreateNote(c *gin.Context) {
 	var req struct {
 		SubnoteryName string `json:"subnotery_name" binding:"required"`
 		Title         string `json:"title"`
-		Author        string `json:"author"`
+		Description   string `json:"description"`
 		Price         int64  `json:"price"`
 	}
 	if !helpers.BindJSON(c, &req) {
@@ -86,9 +88,9 @@ func (app *App) CreateNote(c *gin.Context) {
 	noteLog.Log("CREATE", "User identified", "userID", userID)
 
 	// Basic validation
-	if req.Title == "" || req.SubnoteryName == "" || req.Author == "" || req.Price < 0 {
+	if req.Title == "" || req.SubnoteryName == "" || req.Price < 0 {
 		noteLog.Log("CREATE", "Validation failed: missing required fields")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Title, SubnoteryName, Author, and Price are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title, SubnoteryName, and Price are required"})
 		return
 	}
 
@@ -115,28 +117,56 @@ func (app *App) CreateNote(c *gin.Context) {
 		}
 		noteLog.Log("CREATE", "Subnotery resolved", "subnoteryID", subnotery.ID)
 
+		// Fetch the creator user (needed for author name, notoriety check, and admin assignment)
+		var creator models.User
+		if err := tx.First(&creator, userID).Error; err != nil {
+			noteLog.Log("CREATE", "Failed to fetch creator", "error", err)
+			return err
+		}
+
+		// Enforce minimum post notoriety (skip for admins and new subnoteries)
+		if !subnoteryCreated && subnotery.MinPostNotoriety > 0 {
+			isAdmin := creator.IsGlobalAdmin
+			if !isAdmin {
+				var adminCount int64
+				tx.Table("user_admins").
+					Where("user_id = ? AND subnotery_id = ?", userID, subnotery.ID).
+					Count(&adminCount)
+				isAdmin = adminCount > 0
+			}
+			if !isAdmin && creator.PostKarma < subnotery.MinPostNotoriety {
+				noteLog.Log("CREATE", "Insufficient post notoriety",
+					"userID", userID, "karma", creator.PostKarma, "required", subnotery.MinPostNotoriety)
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":    "Insufficient notoriety to post in this community",
+					"required": subnotery.MinPostNotoriety,
+					"current":  creator.PostKarma,
+				})
+				return fmt.Errorf("insufficient notoriety")
+			}
+		}
+
 		// Assign creator as first admin if subnotery was just created
 		if subnoteryCreated {
-			var user models.User
-			if err := tx.First(&user, userID).Error; err != nil {
-				noteLog.Log("CREATE", "Failed to fetch user", "error", err)
-				return err
-			}
-			if err := tx.Model(&subnotery).Association("Admins").Append(&user); err != nil {
+			if err := tx.Model(&subnotery).Association("Admins").Append(&creator); err != nil {
 				noteLog.Log("CREATE", "Failed to assign admin", "error", err)
 				return err
 			}
-			if err := tx.Model(&subnotery).Association("Members").Append(&user); err != nil {
-				noteLog.Log("CREATE", "Failed to add member", "error", err)
-				return err
-			}
-			noteLog.Log("CREATE", "Creator assigned as admin/member", "subnoteryID", subnotery.ID)
+			noteLog.Log("CREATE", "Creator assigned as admin", "subnoteryID", subnotery.ID)
 		}
 
-		// Create the note record
+		// Always auto-join creator as member (idempotent — GORM ignores duplicates)
+		if err := tx.Model(&subnotery).Association("Members").Append(&creator); err != nil {
+			noteLog.Log("CREATE", "Failed to add member", "error", err)
+			return err
+		}
+		noteLog.Log("CREATE", "Creator ensured as member", "subnoteryID", subnotery.ID)
+
+		// Create the note record (author = creator's display name)
 		note = models.Note{
 			Title:       req.Title,
-			Author:      req.Author,
+			Description: req.Description,
+			Author:      creator.DisplayName(),
 			Price:       req.Price,
 			Status:      models.StatusPending,
 			SubnoteryID: subnotery.ID,
@@ -148,12 +178,23 @@ func (app *App) CreateNote(c *gin.Context) {
 		}
 		return nil
 	}); err != nil {
+		// If the response was already written (e.g., notoriety check), don't overwrite it
+		if c.Writer.Written() {
+			return
+		}
 		noteLog.Log("CREATE", "Transaction failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to internally create note"})
 		return
 	}
 
 	noteLog.Log("CREATE", "Note created successfully", "noteID", note.ID)
+
+	// Populate subnotery name for the response
+	var sub models.Subnotery
+	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+		note.SubnoteryName = sub.Name
+	}
+
 	c.JSON(http.StatusCreated, note)
 }
 
@@ -212,8 +253,57 @@ func (app *App) DeleteNote(c *gin.Context) {
 		app.deletePDFFromR2(c.Request.Context(), note.ID)
 	}
 
+	// Cleanup thumbnail from R2 if exists
+	if note.HasThumbnail && note.ThumbnailURL != "" {
+		app.deleteThumbnailFromR2(c.Request.Context(), note.ThumbnailURL)
+	}
+
 	noteLog.Log("DELETE", "Note deleted successfully", "noteID", note.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Note deleted successfully"})
+}
+
+// LockNote prevents new comments from being added to a note.
+// Only admins (global or subnotery-scoped) can lock notes.
+//
+// Route: PATCH /api/v1/notes/:id/lock
+func (app *App) LockNote(c *gin.Context) {
+	noteLog.Log("LOCK", "Processing note lock request")
+
+	note, ok := helpers.MustFetchNote(c, app.DB)
+	if !ok {
+		return
+	}
+
+	if err := app.DB.Model(note).Update("is_locked", true).Error; err != nil {
+		noteLog.Log("LOCK", "Failed to lock note", "noteID", note.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to lock note"})
+		return
+	}
+
+	noteLog.Log("LOCK", "Note locked successfully", "noteID", note.ID)
+	c.JSON(http.StatusOK, gin.H{"message": "Note locked successfully"})
+}
+
+// UnlockNote allows comments to be added to a note again.
+// Only admins (global or subnotery-scoped) can unlock notes.
+//
+// Route: PATCH /api/v1/notes/:id/unlock
+func (app *App) UnlockNote(c *gin.Context) {
+	noteLog.Log("UNLOCK", "Processing note unlock request")
+
+	note, ok := helpers.MustFetchNote(c, app.DB)
+	if !ok {
+		return
+	}
+
+	if err := app.DB.Model(note).Update("is_locked", false).Error; err != nil {
+		noteLog.Log("UNLOCK", "Failed to unlock note", "noteID", note.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unlock note"})
+		return
+	}
+
+	noteLog.Log("UNLOCK", "Note unlocked successfully", "noteID", note.ID)
+	c.JSON(http.StatusOK, gin.H{"message": "Note unlocked successfully"})
 }
 
 // RejectNote rejects a note, removing it from search/feed and deleting it from the DB.
@@ -265,6 +355,18 @@ func (app *App) RejectNote(c *gin.Context) {
 		}
 	}
 
+	// Delete any admin review comments and their votes before deleting the note.
+	var rejectCommentIDs []uint
+	app.DB.Model(&models.Comment{}).Where("note_id = ?", note.ID).Pluck("id", &rejectCommentIDs)
+	if len(rejectCommentIDs) > 0 {
+		app.DB.Where("comment_id IN ?", rejectCommentIDs).Delete(&models.CommentVote{})
+		app.DB.Where("note_id = ?", note.ID).Delete(&models.Comment{})
+		noteLog.Log("REJECT", "Deleted admin review comments", "noteID", note.ID, "count", len(rejectCommentIDs))
+	}
+
+	// Also delete any note votes before deleting the note.
+	app.DB.Where("note_id = ?", uint64(note.ID)).Delete(&models.Vote{})
+
 	// Delete the note from database
 	if err := app.DB.Delete(note).Error; err != nil {
 		noteLog.Log("REJECT", "Failed to delete note", "noteID", note.ID, "error", err)
@@ -275,6 +377,11 @@ func (app *App) RejectNote(c *gin.Context) {
 	// Cleanup PDF from R2 if exists
 	if note.HasPDF {
 		app.deletePDFFromR2(c.Request.Context(), note.ID)
+	}
+
+	// Cleanup thumbnail from R2 if exists
+	if note.HasThumbnail && note.ThumbnailURL != "" {
+		app.deleteThumbnailFromR2(c.Request.Context(), note.ThumbnailURL)
 	}
 
 	noteLog.Log("REJECT", "Note rejected and deleted successfully", "noteID", note.ID)
@@ -324,6 +431,12 @@ func (app *App) ApproveNote(c *gin.Context) {
 		noteLog.Log("APPROVE", "Status updated to Approved", "noteID", note.ID)
 	}
 
+	// Populate SubnoteryName for Meilisearch index
+	var sub models.Subnotery
+	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+		note.SubnoteryName = sub.Name
+	}
+
 	// Index note in Meilisearch for search
 	if err := app.indexNote(*note); err != nil {
 		noteLog.Log("APPROVE", "Failed to index note", "noteID", note.ID, "error", err)
@@ -343,18 +456,35 @@ func (app *App) ApproveNote(c *gin.Context) {
 		noteLog.Log("APPROVE", "Failed to add to feed", "noteID", note.ID, "error", err)
 	}
 
+	// Delete any admin review comments left on the note while it was pending.
+	// These comments are for admin discussion only and should not be visible to users.
+	// Delete associated comment votes first, then the comments themselves.
+	var commentIDs []uint
+	app.DB.Model(&models.Comment{}).Where("note_id = ?", note.ID).Pluck("id", &commentIDs)
+	if len(commentIDs) > 0 {
+		if result := app.DB.Where("comment_id IN ?", commentIDs).Delete(&models.CommentVote{}); result.Error != nil {
+			noteLog.Log("APPROVE", "Failed to delete comment votes", "noteID", note.ID, "error", result.Error)
+		}
+		if result := app.DB.Where("note_id = ?", note.ID).Delete(&models.Comment{}); result.Error != nil {
+			noteLog.Log("APPROVE", "Failed to delete admin comments", "noteID", note.ID, "error", result.Error)
+		} else {
+			noteLog.Log("APPROVE", "Deleted admin review comments", "noteID", note.ID, "count", result.RowsAffected)
+		}
+	}
+
 	noteLog.Log("APPROVE", "Note approved successfully", "noteID", note.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Note approved successfully"})
 }
 
 // GetNoteByID retrieves a single note by its ID.
 //
-// Only returns notes with Approved status. Non-approved notes return 403 Forbidden
-// to prevent information leakage about pending/rejected content.
+// Approved notes are visible to all authenticated users. Non-approved notes
+// (Pending/Rejected) are only visible to admins (global or scoped to the
+// note's subnotery). Non-admin users receive 403 Forbidden.
 //
-// DB: SELECT note by ID via GORM.
+// DB: SELECT note by ID via GORM; optional admin check via user + user_admins.
 // Technologies: PostgreSQL (GORM).
-// Helpers: helpers.MustFetchNote.
+// Helpers: helpers.MustFetchNote, helpers.GetUserID.
 //
 // Route: GET /api/v1/notes/:id
 func (app *App) GetNoteByID(c *gin.Context) {
@@ -366,14 +496,55 @@ func (app *App) GetNoteByID(c *gin.Context) {
 		return
 	}
 
-	// only return approved note
+	// Approved notes are visible to all authenticated users.
+	// Non-approved notes are only visible to admins (global or scoped to the note's subnotery).
 	if note.Status != models.StatusApproved {
-		noteLog.Log("GET", "Note not approved", "noteID", note.ID, "status", note.Status)
-		c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
-		return
+		userID := helpers.GetUserID(c)
+
+		// Check global admin
+		var user models.User
+		if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
+			noteLog.Log("GET", "Note not approved, user lookup failed", "noteID", note.ID)
+			c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
+			return
+		}
+
+		if !user.IsGlobalAdmin {
+			// Check subnotery admin
+			var adminCount int64
+			app.DB.Table("user_admins").
+				Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).
+				Count(&adminCount)
+			if adminCount == 0 {
+				noteLog.Log("GET", "Note not approved, user not admin", "noteID", note.ID, "status", note.Status)
+				c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
+				return
+			}
+		}
+
+		noteLog.Log("GET", "Admin viewing non-approved note", "noteID", note.ID, "status", note.Status, "userID", userID)
 	}
 
 	noteLog.Log("GET", "Note retrieved", "noteID", note.ID)
+
+	// Populate subnotery name
+	var sub models.Subnotery
+	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+		note.SubnoteryName = sub.Name
+	}
+
+	// Populate user vote and comment count
+	viewerID := helpers.GetUserID(c)
+	notes := []models.Note{*note}
+	app.populateUserVotes(viewerID, notes)
+	app.populateCommentCounts(notes)
+	note.UserVote = notes[0].UserVote
+	note.CommentCount = notes[0].CommentCount
+
+	// Determine if the requesting user has full PDF access (creator, admin, or purchased/free).
+	access := app.CheckNoteAccess(viewerID, note)
+	note.HasFullAccess = (access != AccessNone)
+
 	c.JSON(http.StatusOK, note)
 }
 
@@ -408,6 +579,11 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 			Where("user_admins.user_id = ? AND notes.status = ?", userID, models.StatusPending)
 	}
 
+	// Optional subnotery filter — used by community detail pages.
+	if subID := c.Query("subnotery_id"); subID != "" {
+		query = query.Where("notes.subnotery_id = ?", subID)
+	}
+
 	if err := query.Count(&total).Error; err != nil {
 		noteLog.Log("PENDING", "Failed to count pending notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending notes"})
@@ -421,6 +597,10 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 	}
 
 	noteLog.Log("PENDING", "Pending notes retrieved", "count", len(notes), "total", total)
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
 		"total": total,
@@ -431,22 +611,52 @@ func (app *App) GetPendingNotes(c *gin.Context) {
 
 // GetApprovedNotes returns a paginated list of all approved notes.
 //
-// Public endpoint (requires auth but no admin). Returns notes ordered by
-// creation time descending with total count for frontend pagination.
+// Supports sort and time query parameters for Reddit-style sorting:
+//   - sort=new (default): ORDER BY created_at DESC
+//   - sort=top: ORDER BY (upvotes - downvotes) DESC, with optional time filter
+//   - sort=controversial: ORDER BY controversy score DESC, with optional time filter
+//   - sort=hot: ORDER BY hotness DESC
+//
+// Time filter (only for top/controversial):
+//   - time=day|week|month|year|all (default: all)
 //
 // DB: COUNT + SELECT from notes WHERE status = Approved. Paginated with OFFSET/LIMIT.
 // Technologies: PostgreSQL (GORM).
-// Helpers: helpers.ParsePagination.
+// Helpers: helpers.ParsePagination, helpers.GetUserID.
 //
 // Route: GET /api/v1/notes/approved
 func (app *App) GetApprovedNotes(c *gin.Context) {
 	noteLog.Log("APPROVED", "Processing get approved notes request")
 	pag := helpers.ParsePagination(c)
 
+	sortParam := c.DefaultQuery("sort", "new")
+	timeParam := c.DefaultQuery("time", "all")
+
 	var notes []models.Note
 	var total int64
 
 	query := app.DB.Model(&models.Note{}).Where("status = ?", models.StatusApproved)
+
+	// Apply time filter for top/controversial sorts
+	if (sortParam == "top" || sortParam == "controversial") && timeParam != "all" {
+		var since time.Time
+		now := time.Now()
+		switch timeParam {
+		case "day":
+			since = now.AddDate(0, 0, -1)
+		case "week":
+			since = now.AddDate(0, 0, -7)
+		case "month":
+			since = now.AddDate(0, -1, 0)
+		case "year":
+			since = now.AddDate(-1, 0, 0)
+		default:
+			// "all" — no time filter
+		}
+		if !since.IsZero() {
+			query = query.Where("created_at >= ?", since)
+		}
+	}
 
 	if err := query.Count(&total).Error; err != nil {
 		noteLog.Log("APPROVED", "Failed to count approved notes", "error", err)
@@ -454,13 +664,36 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 		return
 	}
 
-	if err := query.Offset(pag.Offset).Limit(pag.Limit).Order("created_at DESC").Find(&notes).Error; err != nil {
+	// Apply sort order
+	switch sortParam {
+	case "top":
+		query = query.Order("(upvotes - downvotes) DESC, created_at DESC")
+	case "controversial":
+		query = query.Order("(upvotes + downvotes) * 1.0 / CASE WHEN ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) < 1 THEN 1 ELSE ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) END DESC, created_at DESC")
+	case "hot":
+		query = query.Order("hotness DESC, created_at DESC")
+	default: // "new"
+		query = query.Order("created_at DESC")
+	}
+
+	if err := query.Offset(pag.Offset).Limit(pag.Limit).Find(&notes).Error; err != nil {
 		noteLog.Log("APPROVED", "Failed to fetch approved notes", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved notes"})
 		return
 	}
 
-	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes), "total", total)
+	noteLog.Log("APPROVED", "Approved notes retrieved", "count", len(notes), "total", total, "sort", sortParam, "time", timeParam)
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
+	// Populate user votes for the current user
+	userID := helpers.GetUserID(c)
+	app.populateUserVotes(userID, notes)
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
 		"total": total,
@@ -515,6 +748,16 @@ func (app *App) GetMyNotes(c *gin.Context) {
 	}
 
 	noteLog.Log("MY_NOTES", "Notes retrieved", "count", len(notes), "total", total, "userID", userID)
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
+	// Populate user votes
+	app.populateUserVotes(userID, notes)
+
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,
 		"total": total,
@@ -558,4 +801,63 @@ func (app *App) removeNoteFromIndex(noteID uint) error {
 		noteLog.Log("INDEX", "Note removed from index", "noteID", noteID)
 	}
 	return err
+}
+
+// GetUserNotes returns a paginated list of approved notes created by a specific user.
+//
+// Public endpoint. Only returns approved notes so unapproved content is not leaked.
+// Paginated with total count for frontend display on user profile pages.
+//
+// DB: COUNT + SELECT from notes WHERE creator_id AND status = Approved. Paginated.
+// Technologies: PostgreSQL (GORM).
+// Helpers: helpers.ParsePagination.
+//
+// Route: GET /api/v1/users/:id/notes
+func (app *App) GetUserNotes(c *gin.Context) {
+	noteLog.Log("USER_NOTES", "Processing get user notes request")
+
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	pag := helpers.ParsePagination(c)
+
+	var notes []models.Note
+	var total int64
+
+	query := app.DB.Model(&models.Note{}).
+		Where("creator_id = ? AND status = ?", userID, models.StatusApproved)
+
+	if err := query.Count(&total).Error; err != nil {
+		noteLog.Log("USER_NOTES", "Failed to count notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user notes"})
+		return
+	}
+
+	if err := query.Offset(pag.Offset).Limit(pag.Limit).Order("created_at DESC").Find(&notes).Error; err != nil {
+		noteLog.Log("USER_NOTES", "Failed to fetch notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user notes"})
+		return
+	}
+
+	// Populate subnotery names
+	app.populateSubnoteryNames(notes)
+
+	// Populate comment counts
+	app.populateCommentCounts(notes)
+
+	// Populate user votes if viewer is authenticated
+	if viewerID, authenticated := helpers.TryGetUserID(c); authenticated {
+		app.populateUserVotes(viewerID, notes)
+	}
+
+	noteLog.Log("USER_NOTES", "User notes retrieved", "userID", userID, "count", len(notes), "total", total)
+	c.JSON(http.StatusOK, gin.H{
+		"notes": notes,
+		"total": total,
+		"page":  pag.Page,
+		"limit": pag.Limit,
+	})
 }

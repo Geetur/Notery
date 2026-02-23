@@ -9,6 +9,7 @@
 //	DELETE /comments/:comment_id        Soft-delete own comment (admin: any comment)
 //	POST   /comments/:comment_id/vote   Vote on a comment (+1 upvote, -1 downvote, toggle)
 //	DELETE /comments/:comment_id/vote   Remove vote from a comment
+//	GET    /me/comments                  List own comments (flat, paginated)
 //
 // DESIGN:
 //
@@ -79,6 +80,7 @@ type CommentResponse struct {
 	Depth     int                `json:"depth"`
 	IsDeleted bool               `json:"is_deleted"`
 	IsEdited  bool               `json:"is_edited"`
+	IsPinned  bool               `json:"is_pinned"`
 	CreatedAt time.Time          `json:"created_at"`
 	UserVote  int8               `json:"user_vote"`
 	Children  []*CommentResponse `json:"children"`
@@ -135,7 +137,16 @@ func (app *App) GetNoteComments(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
-	if note.Status != models.StatusApproved {
+	if note.Status == models.StatusApproved {
+		// Anyone can view comments on approved notes
+	} else if note.Status == models.StatusPending {
+		// Only admins can view comments on pending notes
+		userID, authenticated := helpers.TryGetUserID(c)
+		if !authenticated || !app.isNoteAdmin(userID, note.SubnoteryID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Comments are not available for this note"})
+			return
+		}
+	} else {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Comments are not available for this note"})
 		return
 	}
@@ -151,23 +162,23 @@ func (app *App) GetNoteComments(c *gin.Context) {
 	}
 
 	// ----- PHASE 1: Fetch only roots for this page with DB-level sort + pagination -----
+	// Pinned comments always appear first (is_pinned DESC), then the selected sort order.
 	rootQuery := app.DB.Where("note_id = ? AND parent_id IS NULL", noteID)
 	switch sortOrder {
-	case models.SortBest:
-		rootQuery = rootQuery.Order("score DESC, created_at ASC, id ASC")
+	case models.SortBest, models.SortHot:
+		rootQuery = rootQuery.Order("is_pinned DESC, score DESC, created_at ASC, id ASC")
 	case models.SortNew:
-		rootQuery = rootQuery.Order("created_at DESC, id DESC")
+		rootQuery = rootQuery.Order("is_pinned DESC, created_at DESC, id DESC")
 	case models.SortOld:
-		rootQuery = rootQuery.Order("created_at ASC, id ASC")
+		rootQuery = rootQuery.Order("is_pinned DESC, created_at ASC, id ASC")
 	case models.SortTop:
-		rootQuery = rootQuery.Order("(upvotes - downvotes) DESC, created_at ASC, id ASC")
+		rootQuery = rootQuery.Order("is_pinned DESC, (upvotes - downvotes) DESC, created_at ASC, id ASC")
 	case models.SortControversial:
-		// Keep root ordering consistent with models.ControversyScore used for children.
 		rootQuery = rootQuery.Order(
-			"(upvotes + downvotes) * 1.0 / CASE WHEN ABS(upvotes - downvotes) < 1 THEN 1 ELSE ABS(upvotes - downvotes) END DESC, created_at ASC, id ASC",
+			"is_pinned DESC, (upvotes + downvotes) * 1.0 / CASE WHEN ABS(upvotes - downvotes) < 1 THEN 1 ELSE ABS(upvotes - downvotes) END DESC, created_at ASC, id ASC",
 		)
 	default:
-		rootQuery = rootQuery.Order("score DESC, created_at ASC, id ASC")
+		rootQuery = rootQuery.Order("is_pinned DESC, score DESC, created_at ASC, id ASC")
 	}
 	var roots []models.Comment
 	if err := rootQuery.Offset(pag.Offset).Limit(pag.Limit).Find(&roots).Error; err != nil {
@@ -296,7 +307,7 @@ func (app *App) CreateComment(c *gin.Context) {
 		return
 	}
 
-	// Verify note exists and is approved
+	// Verify note exists and is approved (or pending — admins can comment on pending)
 	var note models.Note
 	if err := app.DB.First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -306,9 +317,43 @@ func (app *App) CreateComment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
-	if note.Status != models.StatusApproved {
+	if note.Status == models.StatusApproved {
+		// Check if note is locked (no new comments allowed)
+		if note.IsLocked {
+			c.JSON(http.StatusForbidden, gin.H{"error": "This note is locked — comments are disabled"})
+			return
+		}
+		// Anyone can comment on approved notes — proceed
+	} else if note.Status == models.StatusPending {
+		// Only admins (global or subnotery-scoped) may comment on pending notes
+		if !app.isNoteAdmin(userID, note.SubnoteryID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot comment on this note"})
+			return
+		}
+	} else {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot comment on this note"})
 		return
+	}
+
+	// Enforce minimum comment notoriety for the subnotery (skip for admins)
+	var subnotery models.Subnotery
+	if err := app.DB.Select("id", "min_comment_notoriety").First(&subnotery, note.SubnoteryID).Error; err == nil {
+		if subnotery.MinCommentNotoriety > 0 {
+			var commenter models.User
+			if err := app.DB.Select("id", "comment_karma", "is_global_admin").First(&commenter, userID).Error; err == nil {
+				isAdmin := commenter.IsGlobalAdmin || app.isNoteAdmin(userID, note.SubnoteryID)
+				if !isAdmin && commenter.CommentKarma < subnotery.MinCommentNotoriety {
+					commentLog.Log("CREATE", "Insufficient comment notoriety",
+						"userID", userID, "karma", commenter.CommentKarma, "required", subnotery.MinCommentNotoriety)
+					c.JSON(http.StatusForbidden, gin.H{
+						"error":    "Insufficient notoriety to comment in this community",
+						"required": subnotery.MinCommentNotoriety,
+						"current":  commenter.CommentKarma,
+					})
+					return
+				}
+			}
+		}
 	}
 
 	// Determine depth and parent path (if replying)
@@ -687,6 +732,9 @@ func (app *App) VoteComment(c *gin.Context) {
 			// Existing vote found
 			if existing.Value == req.Value {
 				// Toggle off: remove vote
+				// 1. Reverse prior karma ledger entry
+				app.reverseCommentKarmaLedger(tx, existing.ID, comment.UserID)
+
 				if err := tx.Delete(&existing).Error; err != nil {
 					return err
 				}
@@ -703,6 +751,9 @@ func (app *App) VoteComment(c *gin.Context) {
 				commentLog.Log("VOTE", "toggled off", "comment_id", commentID, "user_id", userID, "was", req.Value)
 			} else {
 				// Switch vote direction
+				// 1. Reverse prior karma ledger entry
+				app.reverseCommentKarmaLedger(tx, existing.ID, comment.UserID)
+
 				if err := tx.Model(&existing).Update("value", req.Value).Error; err != nil {
 					return err
 				}
@@ -723,6 +774,33 @@ func (app *App) VoteComment(c *gin.Context) {
 						return err
 					}
 				}
+
+				// Re-read for accurate counts
+				var updated models.Comment
+				if err := tx.First(&updated, commentID).Error; err != nil {
+					return err
+				}
+
+				// Apply karma for new direction
+				v := int(req.Value)
+				delta := models.CalculateCommentKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+				ledger := models.KarmaLedger{
+					AuthorID:  comment.UserID,
+					VoterID:   userID,
+					VoteType:  models.KarmaComment,
+					VoteID:    existing.ID,
+					TargetID:  uint64(commentID),
+					KarmaType: models.KarmaComment,
+					Delta:     delta,
+				}
+				if err := tx.Create(&ledger).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&models.User{}).Where("id = ?", comment.UserID).
+					Update("comment_karma", gorm.Expr("comment_karma + ?", delta)).Error; err != nil {
+					return err
+				}
+
 				resultVote = req.Value
 				commentLog.Log("VOTE", "switched", "comment_id", commentID, "user_id", userID, "to", req.Value)
 			}
@@ -745,6 +823,33 @@ func (app *App) VoteComment(c *gin.Context) {
 					return err
 				}
 			}
+
+			// Re-read for accurate counts
+			var updated models.Comment
+			if err := tx.First(&updated, commentID).Error; err != nil {
+				return err
+			}
+
+			// Apply karma
+			v := int(req.Value)
+			delta := models.CalculateCommentKarmaDelta(v, updated.Upvotes, updated.Downvotes)
+			ledger := models.KarmaLedger{
+				AuthorID:  comment.UserID,
+				VoterID:   userID,
+				VoteType:  models.KarmaComment,
+				VoteID:    vote.ID,
+				TargetID:  uint64(commentID),
+				KarmaType: models.KarmaComment,
+				Delta:     delta,
+			}
+			if err := tx.Create(&ledger).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.User{}).Where("id = ?", comment.UserID).
+				Update("comment_karma", gorm.Expr("comment_karma + ?", delta)).Error; err != nil {
+				return err
+			}
+
 			resultVote = req.Value
 			commentLog.Log("VOTE", "created", "comment_id", commentID, "user_id", userID, "value", req.Value)
 		} else {
@@ -819,6 +924,9 @@ func (app *App) RemoveCommentVote(c *gin.Context) {
 			return err
 		}
 
+		// Reverse karma ledger entry
+		app.reverseCommentKarmaLedger(tx, existing.ID, comment.UserID)
+
 		// Remove the vote and decrement the appropriate counter
 		if err := tx.Delete(&existing).Error; err != nil {
 			return err
@@ -855,6 +963,314 @@ func (app *App) RemoveCommentVote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Vote removed"})
 }
 
+// ----- POST /comments/:comment_id/pin -----
+
+// PinComment pins a top-level comment so it appears at the top of the comment list.
+// Only admins (global or subnotery-scoped) can pin. Maximum 3 pinned comments per note.
+//
+// Route: POST /api/v1/comments/:comment_id/pin
+func (app *App) PinComment(c *gin.Context) {
+	userID := helpers.GetUserID(c)
+	commentID, ok := helpers.MustParseCommentID(c)
+	if !ok {
+		return
+	}
+
+	var comment models.Comment
+	if err := app.DB.First(&comment, commentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comment not found"})
+		return
+	}
+
+	// Only top-level comments can be pinned
+	if comment.ParentID != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only top-level comments can be pinned"})
+		return
+	}
+
+	if comment.IsDeleted {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot pin a deleted comment"})
+		return
+	}
+
+	if comment.IsPinned {
+		c.JSON(http.StatusOK, gin.H{"message": "Comment is already pinned"})
+		return
+	}
+
+	// Check admin privileges: global admin or subnotery admin
+	isGlobalAdmin := false
+	var adminUser models.User
+	if err := app.DB.First(&adminUser, userID).Error; err == nil {
+		isGlobalAdmin = adminUser.IsGlobalAdmin
+	}
+
+	if !isGlobalAdmin {
+		// Get the note to find the subnotery
+		var note models.Note
+		if err := app.DB.First(&note, comment.NoteID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+			return
+		}
+		// Check if user is a subnotery admin
+		var count int64
+		app.DB.Table("user_admins").Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).Count(&count)
+		if count == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can pin comments"})
+			return
+		}
+	}
+
+	// Check max pinned limit
+	var pinnedCount int64
+	app.DB.Model(&models.Comment{}).Where("note_id = ? AND is_pinned = true", comment.NoteID).Count(&pinnedCount)
+	if pinnedCount >= int64(models.MaxPinnedComments) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("Maximum of %d pinned comments reached for this note", models.MaxPinnedComments),
+		})
+		return
+	}
+
+	if err := app.DB.Model(&comment).Update("is_pinned", true).Error; err != nil {
+		commentLog.Log("PIN", "db error", "comment_id", commentID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to pin comment"})
+		return
+	}
+
+	commentLog.Log("PIN", "success", "comment_id", commentID, "user_id", userID)
+	c.JSON(http.StatusOK, gin.H{"message": "Comment pinned"})
+}
+
+// ----- DELETE /comments/:comment_id/pin -----
+
+// UnpinComment removes the pinned status from a comment.
+// Only admins (global or subnotery-scoped) can unpin.
+//
+// Route: DELETE /api/v1/comments/:comment_id/pin
+func (app *App) UnpinComment(c *gin.Context) {
+	userID := helpers.GetUserID(c)
+	commentID, ok := helpers.MustParseCommentID(c)
+	if !ok {
+		return
+	}
+
+	var comment models.Comment
+	if err := app.DB.First(&comment, commentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comment not found"})
+		return
+	}
+
+	if !comment.IsPinned {
+		c.JSON(http.StatusOK, gin.H{"message": "Comment is not pinned"})
+		return
+	}
+
+	// Check admin privileges: global admin or subnotery admin
+	isGlobalAdmin := false
+	var adminUser models.User
+	if err := app.DB.First(&adminUser, userID).Error; err == nil {
+		isGlobalAdmin = adminUser.IsGlobalAdmin
+	}
+
+	if !isGlobalAdmin {
+		var note models.Note
+		if err := app.DB.First(&note, comment.NoteID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+			return
+		}
+		var count int64
+		app.DB.Table("user_admins").Where("user_id = ? AND subnotery_id = ?", userID, note.SubnoteryID).Count(&count)
+		if count == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can unpin comments"})
+			return
+		}
+	}
+
+	if err := app.DB.Model(&comment).Update("is_pinned", false).Error; err != nil {
+		commentLog.Log("UNPIN", "db error", "comment_id", commentID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unpin comment"})
+		return
+	}
+
+	commentLog.Log("UNPIN", "success", "comment_id", commentID, "user_id", userID)
+	c.JSON(http.StatusOK, gin.H{"message": "Comment unpinned"})
+}
+
+// ----- GET /me/comments -----
+
+// GetMyComments returns a flat paginated list of the authenticated user's comments.
+// Soft-deleted comments are excluded. Each response includes the note title for context.
+//
+// Query params:
+//
+//	page  — page number (default 1)
+//	limit — page size (default 25, max 100)
+//
+// Route: GET /api/v1/me/comments
+func (app *App) GetMyComments(c *gin.Context) {
+	userID := helpers.GetUserID(c)
+	pag := helpers.ParsePagination(c)
+
+	var total int64
+	if err := app.DB.Model(&models.Comment{}).Where("user_id = ? AND is_deleted = false", userID).Count(&total).Error; err != nil {
+		commentLog.Log("MY_COMMENTS", "count error", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count comments"})
+		return
+	}
+
+	var comments []models.Comment
+	if err := app.DB.Where("user_id = ? AND is_deleted = false", userID).
+		Order("created_at DESC").
+		Offset(pag.Offset).Limit(pag.Limit).
+		Find(&comments).Error; err != nil {
+		commentLog.Log("MY_COMMENTS", "fetch error", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comments"})
+		return
+	}
+
+	// Batch-fetch note titles for context
+	noteIDs := make(map[uint]struct{})
+	for _, cm := range comments {
+		noteIDs[cm.NoteID] = struct{}{}
+	}
+	noteTitles := make(map[uint]string)
+	if len(noteIDs) > 0 {
+		ids := make([]uint, 0, len(noteIDs))
+		for id := range noteIDs {
+			ids = append(ids, id)
+		}
+		var notes []models.Note
+		app.DB.Select("id, title").Where("id IN ?", ids).Find(&notes)
+		for _, n := range notes {
+			noteTitles[uint(n.ID)] = n.Title
+		}
+	}
+
+	type myCommentResponse struct {
+		ID        uint      `json:"id"`
+		NoteID    uint      `json:"note_id"`
+		NoteTitle string    `json:"note_title"`
+		Body      string    `json:"body"`
+		Upvotes   int64     `json:"upvotes"`
+		Downvotes int64     `json:"downvotes"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	results := make([]myCommentResponse, 0, len(comments))
+	for _, cm := range comments {
+		results = append(results, myCommentResponse{
+			ID:        cm.ID,
+			NoteID:    cm.NoteID,
+			NoteTitle: noteTitles[cm.NoteID],
+			Body:      cm.Body,
+			Upvotes:   cm.Upvotes,
+			Downvotes: cm.Downvotes,
+			CreatedAt: cm.CreatedAt,
+		})
+	}
+
+	commentLog.Log("MY_COMMENTS", "success", "user_id", userID, "count", len(results), "total", total)
+	c.JSON(http.StatusOK, gin.H{
+		"comments": results,
+		"total":    total,
+		"page":     pag.Page,
+		"limit":    pag.Limit,
+	})
+}
+
+// ----- GET /users/:id/comments -----
+
+// GetUserComments returns a flat paginated list of a user's public comments.
+// Soft-deleted comments are excluded. Each response includes the note title for context.
+//
+// Query params:
+//
+//	page  — page number (default 1)
+//	limit — page size (default 25, max 100)
+//
+// Route: GET /api/v1/users/:id/comments
+func (app *App) GetUserComments(c *gin.Context) {
+	userID, ok := helpers.ParseUintParam(c, "id")
+	if !ok {
+		return
+	}
+
+	// Verify user exists
+	var user models.User
+	if err := app.DB.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	pag := helpers.ParsePagination(c)
+
+	var total int64
+	if err := app.DB.Model(&models.Comment{}).Where("user_id = ? AND is_deleted = false", userID).Count(&total).Error; err != nil {
+		commentLog.Log("USER_COMMENTS", "count error", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count comments"})
+		return
+	}
+
+	var comments []models.Comment
+	if err := app.DB.Where("user_id = ? AND is_deleted = false", userID).
+		Order("created_at DESC").
+		Offset(pag.Offset).Limit(pag.Limit).
+		Find(&comments).Error; err != nil {
+		commentLog.Log("USER_COMMENTS", "fetch error", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comments"})
+		return
+	}
+
+	// Batch-fetch note titles for context
+	noteIDs := make(map[uint]struct{})
+	for _, cm := range comments {
+		noteIDs[cm.NoteID] = struct{}{}
+	}
+	noteTitles := make(map[uint]string)
+	if len(noteIDs) > 0 {
+		ids := make([]uint, 0, len(noteIDs))
+		for id := range noteIDs {
+			ids = append(ids, id)
+		}
+		var notes []models.Note
+		app.DB.Select("id, title").Where("id IN ?", ids).Find(&notes)
+		for _, n := range notes {
+			noteTitles[uint(n.ID)] = n.Title
+		}
+	}
+
+	type userCommentResponse struct {
+		ID        uint      `json:"id"`
+		NoteID    uint      `json:"note_id"`
+		NoteTitle string    `json:"note_title"`
+		Body      string    `json:"body"`
+		Upvotes   int64     `json:"upvotes"`
+		Downvotes int64     `json:"downvotes"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	results := make([]userCommentResponse, 0, len(comments))
+	for _, cm := range comments {
+		results = append(results, userCommentResponse{
+			ID:        cm.ID,
+			NoteID:    cm.NoteID,
+			NoteTitle: noteTitles[cm.NoteID],
+			Body:      cm.Body,
+			Upvotes:   cm.Upvotes,
+			Downvotes: cm.Downvotes,
+			CreatedAt: cm.CreatedAt,
+		})
+	}
+
+	commentLog.Log("USER_COMMENTS", "success", "user_id", userID, "count", len(results), "total", total)
+	c.JSON(http.StatusOK, gin.H{
+		"comments": results,
+		"total":    total,
+		"page":     pag.Page,
+		"limit":    pag.Limit,
+	})
+}
+
 // ===== TREE-BUILDING INTERNALS =====
 
 // buildResponseMap converts flat comments into a map of CommentResponse pointers.
@@ -876,6 +1292,7 @@ func buildResponseMap(
 			Depth:     c.Depth,
 			IsDeleted: c.IsDeleted,
 			IsEdited:  c.EditedAt != nil,
+			IsPinned:  c.IsPinned,
 			CreatedAt: c.CreatedAt,
 			Children:  []*CommentResponse{},
 		}
@@ -939,7 +1356,7 @@ func sortTree(nodes []*CommentResponse, order models.CommentSortOrder) {
 // sortSlice sorts a single level of CommentResponse by the given order.
 func sortSlice(nodes []*CommentResponse, order models.CommentSortOrder) {
 	switch order {
-	case models.SortBest:
+	case models.SortBest, models.SortHot:
 		sort.SliceStable(nodes, func(i, j int) bool {
 			if nodes[i].Score == nodes[j].Score {
 				return olderFirst(nodes[i], nodes[j])
@@ -1278,4 +1695,36 @@ func filterDescendantsOfRoots(comments []models.Comment, rootIDs []uint) []model
 // materialized paths are not available.
 func filterExactSubtree(comments []models.Comment, targetID uint) []models.Comment {
 	return filterDescendantsOfRoots(comments, []uint{targetID})
+}
+
+// isNoteAdmin checks whether the given user is a global admin or a scoped admin
+// for the subnotery owning the note. Used for admin-only operations on pending notes.
+func (app *App) isNoteAdmin(userID uint64, subnoteryID uint) bool {
+	var user models.User
+	if err := app.DB.Select("id, is_global_admin").First(&user, userID).Error; err != nil {
+		return false
+	}
+	if user.IsGlobalAdmin {
+		return true
+	}
+	var count int64
+	app.DB.Table("user_admins").
+		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
+		Count(&count)
+	return count > 0
+}
+
+// reverseCommentKarmaLedger finds the most recent karma ledger entry for a comment vote
+// and reverses its delta from the author's comment_karma.
+func (app *App) reverseCommentKarmaLedger(tx *gorm.DB, voteID uint, authorID uint64) {
+	var ledger models.KarmaLedger
+	if err := tx.Where("vote_type = ? AND vote_id = ?", models.KarmaComment, voteID).
+		Order("created_at DESC").First(&ledger).Error; err != nil {
+		return // no ledger entry found — nothing to reverse
+	}
+	// Reverse the delta
+	tx.Model(&models.User{}).Where("id = ?", authorID).
+		Update("comment_karma", gorm.Expr("comment_karma - ?", ledger.Delta))
+	// Delete the ledger entry
+	tx.Delete(&ledger)
 }

@@ -20,13 +20,16 @@ func TestCreateNote_HappyPath(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "test-sub",
 			"title":          "Test Note",
-			"author":         "Author",
 			"price":          499,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusCreated)
 	r := respJSON(t, w)
 	if r["id"] == nil {
 		t.Fatal("expected note id")
+	}
+	// Author should be auto-derived from the creating user's display name
+	if r["author"] == nil || r["author"] == "" {
+		t.Fatal("expected author to be auto-derived from user")
 	}
 	if r["status"] != string(models.StatusPending) {
 		t.Fatalf("new note should be pending, got %v", r["status"])
@@ -40,15 +43,14 @@ func TestCreateNote_MissingTitle(t *testing.T) {
 	w := serve("POST", "/notes", "/notes",
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "test-sub",
-			"author":         "Author",
 			"price":          499,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-func TestCreateNote_MissingAuthor(t *testing.T) {
+func TestCreateNote_AuthorAutoDerived(t *testing.T) {
 	app := testApp(t)
-	uid := seedUser(t, app.DB, "noauthor")
+	uid := seedUser(t, app.DB, "autoauthor")
 
 	w := serve("POST", "/notes", "/notes",
 		jsonBody(map[string]interface{}{
@@ -56,7 +58,13 @@ func TestCreateNote_MissingAuthor(t *testing.T) {
 			"title":          "Test",
 			"price":          100,
 		}), app.CreateNote, authMW(uid))
-	assertStatus(t, w, http.StatusBadRequest)
+	assertStatus(t, w, http.StatusCreated)
+	// Verify author was auto-set to the user's display name
+	r := respJSON(t, w)
+	author, _ := r["author"].(string)
+	if author == "" {
+		t.Fatal("author should be auto-derived, got empty")
+	}
 }
 
 func TestCreateNote_NegativePrice(t *testing.T) {
@@ -67,7 +75,6 @@ func TestCreateNote_NegativePrice(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "test-sub",
 			"title":          "Test Note",
-			"author":         "Author",
 			"price":          -1,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusBadRequest)
@@ -81,7 +88,6 @@ func TestCreateNote_ZeroPrice(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": "free-sub",
 			"title":          "Free Note",
-			"author":         "Author",
 			"price":          0,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusCreated)
@@ -93,9 +99,8 @@ func TestCreateNote_MissingSubnoteryName(t *testing.T) {
 
 	w := serve("POST", "/notes", "/notes",
 		jsonBody(map[string]interface{}{
-			"title":  "Test Note",
-			"author": "Author",
-			"price":  499,
+			"title": "Test Note",
+			"price": 499,
 		}), app.CreateNote, authMW(uid))
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -109,7 +114,6 @@ func TestCreateNote_AutoCreatesSubnotery(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": subName,
 			"title":          "Auto Note",
-			"author":         "Author",
 			"price":          100,
 		}), app.CreateNote, authMW(uid))
 
@@ -130,7 +134,6 @@ func TestCreateNote_CreatorBecomesAdminOfNewSubnotery(t *testing.T) {
 		jsonBody(map[string]interface{}{
 			"subnotery_name": subName,
 			"title":          "Admin Note",
-			"author":         "Author",
 			"price":          100,
 		}), app.CreateNote, authMW(uid))
 
@@ -156,12 +159,51 @@ func TestGetNoteByID_Approved(t *testing.T) {
 
 func TestGetNoteByID_Pending(t *testing.T) {
 	app := testApp(t)
-	uid := seedUser(t, app.DB, "pendgetter")
-	noteID := seedPendingNote(t, app.DB, uid)
+	creator := seedUser(t, app.DB, "pendcreator")
+	noteID := seedPendingNote(t, app.DB, creator)
 
+	// Creator cannot view their own pending note (only admins via pending queue)
 	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
-		nil, app.GetNoteByID, authMW(uid))
+		nil, app.GetNoteByID, authMW(creator))
 	assertStatus(t, w, http.StatusForbidden)
+
+	// Another user also cannot view a pending note
+	other := seedUser(t, app.DB, "pendother")
+	w = serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID, authMW(other))
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestGetNoteByID_PendingGlobalAdmin(t *testing.T) {
+	app := testApp(t)
+	creator := seedUser(t, app.DB, "pendcreator2")
+	noteID := seedPendingNote(t, app.DB, creator)
+
+	admin := seedUser(t, app.DB, "pendgadmin")
+	app.DB.Model(&models.User{}).Where("id = ?", admin).Update("is_global_admin", true)
+
+	// Global admin CAN view a pending note
+	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID, authMW(admin))
+	assertStatus(t, w, http.StatusOK)
+}
+
+func TestGetNoteByID_PendingSubnoteryAdmin(t *testing.T) {
+	app := testApp(t)
+	creator := seedUser(t, app.DB, "pendcreator3")
+	noteID := seedPendingNote(t, app.DB, creator)
+
+	// Look up the note's subnotery
+	var note models.Note
+	app.DB.First(&note, noteID)
+
+	subAdmin := seedUser(t, app.DB, "pendsadmin")
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", subAdmin, note.SubnoteryID)
+
+	// Subnotery admin CAN view a pending note in their subnotery
+	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID, authMW(subAdmin))
+	assertStatus(t, w, http.StatusOK)
 }
 
 func TestGetNoteByID_NotFound(t *testing.T) {
@@ -305,6 +347,73 @@ func TestRejectNote_HappyPath(t *testing.T) {
 	if count != 0 {
 		t.Fatal("rejected note should be deleted")
 	}
+}
+
+// ===== LOCK / UNLOCK NOTE =====
+
+func TestLockNote_HappyPath(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "lockadmin")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	w := serve("PATCH", "/notes/:id/lock", fmt.Sprintf("/notes/%d/lock", noteID),
+		nil, app.LockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify is_locked is true in DB
+	var note models.Note
+	app.DB.First(&note, noteID)
+	if !note.IsLocked {
+		t.Fatal("expected note to be locked")
+	}
+}
+
+func TestLockNote_NotFound(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "locknf")
+
+	w := serve("PATCH", "/notes/:id/lock", "/notes/99999/lock",
+		nil, app.LockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestLockNote_InvalidID(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "lockbadid")
+
+	w := serve("PATCH", "/notes/:id/lock", "/notes/abc/lock",
+		nil, app.LockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestUnlockNote_HappyPath(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "unlockadmin")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Lock first
+	app.DB.Model(&models.Note{}).Where("id = ?", noteID).Update("is_locked", true)
+
+	// Then unlock
+	w := serve("PATCH", "/notes/:id/unlock", fmt.Sprintf("/notes/%d/unlock", noteID),
+		nil, app.UnlockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify is_locked is false in DB
+	var note models.Note
+	app.DB.First(&note, noteID)
+	if note.IsLocked {
+		t.Fatal("expected note to be unlocked")
+	}
+}
+
+func TestUnlockNote_NotFound(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "unlocknf")
+
+	w := serve("PATCH", "/notes/:id/unlock", "/notes/99999/unlock",
+		nil, app.UnlockNote, adminMW(uid))
+	assertStatus(t, w, http.StatusNotFound)
 }
 
 // ===== HELPER =====
