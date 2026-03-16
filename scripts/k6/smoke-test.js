@@ -6,20 +6,20 @@
 import { check, sleep } from "k6";
 import http from "k6/http";
 import { Trend } from "k6/metrics";
-import { BASE_URL, jsonHeaders, buildBottleneckReport } from "./common.js";
+import { BASE_URL, buildBottleneckReport, jsonHeaders } from "./common.js";
 
 // --- Per-endpoint duration trends ---
-const durHealth      = new Trend("dur_health", true);
-const durSignup      = new Trend("dur_signup", true);
-const durLogin       = new Trend("dur_login", true);
-const durHotFeed     = new Trend("dur_hot_feed", true);
-const durSearch      = new Trend("dur_search_notes", true);
+const durHealth = new Trend("dur_health", true);
+const durSignup = new Trend("dur_signup", true);
+const durLogin = new Trend("dur_login", true);
+const durHotFeed = new Trend("dur_hot_feed", true);
+const durSearch = new Trend("dur_search_notes", true);
 const durSubnoteries = new Trend("dur_subnoteries_list", true);
-const durProfile     = new Trend("dur_profile", true);
-const durApproved    = new Trend("dur_approved_notes", true);
-const durCart        = new Trend("dur_cart", true);
-const durBookmarks   = new Trend("dur_bookmarks", true);
-const durMyNotes     = new Trend("dur_my_notes", true);
+const durProfile = new Trend("dur_profile", true);
+const durApproved = new Trend("dur_approved_notes", true);
+const durCart = new Trend("dur_cart", true);
+const durBookmarks = new Trend("dur_bookmarks", true);
+const durMyNotes = new Trend("dur_my_notes", true);
 
 export const options = {
     vus: 1,

@@ -9,20 +9,20 @@
 import { check, sleep } from "k6";
 import http from "k6/http";
 import { Rate, Trend } from "k6/metrics";
-import { BASE_URL, jsonHeaders, login, signup, buildBottleneckReport } from "./common.js";
+import { BASE_URL, buildBottleneckReport, jsonHeaders, login, signup } from "./common.js";
 
 const errorRate = new Rate("errors");
 
 // --- Per-endpoint duration trends ---
-const durFeed         = new Trend("dur_hot_feed", true);
-const durSearchNotes  = new Trend("dur_search_notes", true);
-const durSearchSubs   = new Trend("dur_search_subnoteries", true);
-const durSearchUsers  = new Trend("dur_search_users", true);
-const durSearchComm   = new Trend("dur_search_comments", true);
-const durApproved     = new Trend("dur_approved_notes", true);
-const durProfile      = new Trend("dur_profile", true);
-const durSubnoteries  = new Trend("dur_subnoteries_list", true);
-const durBookmarks    = new Trend("dur_bookmarks", true);
+const durFeed = new Trend("dur_hot_feed", true);
+const durSearchNotes = new Trend("dur_search_notes", true);
+const durSearchSubs = new Trend("dur_search_subnoteries", true);
+const durSearchUsers = new Trend("dur_search_users", true);
+const durSearchComm = new Trend("dur_search_comments", true);
+const durApproved = new Trend("dur_approved_notes", true);
+const durProfile = new Trend("dur_profile", true);
+const durSubnoteries = new Trend("dur_subnoteries_list", true);
+const durBookmarks = new Trend("dur_bookmarks", true);
 
 export const options = {
     stages: [
@@ -73,10 +73,10 @@ export default function (data) {
 
         // Track by search type for granular analysis
         switch (t) {
-            case "notes":       durSearchNotes.add(res.timings.duration); break;
-            case "subnoteries": durSearchSubs.add(res.timings.duration);  break;
-            case "users":       durSearchUsers.add(res.timings.duration); break;
-            case "comments":    durSearchComm.add(res.timings.duration);  break;
+            case "notes": durSearchNotes.add(res.timings.duration); break;
+            case "subnoteries": durSearchSubs.add(res.timings.duration); break;
+            case "users": durSearchUsers.add(res.timings.duration); break;
+            case "comments": durSearchComm.add(res.timings.duration); break;
         }
 
         const ok = check(res, { "search 200": (r) => r.status === 200 });

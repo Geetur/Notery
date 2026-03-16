@@ -63,119 +63,119 @@ export const ENDPOINT_META = {
     signup: {
         bottleneck: "CPU-bound",
         why: "bcrypt hash (cost 10) dominates — ~80-120 ms per call. " +
-             "Also: INSERT user row (Postgres), INSERT refresh_token row, " +
-             "JWT HMAC-SHA256 signing. Under load, bcrypt saturates CPU cores " +
-             "because it is intentionally slow. Latency grows linearly with " +
-             "concurrency once CPU is fully utilised.",
+            "Also: INSERT user row (Postgres), INSERT refresh_token row, " +
+            "JWT HMAC-SHA256 signing. Under load, bcrypt saturates CPU cores " +
+            "because it is intentionally slow. Latency grows linearly with " +
+            "concurrency once CPU is fully utilised.",
     },
     login: {
         bottleneck: "CPU-bound",
         why: "bcrypt.CompareHashAndPassword is the same cost as hashing. " +
-             "SELECT user by email (indexed, fast), then bcrypt verify (~80-120 ms). " +
-             "INSERT refresh_token row + JWT sign are negligible. Under high RPS " +
-             "the bcrypt calls queue behind each other on available CPU cores.",
+            "SELECT user by email (indexed, fast), then bcrypt verify (~80-120 ms). " +
+            "INSERT refresh_token row + JWT sign are negligible. Under high RPS " +
+            "the bcrypt calls queue behind each other on available CPU cores.",
     },
     refresh: {
         bottleneck: "Postgres-bound (row locking)",
         why: "SHA-256 hash of token (fast), then SELECT refresh_token by hash (indexed). " +
-             "UPDATE to revoke old token + INSERT new token — both touch the same " +
-             "token-family rows. Under concurrency, row-level locks on refresh_tokens " +
-             "cause queuing. Theft-detection scan (WHERE family_id = ?) adds latency " +
-             "if families grow large.",
+            "UPDATE to revoke old token + INSERT new token — both touch the same " +
+            "token-family rows. Under concurrency, row-level locks on refresh_tokens " +
+            "cause queuing. Theft-detection scan (WHERE family_id = ?) adds latency " +
+            "if families grow large.",
     },
     logout: {
         bottleneck: "Postgres-bound",
         why: "SELECT + UPDATE refresh_token by hash. Minimal contention unless " +
-             "many sessions for the same user are being revoked concurrently.",
+            "many sessions for the same user are being revoked concurrently.",
     },
 
     // -------- Feed (Redis + Postgres) --------
     hot_feed: {
         bottleneck: "Redis-bound → Postgres-bound",
         why: "Anonymous: Redis ZREVRANGE on global sorted set (fast, O(log N + M)). " +
-             "Authenticated: ZUNIONSTORE merges subscribed subnotery feeds with global " +
-             "(O(N) in number of subscriptions × set sizes), then ZREVRANGE. " +
-             "After Redis returns note IDs: SELECT notes WHERE id IN (...) from Postgres, " +
-             "plus batch SELECTs for subnotery names, comment counts, and user votes. " +
-             "Under high RPS the ZUNIONSTORE temporary keys and Postgres IN-clause queries " +
-             "become the bottleneck. ZUNIONSTORE is single-threaded in Redis.",
+            "Authenticated: ZUNIONSTORE merges subscribed subnotery feeds with global " +
+            "(O(N) in number of subscriptions × set sizes), then ZREVRANGE. " +
+            "After Redis returns note IDs: SELECT notes WHERE id IN (...) from Postgres, " +
+            "plus batch SELECTs for subnotery names, comment counts, and user votes. " +
+            "Under high RPS the ZUNIONSTORE temporary keys and Postgres IN-clause queries " +
+            "become the bottleneck. ZUNIONSTORE is single-threaded in Redis.",
     },
 
     // -------- Search (Meilisearch / Postgres) --------
     search_notes: {
         bottleneck: "Meilisearch-bound",
         why: "Full-text search delegated to Meilisearch (offset/limit pagination). " +
-             "Meilisearch is single-node; under load, query queuing occurs. " +
-             "Fallback path (DB): ILIKE '%term%' on title/author — sequential scan, " +
-             "no index can accelerate leading-wildcard patterns. Very slow at scale.",
+            "Meilisearch is single-node; under load, query queuing occurs. " +
+            "Fallback path (DB): ILIKE '%term%' on title/author — sequential scan, " +
+            "no index can accelerate leading-wildcard patterns. Very slow at scale.",
     },
     search_subnoteries: {
         bottleneck: "Postgres-bound (sequential scan)",
         why: "ILIKE '%term%' on subnotery name — Postgres cannot use B-tree indexes " +
-             "for leading-wildcard patterns. Must seq-scan entire subnoteries table. " +
-             "COUNT(*) + SELECT with OFFSET pagination. Hot/top sort adds a correlated " +
-             "subquery (COUNT members) per row. Latency grows with table size and RPS.",
+            "for leading-wildcard patterns. Must seq-scan entire subnoteries table. " +
+            "COUNT(*) + SELECT with OFFSET pagination. Hot/top sort adds a correlated " +
+            "subquery (COUNT members) per row. Latency grows with table size and RPS.",
     },
     search_users: {
         bottleneck: "Postgres-bound (sequential scan)",
         why: "ILIKE '%term%' on username/display_name — same leading-wildcard issue. " +
-             "Seq-scans the users table. Linear degradation with table size.",
+            "Seq-scans the users table. Linear degradation with table size.",
     },
     search_comments: {
         bottleneck: "Postgres-bound (sequential scan + join)",
         why: "ILIKE '%term%' on comment body joined with approved notes. " +
-             "Leading-wildcard forces seq-scan on comments table. Join filter on " +
-             "notes.status adds index lookup but the ILIKE dominates.",
+            "Leading-wildcard forces seq-scan on comments table. Join filter on " +
+            "notes.status adds index lookup but the ILIKE dominates.",
     },
 
     // -------- Notes --------
     approved_notes: {
         bottleneck: "Postgres-bound",
         why: "SELECT notes WHERE status='approved' ORDER BY ... OFFSET/LIMIT. " +
-             "If the status column is indexed, the index narrows the scan. " +
-             "Batch comment-count subquery (GROUP BY note_id) adds overhead. " +
-             "Under load, shared buffer contention and OFFSET-based pagination " +
-             "(Postgres must skip N rows) increase latency for later pages.",
+            "If the status column is indexed, the index narrows the scan. " +
+            "Batch comment-count subquery (GROUP BY note_id) adds overhead. " +
+            "Under load, shared buffer contention and OFFSET-based pagination " +
+            "(Postgres must skip N rows) increase latency for later pages.",
     },
     my_notes: {
         bottleneck: "Postgres-bound",
         why: "SELECT notes WHERE creator_id = ? — indexed lookup, fast. " +
-             "Minimal contention. Latency stays low unless the creator has many notes.",
+            "Minimal contention. Latency stays low unless the creator has many notes.",
     },
 
     // -------- Profile --------
     profile: {
         bottleneck: "Postgres-bound",
         why: "SELECT user WHERE id = ? — primary-key lookup, very fast. " +
-             "Minimal resource usage. Unlikely to be a bottleneck.",
+            "Minimal resource usage. Unlikely to be a bottleneck.",
     },
 
     // -------- Bookmarks --------
     bookmarks: {
         bottleneck: "Postgres-bound",
         why: "SELECT bookmarks JOIN notes WHERE user_id = ?. Indexed on user_id. " +
-             "Note data is fetched via JOIN. Pagination keeps result sets bounded.",
+            "Note data is fetched via JOIN. Pagination keeps result sets bounded.",
     },
 
     // -------- Subnoteries --------
     subnoteries_list: {
         bottleneck: "Postgres-bound",
         why: "SELECT subnoteries with OFFSET/LIMIT. Small table, fast. " +
-             "Member-count sort adds a correlated subquery per row.",
+            "Member-count sort adds a correlated subquery per row.",
     },
 
     // -------- Voting (write-heavy, high contention) --------
     upvote: {
         bottleneck: "Postgres-bound (row locking + transaction)",
         why: "DB transaction: SELECT vote (FOR UPDATE implicit via GORM), " +
-             "INSERT/UPDATE/DELETE vote row, UPDATE note counters (upvotes/downvotes), " +
-             "INSERT karma_ledger, UPDATE user.post_karma. All within one transaction. " +
-             "The note row is locked for the duration (row-level lock). " +
-             "Concurrent votes on the SAME note serialize at the row lock. " +
-             "After commit: re-SELECT note, UPDATE note.hotness (Postgres), " +
-             "ZADD to Redis (global + subnotery feed). " +
-             "This is the highest-contention endpoint — latency spikes " +
-             "proportional to concurrent votes on popular notes.",
+            "INSERT/UPDATE/DELETE vote row, UPDATE note counters (upvotes/downvotes), " +
+            "INSERT karma_ledger, UPDATE user.post_karma. All within one transaction. " +
+            "The note row is locked for the duration (row-level lock). " +
+            "Concurrent votes on the SAME note serialize at the row lock. " +
+            "After commit: re-SELECT note, UPDATE note.hotness (Postgres), " +
+            "ZADD to Redis (global + subnotery feed). " +
+            "This is the highest-contention endpoint — latency spikes " +
+            "proportional to concurrent votes on popular notes.",
     },
     downvote: {
         bottleneck: "Postgres-bound (row locking + transaction)",
@@ -186,7 +186,7 @@ export const ENDPOINT_META = {
     cart: {
         bottleneck: "Redis-bound",
         why: "Cart is stored in Redis (HGETALL on cart:{user_id} key). " +
-             "Very fast. Unlikely to be a bottleneck unless Redis is saturated.",
+            "Very fast. Unlikely to be a bottleneck unless Redis is saturated.",
     },
 
     // -------- Health --------
@@ -221,14 +221,14 @@ export function buildBottleneckReport(data, testName) {
             const m = data.metrics[key].values;
             endpoints.push({
                 name,
-                count:  m["count"] || 0,
-                avg:    m["avg"] || 0,
-                med:    m["med"] || 0,
-                p90:    m["p(90)"] || 0,
-                p95:    m["p(95)"] || 0,
-                p99:    m["p(99)"] || 0,
-                max:    m["max"] || 0,
-                min:    m["min"] || 0,
+                count: m["count"] || 0,
+                avg: m["avg"] || 0,
+                med: m["med"] || 0,
+                p90: m["p(90)"] || 0,
+                p95: m["p(95)"] || 0,
+                p99: m["p(99)"] || 0,
+                max: m["max"] || 0,
+                min: m["min"] || 0,
             });
         }
     }

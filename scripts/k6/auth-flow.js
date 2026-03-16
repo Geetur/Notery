@@ -7,16 +7,16 @@
 import { check, sleep } from "k6";
 import http from "k6/http";
 import { Rate, Trend } from "k6/metrics";
-import { BASE_URL, jsonHeaders, buildBottleneckReport } from "./common.js";
+import { BASE_URL, buildBottleneckReport, jsonHeaders } from "./common.js";
 
 const errorRate = new Rate("errors");
 
 // --- Per-endpoint duration trends ---
-const durSignup  = new Trend("dur_signup", true);
-const durLogin   = new Trend("dur_login", true);
+const durSignup = new Trend("dur_signup", true);
+const durLogin = new Trend("dur_login", true);
 const durProfile = new Trend("dur_profile", true);
 const durRefresh = new Trend("dur_refresh", true);
-const durLogout  = new Trend("dur_logout", true);
+const durLogout = new Trend("dur_logout", true);
 
 export const options = {
     stages: [
