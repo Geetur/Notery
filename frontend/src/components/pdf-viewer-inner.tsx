@@ -10,6 +10,7 @@ import { API_V1 } from "@/lib/config";
 import {
     ChevronLeft,
     ChevronRight,
+    FileText,
     Loader2,
     ZoomIn,
     ZoomOut,
@@ -78,7 +79,11 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Preview page limit: 1 preview page per 5 total pages (minimum 1).
+    // Preview page limit: 1 preview page per 5 total pages.
+    // Minimum preview threshold: notes with 4 or fewer pages get NO preview
+    // (the entire document would be visible, defeating the purpose).
+    const MIN_PREVIEW_PAGES = 5; // notes must have at least this many pages for preview
+    const previewBlocked = mode === "preview" && numPages > 0 && numPages < MIN_PREVIEW_PAGES;
     const maxPreviewPages =
         mode === "preview" && numPages > 0
             ? Math.max(1, Math.floor(numPages / 5))
@@ -131,6 +136,34 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
                     Retry
                 </Button>
             </div>
+        );
+    }
+
+    // If the note is too short for preview, load the doc silently to detect numPages,
+    // then show a "no preview" message instead of the actual pages.
+    if (previewBlocked) {
+        return (
+            <PDFErrorBoundary
+                fallback={
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <p className="text-sm text-destructive mb-2">
+                            PDF viewer encountered an error. Please refresh the page.
+                        </p>
+                    </div>
+                }
+            >
+                {/* Hidden document mount to detect numPages */}
+                <div style={{ display: "none" }}>
+                    <Document file={fileUrl} onLoadSuccess={onDocumentLoadSuccess} onLoadError={onDocumentLoadError} />
+                </div>
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <FileText className="h-10 w-10 text-muted-foreground mb-3" />
+                    <p className="text-sm font-medium mb-1">Preview not available</p>
+                    <p className="text-xs text-muted-foreground">
+                        This document is too short for a preview. Purchase to view the full content.
+                    </p>
+                </div>
+            </PDFErrorBoundary>
         );
     }
 

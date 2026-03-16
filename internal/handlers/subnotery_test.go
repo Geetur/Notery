@@ -568,10 +568,10 @@ func TestRemoveAdmin_OlderRemovesYounger(t *testing.T) {
 	sub := models.Subnotery{Name: "remove-admin-sub"}
 	app.DB.Create(&sub)
 
-	// Insert older admin first (lower row ID)
-	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", olderUID, sub.ID)
-	// Insert younger admin second (higher row ID)
-	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", youngerUID, sub.ID)
+	// Insert older admin first (earlier created_at)
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id, created_at) VALUES (?, ?, datetime('now', '-1 hour'))", olderUID, sub.ID)
+	// Insert younger admin second (later created_at)
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id, created_at) VALUES (?, ?, datetime('now'))", youngerUID, sub.ID)
 
 	w := serve("DELETE", "/subnoteries/:subnotery_id/admins/:uid",
 		fmt.Sprintf("/subnoteries/%d/admins/%d", sub.ID, youngerUID),
@@ -596,8 +596,8 @@ func TestRemoveAdmin_YoungerCannotRemoveOlder(t *testing.T) {
 	sub := models.Subnotery{Name: "remove-admin-sub2"}
 	app.DB.Create(&sub)
 
-	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", olderUID, sub.ID)
-	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", youngerUID, sub.ID)
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id, created_at) VALUES (?, ?, datetime('now', '-1 hour'))", olderUID, sub.ID)
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id, created_at) VALUES (?, ?, datetime('now'))", youngerUID, sub.ID)
 
 	w := serve("DELETE", "/subnoteries/:subnotery_id/admins/:uid",
 		fmt.Sprintf("/subnoteries/%d/admins/%d", sub.ID, olderUID),

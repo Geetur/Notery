@@ -548,6 +548,12 @@ k6 run scripts/k6/auth-flow.js
 k6 run scripts/k6/stress-test.js
 ```
 
+Each test prints a **bottleneck analysis report** after the run showing:
+- Per-endpoint avg / med / p90 / p95 / p99 / max latency
+- Bottleneck classification (CPU-bound, Postgres-bound, Redis-bound, etc.)
+- Root-cause explanation for each endpoint's latency behavior
+- Overall latency scaling analysis with fix recommendations
+
 ### Performance Results
 
 Benchmarked on localhost (Go + Gin, PostgreSQL, Redis, Meilisearch). All tests run against a single API instance.
@@ -567,6 +573,75 @@ Benchmarked on localhost (Go + Gin, PostgreSQL, Redis, Meilisearch). All tests r
 - **Error budget** stays well under 5% even at 200 VUs — failures are primarily rate-limited search requests, not server errors.
 
 > Rate limits are env-configurable via `RATE_LIMIT_AUTH`, `RATE_LIMIT_WRITE`, `RATE_LIMIT_READ`, `RATE_LIMIT_OAUTH` (requests per minute).
+
+### Why Latency Increases with RPS — Bottleneck Analysis
+
+Every endpoint in Notery has a dominant resource dependency. When that resource saturates, requests queue and latency grows. Here is a complete breakdown:
+
+#### Bottleneck Classification by Endpoint
+
+| Endpoint | Type | Dominant Bottleneck | Why |
+|----------|------|--------------------|----|
+| `POST /auth/signup` | Write | **CPU (bcrypt)** | `bcrypt.GenerateFromPassword` cost=10 takes ~80-120 ms per call. Each request pins one CPU core for that duration. With N cores, throughput caps at ~N×10 auth req/s. Beyond that, requests queue. |
+| `POST /auth/login` | Read+CPU | **CPU (bcrypt)** | `bcrypt.CompareHashAndPassword` has the same computational cost as hashing. The DB lookup (SELECT user by email, indexed) is <1 ms — bcrypt is 99% of the latency. |
+| `POST /auth/refresh` | Write | **Postgres (row lock)** | SHA-256 hash + SELECT refresh_token (indexed). Then UPDATE to revoke + INSERT new token — both touch `refresh_tokens` rows. Under concurrency, row-level locks cause queuing. Theft-detection scan `WHERE family_id = ?` adds latency for large families. |
+| `POST /auth/logout` | Write | **Postgres** | SELECT + UPDATE on `refresh_tokens` by hash. Low contention unless many sessions revoked concurrently. |
+| `GET /feed/hot` | Read | **Redis → Postgres** | Anonymous: `ZREVRANGE` on global sorted set — O(log N + M), fast. Authenticated: `ZUNIONSTORE` merges subscribed subnotery feeds (O(N×M) in subscriptions × set sizes) → `ZREVRANGE`. Then batch `SELECT notes WHERE id IN (...)` + subnotery names + comment counts + user votes from Postgres. Under high RPS, `ZUNIONSTORE` temp keys and IN-clause queries become bottleneck. |
+| `GET /search?type=notes` | Read | **Meilisearch** | Full-text search delegated to Meilisearch (single-node). Under load, query queuing occurs. DB fallback uses `ILIKE '%term%'` — sequential scan, no index for leading wildcards. |
+| `GET /search?type=subnoteries` | Read | **Postgres (seq scan)** | `ILIKE '%term%'` on subnotery name — B-tree can't accelerate leading wildcards. Scans full table. Hot/top sort adds correlated `COUNT members` subquery per row. |
+| `GET /search?type=users` | Read | **Postgres (seq scan)** | `ILIKE '%term%'` on username/display_name — same leading-wildcard sequential scan problem. |
+| `GET /search?type=comments` | Read | **Postgres (seq scan + join)** | `ILIKE '%term%'` on comment body joined with approved notes. Join filter is indexed but ILIKE dominates. |
+| `GET /notes/approved` | Read | **Postgres** | `SELECT WHERE status='approved' ORDER BY ... OFFSET/LIMIT`. Indexed status narrows scan. Batch comment-count subquery adds overhead. OFFSET pagination skips N rows — later pages are slower. |
+| `GET /me/profile` | Read | **Postgres (PK)** | `SELECT WHERE id = ?` — primary key lookup, sub-millisecond. Baseline endpoint. Unlikely bottleneck. |
+| `GET /bookmarks` | Read | **Postgres** | `SELECT bookmarks JOIN notes WHERE user_id = ?`. Indexed on user_id. Pagination keeps result set bounded. |
+| `GET /subnoteries` | Read | **Postgres** | `SELECT subnoteries OFFSET/LIMIT`. Small table, fast. Member-count sort adds correlated subquery. |
+| `POST /notes/:id/upvote` | Write | **Postgres (row lock + tx)** | Highest-contention endpoint. DB transaction: `SELECT vote` → `INSERT/UPDATE/DELETE vote` → `UPDATE note.upvotes/downvotes` → `INSERT karma_ledger` → `UPDATE user.post_karma`. Note row is locked for the entire tx. Concurrent votes on the same note serialize. After commit: re-SELECT note → UPDATE hotness (Postgres) → ZADD (Redis). |
+| `GET /cart` | Read | **Redis** | `HGETALL cart:{user_id}`. Very fast, unlikely bottleneck unless Redis saturated. |
+
+#### The Five Causes of Latency Growth
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                  WHY LATENCY GROWS WITH RPS                              │
+├──────────────────────┬────────────────────────────────────────────────────┤
+│ 1. CPU SATURATION    │ bcrypt hashing (signup, login) is intentionally   │
+│    (auth endpoints)  │ slow (~100 ms/call). With N cores, max throughput │
+│                      │ = N × 10 req/s. Beyond this, requests queue.     │
+│                      │ Latency grows: T ≈ bcrypt_time × (VUs / cores)   │
+├──────────────────────┼────────────────────────────────────────────────────┤
+│ 2. ROW-LEVEL LOCKS   │ Vote transactions lock the note row for ~5-15 ms │
+│    (vote endpoints)  │ (tx duration). Concurrent votes on the SAME note │
+│                      │ serialize. With K VUs voting on 1 note:           │
+│                      │ Latency ≈ tx_time × K (worst case).              │
+│                      │ Votes on DIFFERENT notes don't contend.           │
+├──────────────────────┼────────────────────────────────────────────────────┤
+│ 3. SEQUENTIAL SCANS  │ ILIKE '%term%' cannot use B-tree indexes.        │
+│    (search by DB)    │ Postgres reads every row. With C concurrent      │
+│                      │ queries: shared_buffers thrash → disk I/O spikes.│
+│                      │ Latency ≈ table_size × C / buffer_pool_hit_ratio │
+├──────────────────────┼────────────────────────────────────────────────────┤
+│ 4. REDIS QUEUING     │ Redis is single-threaded. ZUNIONSTORE (feed) is  │
+│    (feed assembly)   │ O(N×M). Simple reads (ZREVRANGE) are O(log N+M). │
+│                      │ Under high RPS, expensive commands block the      │
+│                      │ event loop — all subsequent commands queue.       │
+├──────────────────────┼────────────────────────────────────────────────────┤
+│ 5. CONNECTION POOL   │ GORM's default pool = max_open_conns. When all   │
+│    EXHAUSTION        │ conns are busy, new requests wait for a free one. │
+│                      │ Latency spike = time_waiting_for_conn + query.    │
+│                      │ Affects ALL Postgres-bound endpoints equally.     │
+└──────────────────────┴────────────────────────────────────────────────────┘
+```
+
+#### Mitigation Strategies
+
+| Bottleneck | Fix | Difficulty |
+|-----------|-----|-----------|
+| CPU (bcrypt) | Add CPU cores / horizontal scaling. Consider Argon2id with tuned parallelism. Offload auth to dedicated service. | Medium |
+| Row locks (votes) | Decouple hotness from vote tx. Use async workers for karma. Batch vote counter flushes. Optimistic locking. | Hard |
+| Sequential scans (ILIKE) | Add `pg_trgm` GIN indexes for trigram ILIKE acceleration. Migrate all search types to Meilisearch. | Easy |
+| Redis queuing (feeds) | Cache personalised feed with short TTL (10-30s). Pre-compute feeds on write. Redis Cluster for sharding. | Medium |
+| Connection pool | Tune `GORM.Config.MaxOpenConns` (default 0 = unlimited). Add PgBouncer for pooling. Read replicas for read endpoints. | Easy |
+| OFFSET pagination | Switch to keyset/cursor pagination (`WHERE id > last_seen_id`). Eliminates skip-N overhead for later pages. | Medium |
 
 ---
 

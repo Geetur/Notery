@@ -94,7 +94,6 @@ func (app *App) CreateNote(c *gin.Context) {
 		return
 	}
 
-
 	// Execute note creation in transaction
 	var note models.Note
 	if err := app.DB.Transaction(func(tx *gorm.DB) error {

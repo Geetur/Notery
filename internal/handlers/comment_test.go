@@ -33,6 +33,16 @@ func testApp(t *testing.T) *App {
 	// Enable WAL mode + busy timeout for better concurrent read/write support.
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
+
+	// Setup explicit join table model for user_admins so GORM auto-populates
+	// CreatedAt and the seniority checks work correctly.
+	if err := db.SetupJoinTable(&models.Subnotery{}, "Admins", &models.UserAdmin{}); err != nil {
+		t.Fatalf("setup join table (Subnotery.Admins): %v", err)
+	}
+	if err := db.SetupJoinTable(&models.User{}, "AdminOf", &models.UserAdmin{}); err != nil {
+		t.Fatalf("setup join table (User.AdminOf): %v", err)
+	}
+
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.Note{},
@@ -47,15 +57,19 @@ func testApp(t *testing.T) *App {
 		&models.EmailVerification{},
 		&models.PasswordReset{},
 		&models.KarmaLedger{},
+		&models.Notification{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// Recreate join tables with auto-increment ID for admin hierarchy tests.
-	// GORM's AutoMigrate creates these as simple (user_id, subnotery_id) tables,
-	// but our admin removal logic needs row IDs for seniority comparison.
+	// Recreate user_admins with DEFAULT created_at so raw INSERTs auto-timestamp.
+	// Seniority tests override created_at explicitly with staggered values.
 	db.Exec("DROP TABLE IF EXISTS user_admins")
+	db.Exec(`CREATE TABLE user_admins (
+		user_id INTEGER, subnotery_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY(user_id, subnotery_id)
+	)`)
+	// Recreate user_memberships with auto-increment for test convenience.
 	db.Exec("DROP TABLE IF EXISTS user_memberships")
-	db.Exec("CREATE TABLE user_admins (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, subnotery_id INTEGER)")
 	db.Exec("CREATE TABLE user_memberships (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, subnotery_id INTEGER)")
 	return &App{DB: db}
 }
@@ -1310,5 +1324,101 @@ func TestUnpinComment_HappyPath(t *testing.T) {
 	app.DB.First(&updated, comment.ID)
 	if updated.IsPinned {
 		t.Fatal("expected comment to be unpinned")
+	}
+}
+
+// ===== COMMENT KARMA / NOTORIETY TESTS =====
+
+func TestVoteComment_UpdatesCommentKarma(t *testing.T) {
+	app := testApp(t)
+	author := seedUser(t, app.DB, "karmaauthor")
+	voter := seedUser(t, app.DB, "karmavoter")
+	noteID := seedApprovedNote(t, app.DB, author)
+
+	comment := models.Comment{NoteID: uint(noteID), UserID: author, Body: "Karma test"}
+	app.DB.Create(&comment)
+
+	// Upvote the comment
+	w := serve("POST", "/comments/:comment_id/vote", fmt.Sprintf("/comments/%d/vote", comment.ID),
+		jsonBody(map[string]int8{"value": 1}), app.VoteComment, authMW(voter))
+	assertStatus(t, w, http.StatusOK)
+
+	// Check author's comment_karma is now > 0
+	var user models.User
+	app.DB.First(&user, author)
+	if user.CommentKarma <= 0 {
+		t.Fatalf("expected comment_karma > 0 after upvote, got %f", user.CommentKarma)
+	}
+
+	// Check a KarmaLedger entry was created
+	var ledgerCount int64
+	app.DB.Model(&models.KarmaLedger{}).Where("author_id = ? AND karma_type = ?", author, models.KarmaComment).Count(&ledgerCount)
+	if ledgerCount != 1 {
+		t.Fatalf("expected 1 karma ledger entry, got %d", ledgerCount)
+	}
+
+	// Toggle off the vote (removes karma)
+	w = serve("POST", "/comments/:comment_id/vote", fmt.Sprintf("/comments/%d/vote", comment.ID),
+		jsonBody(map[string]int8{"value": 1}), app.VoteComment, authMW(voter))
+	assertStatus(t, w, http.StatusOK)
+
+	// Check author's comment_karma is back to 0
+	app.DB.First(&user, author)
+	if user.CommentKarma != 0 {
+		t.Fatalf("expected comment_karma = 0 after toggle off, got %f", user.CommentKarma)
+	}
+}
+
+func TestVoteComment_DownvoteReducesKarma(t *testing.T) {
+	app := testApp(t)
+	author := seedUser(t, app.DB, "dkarmaauthor")
+	voter := seedUser(t, app.DB, "dkarmavoter")
+	noteID := seedApprovedNote(t, app.DB, author)
+
+	comment := models.Comment{NoteID: uint(noteID), UserID: author, Body: "Downvote karma test"}
+	app.DB.Create(&comment)
+
+	// Downvote the comment
+	w := serve("POST", "/comments/:comment_id/vote", fmt.Sprintf("/comments/%d/vote", comment.ID),
+		jsonBody(map[string]int8{"value": -1}), app.VoteComment, authMW(voter))
+	assertStatus(t, w, http.StatusOK)
+
+	// Check author's comment_karma is now negative
+	var user models.User
+	app.DB.First(&user, author)
+	if user.CommentKarma >= 0 {
+		t.Fatalf("expected comment_karma < 0 after downvote, got %f", user.CommentKarma)
+	}
+}
+
+func TestVoteComment_SwitchDirectionUpdatesKarma(t *testing.T) {
+	app := testApp(t)
+	author := seedUser(t, app.DB, "switchauthor")
+	voter := seedUser(t, app.DB, "switchvoter")
+	noteID := seedApprovedNote(t, app.DB, author)
+
+	comment := models.Comment{NoteID: uint(noteID), UserID: author, Body: "Switch karma test"}
+	app.DB.Create(&comment)
+
+	// Upvote first
+	w := serve("POST", "/comments/:comment_id/vote", fmt.Sprintf("/comments/%d/vote", comment.ID),
+		jsonBody(map[string]int8{"value": 1}), app.VoteComment, authMW(voter))
+	assertStatus(t, w, http.StatusOK)
+
+	var user models.User
+	app.DB.First(&user, author)
+	upvoteKarma := user.CommentKarma
+	if upvoteKarma <= 0 {
+		t.Fatalf("expected positive karma after upvote, got %f", upvoteKarma)
+	}
+
+	// Switch to downvote
+	w = serve("POST", "/comments/:comment_id/vote", fmt.Sprintf("/comments/%d/vote", comment.ID),
+		jsonBody(map[string]int8{"value": -1}), app.VoteComment, authMW(voter))
+	assertStatus(t, w, http.StatusOK)
+
+	app.DB.First(&user, author)
+	if user.CommentKarma >= upvoteKarma {
+		t.Fatalf("expected karma to decrease after switching to downvote, got %f (was %f)", user.CommentKarma, upvoteKarma)
 	}
 }

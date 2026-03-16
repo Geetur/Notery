@@ -1,19 +1,17 @@
 // page.tsx — My Notes page (created + purchased notes).
 // Shows all notes a user has access to: ones they created and ones they purchased.
-// No download functionality — all viewing is in-app only.
+// All notes render using the standard NoteCard component for visual consistency.
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { NoteCard } from "@/components/feed/note-card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate, formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { getMyNotes } from "@/services/notes";
-import { getPurchaseHistory } from "@/services/purchases";
+import { getMyPurchases } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, Calendar, Eye, FileText, PenTool } from "lucide-react";
+import { ArrowLeft, BookOpen, PenTool } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -24,7 +22,6 @@ export default function PurchasesPage() {
     const router = useRouter();
     const { isAuthenticated, loading } = useAuthStore();
     const [tab, setTab] = useState<MyNotesTab>("purchased");
-    const [purchasedPage, setPurchasedPage] = useState(1);
     const [createdPage, setCreatedPage] = useState(1);
 
     const {
@@ -32,8 +29,8 @@ export default function PurchasesPage() {
         isLoading: purchaseLoading,
         isError: purchaseError,
     } = useQuery({
-        queryKey: ["purchaseHistory", purchasedPage],
-        queryFn: () => getPurchaseHistory({ page: purchasedPage, limit: 20 }),
+        queryKey: ["myPurchases"],
+        queryFn: () => getMyPurchases(),
         enabled: isAuthenticated && tab === "purchased",
     });
 
@@ -61,7 +58,7 @@ export default function PurchasesPage() {
     const isError = tab === "purchased" ? purchaseError : createdError;
 
     return (
-        <div className="max-w-2xl mx-auto px-4 py-4">
+        <div className="max-w-3xl mx-auto px-6 py-4">
             <Button
                 variant="ghost"
                 size="sm"
@@ -103,9 +100,9 @@ export default function PurchasesPage() {
             </div>
 
             {isLoading ? (
-                <div className="space-y-3">
+                <div className="space-y-4">
                     {Array.from({ length: 5 }).map((_, i) => (
-                        <Skeleton key={i} className="h-16 w-full" />
+                        <Skeleton key={i} className="h-32 w-full" />
                     ))}
                 </div>
             ) : isError ? (
@@ -125,73 +122,15 @@ export default function PurchasesPage() {
                         </Button>
                     </div>
                 ) : (
-                    <>
-                        <div className="space-y-2">
-                            {purchaseData!.purchases.map((purchase) => (
-                                <Card key={purchase.purchase_id} className="border-border">
-                                    <CardContent className="flex items-center gap-3 p-3">
-                                        <div className="h-10 w-10 rounded bg-primary/10 flex items-center justify-center shrink-0">
-                                            <FileText className="h-5 w-5 text-primary" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <Link
-                                                href={`/notes/${purchase.note_id}`}
-                                                className="font-medium text-sm hover:text-primary block truncate"
-                                            >
-                                                {purchase.note_title}
-                                            </Link>
-                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                                <span>by {purchase.note_author}</span>
-                                                <span>•</span>
-                                                <span className="flex items-center gap-1">
-                                                    <Calendar className="h-3 w-3" />
-                                                    {formatDate(purchase.purchased_at)}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <Badge variant="secondary">{formatPrice(purchase.price_paid)}</Badge>
-                                        {purchase.has_pdf && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-8 gap-1"
-                                                asChild
-                                            >
-                                                <Link href={`/notes/${purchase.note_id}`}>
-                                                    <Eye className="h-3.5 w-3.5" />
-                                                    View
-                                                </Link>
-                                            </Button>
-                                        )}
-                                    </CardContent>
-                                </Card>
-                            ))}
-                        </div>
-
-                        {purchaseData && purchaseData.total > purchaseData.limit && (
-                            <div className="flex items-center justify-center gap-2 mt-4">
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={purchasedPage <= 1}
-                                    onClick={() => setPurchasedPage((p) => p - 1)}
-                                >
-                                    Previous
-                                </Button>
-                                <span className="text-xs text-muted-foreground">
-                                    Page {purchasedPage} of {Math.ceil(purchaseData.total / purchaseData.limit)}
-                                </span>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={purchasedPage >= Math.ceil(purchaseData.total / purchaseData.limit)}
-                                    onClick={() => setPurchasedPage((p) => p + 1)}
-                                >
-                                    Next
-                                </Button>
-                            </div>
-                        )}
-                    </>
+                    <div className="space-y-4">
+                        {purchaseData!.purchases.map((note) => (
+                            <NoteCard
+                                key={note.id}
+                                note={note}
+                                purchased
+                            />
+                        ))}
+                    </div>
                 )
             ) : (
                 /* ── Created notes tab ── */
@@ -207,56 +146,9 @@ export default function PurchasesPage() {
                     </div>
                 ) : (
                     <>
-                        <div className="space-y-2">
+                        <div className="space-y-4">
                             {createdData!.notes.map((note) => (
-                                <Card key={note.id} className="border-border">
-                                    <CardContent className="flex items-center gap-3 p-3">
-                                        <div className="h-10 w-10 rounded bg-primary/10 flex items-center justify-center shrink-0">
-                                            <PenTool className="h-5 w-5 text-primary" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <Link
-                                                href={`/notes/${note.id}`}
-                                                className="font-medium text-sm hover:text-primary block truncate"
-                                            >
-                                                {note.title}
-                                            </Link>
-                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                                <span>{note.subnotery_name}</span>
-                                                <span>•</span>
-                                                <Badge
-                                                    variant={
-                                                        note.status === "Approved"
-                                                            ? "default"
-                                                            : note.status === "Pending"
-                                                                ? "secondary"
-                                                                : "destructive"
-                                                    }
-                                                    className="text-[10px] px-1.5 py-0"
-                                                >
-                                                    {note.status}
-                                                </Badge>
-                                                <span>•</span>
-                                                <span className="flex items-center gap-1">
-                                                    <Calendar className="h-3 w-3" />
-                                                    {formatDate(note.created_at)}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <Badge variant="secondary">{formatPrice(note.price)}</Badge>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-8 gap-1"
-                                            asChild
-                                        >
-                                            <Link href={`/notes/${note.id}`}>
-                                                <Eye className="h-3.5 w-3.5" />
-                                                View
-                                            </Link>
-                                        </Button>
-                                    </CardContent>
-                                </Card>
+                                <NoteCard key={note.id} note={note} />
                             ))}
                         </div>
 

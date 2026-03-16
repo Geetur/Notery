@@ -46,3 +46,13 @@ type Subnotery struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// UserAdmin is the explicit join table model for user_admins.
+// It adds a CreatedAt timestamp so that admin seniority (who was added first)
+// can be determined reliably. GORM auto-populates CreatedAt when using
+// db.SetupJoinTable + Association("Admins").Append.
+type UserAdmin struct {
+	UserID      uint64    `gorm:"primaryKey"`
+	SubnoteryID uint      `gorm:"primaryKey"`
+	CreatedAt   time.Time
+}

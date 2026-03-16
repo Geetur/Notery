@@ -728,6 +728,24 @@ func (app *App) fulfilOrder(order *models.Order) error {
 		}
 
 		order.Status = models.OrderFulfilled
+
+		// Send purchase notifications to note owners (async, best-effort)
+		for _, item := range order.Items {
+			var note models.Note
+			if err := tx.Select("id", "title", "creator_id").First(&note, item.NoteID).Error; err == nil {
+				buyerName := ""
+				var buyer models.User
+				if err := tx.Select("username").First(&buyer, order.UserID).Error; err == nil {
+					buyerName = buyer.Username
+				}
+				noteID := item.NoteID
+				noteTitle := note.Title
+				creatorID := note.CreatorID
+				buyerID := order.UserID
+				go app.SendPurchaseNotification(creatorID, buyerID, noteID, noteTitle, buyerName)
+			}
+		}
+
 		return nil
 	})
 }

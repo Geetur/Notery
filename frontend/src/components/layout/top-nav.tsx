@@ -32,6 +32,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { LeftSidebar } from "./left-sidebar";
+import { NotificationBell } from "./notification-bell";
 import { SearchAutocomplete } from "./search-autocomplete";
 
 export function TopNav() {
@@ -141,6 +142,9 @@ export function TopNav() {
                             >
                                 <ShoppingCart className="h-4 w-4" />
                             </Button>
+
+                            {/* Notifications */}
+                            <NotificationBell />
 
                             {/* User dropdown */}
                             <DropdownMenu>
