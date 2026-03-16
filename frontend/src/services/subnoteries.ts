@@ -6,6 +6,7 @@ import type {
     PaginationParams,
     SubnoteryDetail,
     SubnoteryListResponse,
+    SubnoteryMembersResponse,
 } from "@/types";
 
 /** GET /subnoteries — List all subnoteries (paginated). */
@@ -101,4 +102,24 @@ export function deleteSubnoteryBanner(
     subnoteryId: number
 ): Promise<{ message: string }> {
     return apiDelete(`/subnoteries/${subnoteryId}/banner`);
+}
+
+/** GET /subnoteries/:id/members — List members (paginated, includes admin flag). */
+export function getSubnoteryMembers(
+    subnoteryId: number,
+    params?: PaginationParams
+): Promise<SubnoteryMembersResponse> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return apiGet(`/subnoteries/${subnoteryId}/members${qs ? `?${qs}` : ""}`);
+}
+
+/** DELETE /subnoteries/:id/members/:uid — Remove a member from subnotery (admin action). */
+export function removeMemberFromSubnotery(
+    subnoteryId: number,
+    userId: number
+): Promise<{ message: string }> {
+    return apiDelete(`/subnoteries/${subnoteryId}/members/${userId}`);
 }

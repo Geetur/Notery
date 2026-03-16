@@ -138,6 +138,7 @@ var (
 	WebhookLog    = NewLogger("WEBHOOK")
 	ProfileLog    = NewLogger("PROFILE")
 	SearchLog     = NewLogger("SEARCH")
+	NotificationLog = NewLogger("NOTIFICATION")
 )
 
 // ----- JSON BINDING -----

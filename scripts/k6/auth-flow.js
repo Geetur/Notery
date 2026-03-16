@@ -1,11 +1,22 @@
 // k6/auth-flow.js — Auth-focused load test covering signup, login, refresh, and profile.
 // Run: k6 run scripts/k6/auth-flow.js
+//
+// This test isolates CPU-bound auth endpoints (bcrypt) and Postgres-bound
+// session operations (refresh token rotation, logout). The bottleneck report
+// shows exactly where latency spends its time.
 import { check, sleep } from "k6";
 import http from "k6/http";
-import { Rate } from "k6/metrics";
-import { BASE_URL, jsonHeaders } from "./common.js";
+import { Rate, Trend } from "k6/metrics";
+import { BASE_URL, buildBottleneckReport, jsonHeaders } from "./common.js";
 
 const errorRate = new Rate("errors");
+
+// --- Per-endpoint duration trends ---
+const durSignup = new Trend("dur_signup", true);
+const durLogin = new Trend("dur_login", true);
+const durProfile = new Trend("dur_profile", true);
+const durRefresh = new Trend("dur_refresh", true);
+const durLogout = new Trend("dur_logout", true);
 
 export const options = {
     stages: [
@@ -25,12 +36,13 @@ export default function () {
     const password = "Passw0rd!Auth";
     const username = `k6a${ts}`.substring(0, 30);
 
-    // 1. Signup
+    // 1. Signup (CPU-bound: bcrypt hash)
     const signupRes = http.post(
         `${BASE_URL}/auth/signup`,
         JSON.stringify({ email, password, username }),
         jsonHeaders()
     );
+    durSignup.add(signupRes.timings.duration);
     const signupOk = check(signupRes, {
         "signup 2xx": (r) => r.status >= 200 && r.status < 300,
     });
@@ -41,41 +53,51 @@ export default function () {
     }
     const refreshToken = signupRes.json("refresh_token");
 
-    // 2. Login
+    // 2. Login (CPU-bound: bcrypt verify)
     const loginRes = http.post(
         `${BASE_URL}/auth/login`,
         JSON.stringify({ email, password }),
         jsonHeaders()
     );
+    durLogin.add(loginRes.timings.duration);
     const loginOk = check(loginRes, { "login 200": (r) => r.status === 200 });
     errorRate.add(!loginOk);
     const token = loginRes.json("access_token");
 
-    // 3. Get profile
+    // 3. Get profile (Postgres PK lookup — fast baseline)
     const profileRes = http.get(`${BASE_URL}/me/profile`, jsonHeaders(token));
+    durProfile.add(profileRes.timings.duration);
     const profileOk = check(profileRes, {
         "profile 200": (r) => r.status === 200,
     });
     errorRate.add(!profileOk);
 
-    // 4. Refresh token
+    // 4. Refresh token (Postgres row lock on refresh_tokens table)
     if (refreshToken) {
         const refreshRes = http.post(
             `${BASE_URL}/auth/refresh`,
             JSON.stringify({ refresh_token: refreshToken }),
             jsonHeaders()
         );
+        durRefresh.add(refreshRes.timings.duration);
         check(refreshRes, { "refresh 200": (r) => r.status === 200 });
     }
 
-    // 5. Logout
+    // 5. Logout (Postgres UPDATE on refresh_tokens)
     if (refreshToken) {
-        http.post(
+        const logoutRes = http.post(
             `${BASE_URL}/auth/logout`,
             JSON.stringify({ refresh_token: refreshToken }),
             jsonHeaders(token)
         );
+        durLogout.add(logoutRes.timings.duration);
+        check(logoutRes, { "logout 200": (r) => r.status === 200 });
     }
 
     sleep(1);
+}
+
+// --- Bottleneck analysis report ---
+export function handleSummary(data) {
+    return buildBottleneckReport(data, "AUTH FLOW (20 VUs, 1m 45s)");
 }

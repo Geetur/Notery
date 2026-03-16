@@ -422,6 +422,18 @@ func (app *App) CreateComment(c *gin.Context) {
 	// Fetch username for response
 	username := app.lookupUsername(userID)
 
+	// Send notifications asynchronously (best-effort)
+	// 1. Notify note owner about the new comment (unless commenter is the owner)
+	go app.SendCommentNotification(note.CreatorID, userID, uint(noteID), comment.ID, note.Title, username)
+
+	// 2. If this is a reply, notify the parent comment author
+	if req.ParentID != nil {
+		var parentComment models.Comment
+		if err := app.DB.Select("id", "user_id").First(&parentComment, *req.ParentID).Error; err == nil {
+			go app.SendReplyNotification(parentComment.UserID, userID, parentComment.ID, comment.ID, uint(noteID), username)
+		}
+	}
+
 	commentLog.Log("CREATE", "success", "comment_id", comment.ID, "note_id", noteID,
 		"user_id", userID, "depth", depth, "parent_id", req.ParentID)
 
@@ -712,6 +724,14 @@ func (app *App) VoteComment(c *gin.Context) {
 	var resultComment models.Comment
 	var resultVote int8
 
+	// Capture pre-vote upvote count for milestone notification check
+	var preVoteComment models.Comment
+	if err := app.DB.Select("id", "upvotes", "user_id", "body").First(&preVoteComment, commentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comment not found"})
+		return
+	}
+	oldUpvotes := preVoteComment.Upvotes
+
 	err := app.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		// Lock the comment row to prevent concurrent vote races on Wilson score
 		var comment models.Comment
@@ -893,6 +913,14 @@ func (app *App) VoteComment(c *gin.Context) {
 		"score":      resultComment.Score,
 		"user_vote":  resultVote,
 	})
+
+	// Check for upvote milestone notifications (best-effort, non-blocking).
+	if req.Value == 1 && resultComment.Upvotes > oldUpvotes {
+		go app.checkAndSendCommentMilestone(
+			uint64(resultComment.ID), oldUpvotes, resultComment.Upvotes,
+			preVoteComment.UserID, preVoteComment.Body,
+		)
+	}
 }
 
 // ----- DELETE /comments/:comment_id/vote -----

@@ -73,7 +73,7 @@ export interface SubnoteryDetail {
     background_color: string;
     min_post_notoriety: number;
     min_comment_notoriety: number;
-    admins: { id: number; username: string }[];
+    admins: { id: number; username: string; admin_since: string }[];
     member_count: number;
     is_member: boolean;
     created_at: string;
@@ -405,6 +405,53 @@ export interface OrderStatusResponse {
 export interface ApiError {
     error: string;
     [key: string]: unknown;
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+export type NotificationType = "admin_invite" | "upvote_milestone" | "purchase" | "comment" | "reply";
+export type NotificationStatus = "pending" | "accepted" | "denied";
+
+export interface NotificationItem {
+    id: number;
+    type: NotificationType;
+    title: string;
+    message: string;
+    reference_id: number;
+    reference_type: string;
+    action_status: NotificationStatus;
+    is_read: boolean;
+    actor_id: number;
+    actor_username: string;
+    metadata: string;
+    created_at: string;
+}
+
+export interface NotificationsResponse {
+    notifications: NotificationItem[];
+    total: number;
+    page: number;
+    limit: number;
+}
+
+export interface UnreadCountResponse {
+    unread_count: number;
+}
+
+// ─── Subnotery Members ───────────────────────────────────────────────────────
+
+export interface SubnoteryMember {
+    id: number;
+    username: string;
+    avatar_url: string;
+    is_admin: boolean;
+}
+
+export interface SubnoteryMembersResponse {
+    members: SubnoteryMember[];
+    total: number;
+    page: number;
+    limit: number;
 }
 
 // ─── Pagination ───────────────────────────────────────────────────────────────

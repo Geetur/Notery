@@ -336,14 +336,31 @@ func (app *App) GetSubnoteryDetail(c *gin.Context) {
 		return
 	}
 
-	// Build admin list with safe fields only
+	// Build admin list with safe fields only + seniority timestamp
 	type adminInfo struct {
-		ID       uint   `json:"id"`
-		Username string `json:"username"`
+		ID         uint   `json:"id"`
+		Username   string `json:"username"`
+		AdminSince string `json:"admin_since"`
 	}
+
+	// Fetch admin seniority timestamps from the join table
+	var adminRows []models.UserAdmin
+	app.DB.Table("user_admins").
+		Where("subnotery_id = ?", subnoteryID).
+		Order("created_at ASC").
+		Find(&adminRows)
+	adminSinceMap := make(map[uint64]string, len(adminRows))
+	for _, row := range adminRows {
+		adminSinceMap[row.UserID] = row.CreatedAt.Format("2006-01-02T15:04:05Z07:00")
+	}
+
 	admins := make([]adminInfo, len(subnotery.Admins))
 	for i, a := range subnotery.Admins {
-		admins[i] = adminInfo{ID: a.ID, Username: a.Username}
+		admins[i] = adminInfo{
+			ID:         a.ID,
+			Username:   a.Username,
+			AdminSince: adminSinceMap[uint64(a.ID)],
+		}
 	}
 
 	// Check if the requesting user is a member (if authenticated)
@@ -600,24 +617,20 @@ func (app *App) RemoveAdminFromSubnotery(c *gin.Context) {
 	// Global admins can remove anyone
 	if !requester.IsGlobalAdmin {
 		// Check requester is admin of this subnotery
-		type adminRow struct {
-			UserID uint64
-			ID     uint
-		}
-		var requesterRow adminRow
-		app.DB.Table("user_admins").Select("user_id, id").
+		var requesterRow models.UserAdmin
+		app.DB.Table("user_admins").
 			Where("user_id = ? AND subnotery_id = ?", requesterID, subnoteryID).
-			Scan(&requesterRow)
+			First(&requesterRow)
 		if requesterRow.UserID == 0 {
 			c.JSON(http.StatusForbidden, gin.H{"error": "You are not an admin of this community"})
 			return
 		}
 
 		// Check target is admin
-		var targetRow adminRow
-		app.DB.Table("user_admins").Select("user_id, id").
+		var targetRow models.UserAdmin
+		app.DB.Table("user_admins").
 			Where("user_id = ? AND subnotery_id = ?", targetUID, subnoteryID).
-			Scan(&targetRow)
+			First(&targetRow)
 		if targetRow.UserID == 0 {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Target user is not an admin of this community"})
 			return
@@ -629,8 +642,9 @@ func (app *App) RemoveAdminFromSubnotery(c *gin.Context) {
 			return
 		}
 
-		// Older admin (lower row ID) can remove younger admin (higher row ID)
-		if requesterRow.ID >= targetRow.ID {
+		// Older admin (earlier created_at) can remove newer admin (later created_at).
+		// If they were added at the same time (legacy backfill), neither can remove the other.
+		if !requesterRow.CreatedAt.Before(targetRow.CreatedAt) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "You can only remove admins who were added after you"})
 			return
 		}

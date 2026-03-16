@@ -63,10 +63,24 @@ func connect() (*gorm.DB, error) {
 // AutoMigrate creates tables, missing columns, and indexes.
 // It does NOT delete unused columns to protect data.
 func migrate(db *gorm.DB) error {
+	// Setup explicit join table model for user_admins so that GORM auto-populates
+	// CreatedAt on Association Append/Replace, enabling admin seniority checks.
+	if err := db.SetupJoinTable(&models.Subnotery{}, "Admins", &models.UserAdmin{}); err != nil {
+		return fmt.Errorf("setup join table (Subnotery.Admins): %w", err)
+	}
+	if err := db.SetupJoinTable(&models.User{}, "AdminOf", &models.UserAdmin{}); err != nil {
+		return fmt.Errorf("setup join table (User.AdminOf): %w", err)
+	}
+
 	// First, migrate all models
-	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}, &models.RefreshToken{}, &models.EmailVerification{}, &models.PasswordReset{}, &models.Bookmark{}, &models.KarmaLedger{}); err != nil {
+	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}, &models.RefreshToken{}, &models.EmailVerification{}, &models.PasswordReset{}, &models.Bookmark{}, &models.KarmaLedger{}, &models.Notification{}); err != nil {
 		return err
 	}
+
+	// Backfill NULL created_at values in user_admins with current timestamp.
+	// Existing admin rows pre-date the seniority tracking column, so they
+	// all get the same timestamp (treated as equal seniority).
+	db.Exec(`UPDATE user_admins SET created_at = NOW() WHERE created_at IS NULL`)
 
 	// Create a unique composite index on purchases to prevent duplicate purchases.
 	// A user can only purchase a note once.

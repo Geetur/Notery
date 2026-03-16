@@ -146,6 +146,7 @@ func main() {
 	api.GET("/subnoteries/:subnotery_id", optAuth, app.GetSubnoteryDetail)
 	api.GET("/subnoteries/:subnotery_id/notes", optAuth, app.GetSubnoteryNotes)
 	api.GET("/subnoteries/:subnotery_id/banner", app.GetSubnoteryBanner)
+	api.GET("/subnoteries/:subnotery_id/members", app.GetSubnoteryMembers)
 
 	// ── Authenticated Read-Only (login required, no verification) ──────────
 	// Unverified users can browse, view profile, check purchases — read-only.
@@ -164,6 +165,10 @@ func main() {
 	readOnly.GET("/me/comments", app.GetMyComments)
 	readOnly.GET("/bookmarks", app.GetBookmarks)
 	readOnly.GET("/bookmarks/:note_id", app.CheckBookmark)
+
+	// Notifications (read-only)
+	readOnly.GET("/notifications", app.GetNotifications)
+	readOnly.GET("/notifications/unread-count", app.GetUnreadCount)
 
 	// ── Verified Write Endpoints (login + email verification) ──────────────
 	// All mutating operations require a verified email. Unverified → 403.
@@ -215,6 +220,18 @@ func main() {
 	// Bookmarks
 	write.POST("/bookmarks/:note_id", app.AddBookmark)
 	write.DELETE("/bookmarks/:note_id", app.RemoveBookmark)
+
+	// Notifications (actions)
+	write.PATCH("/notifications/:id/read", app.MarkNotificationRead)
+	write.POST("/notifications/read-all", app.MarkAllNotificationsRead)
+	write.POST("/notifications/:id/accept", app.AcceptNotification)
+	write.POST("/notifications/:id/deny", app.DenyNotification)
+
+	// Subnotery admin invites
+	write.POST("/subnoteries/:subnotery_id/invite-admin", app.InviteAdmin)
+
+	// Subnotery member management (admin action)
+	write.DELETE("/subnoteries/:subnotery_id/members/:uid", app.RemoveMemberFromSubnotery)
 
 	// ── Admin Endpoints (verified + admin role) ────────────────────────────
 	admin := write.Group("", middleware.RequireAdmin(db))

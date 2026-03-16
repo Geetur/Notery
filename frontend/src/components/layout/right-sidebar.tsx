@@ -15,7 +15,7 @@ export interface SubnoterySidebarData {
     content_type?: string;
     rules?: string;
     member_count: number;
-    admins?: { id: number; username: string }[];
+    admins?: { id: number; username: string; admin_since?: string }[];
     created_at: string;
 }
 

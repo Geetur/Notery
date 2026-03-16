@@ -13,10 +13,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { timeAgo } from "@/lib/format";
 import { approveNote, deleteNote, getPendingNotes, rejectNote } from "@/services/notes";
-import { deleteSubnoteryBanner, getSubnotery, getSubnoteryNotes, joinSubnotery, leaveSubnotery, removeAdminFromSubnotery, updateSubnoterySettings, uploadSubnoteryBanner } from "@/services/subnoteries";
+import { inviteAdmin } from "@/services/notifications";
+import { deleteSubnoteryBanner, getSubnotery, getSubnoteryMembers, getSubnoteryNotes, joinSubnotery, leaveSubnotery, removeAdminFromSubnotery, removeMemberFromSubnotery, updateSubnoterySettings, uploadSubnoteryBanner } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useFeedStore } from "@/stores/feed-store";
-import type { Note, SubnoteryDetail } from "@/types";
+import type { Note, SubnoteryDetail, SubnoteryMember } from "@/types";
 import {
     CheckCircle,
     ChevronLeft,
@@ -25,10 +26,12 @@ import {
     FileText,
     ImageIcon,
     Paintbrush,
+    Send,
     Settings,
     Shield,
     Trash2,
     Upload,
+    UserMinus,
     Users,
     XCircle,
 } from "lucide-react";
@@ -67,6 +70,17 @@ export default function CommunityDetailPage() {
     const [uploadingBanner, setUploadingBanner] = useState(false);
     const [removingAdmin, setRemovingAdmin] = useState<number | null>(null);
     const bannerInputRef = useRef<HTMLInputElement>(null);
+
+    // Admin invite state
+    const [inviteUsername, setInviteUsername] = useState("");
+    const [inviting, setInviting] = useState(false);
+
+    // Members state
+    const [members, setMembers] = useState<SubnoteryMember[]>([]);
+    const [membersTotal, setMembersTotal] = useState(0);
+    const [membersPage, setMembersPage] = useState(1);
+    const [membersLoading, setMembersLoading] = useState(false);
+    const [removingMember, setRemovingMember] = useState<number | null>(null);
 
     const isAdmin =
         user &&
@@ -283,6 +297,61 @@ export default function CommunityDetailPage() {
         }
     };
 
+    const handleInviteAdmin = async () => {
+        const username = inviteUsername.trim();
+        if (!username) return;
+        setInviting(true);
+        try {
+            await inviteAdmin(communityId, username);
+            toast({ title: "Invite sent", description: `Admin invite sent to ${username}.` });
+            setInviteUsername("");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to send invite";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setInviting(false);
+        }
+    };
+
+    // Load members when Members tab is active
+    const loadMembers = useCallback(async () => {
+        setMembersLoading(true);
+        try {
+            const res = await getSubnoteryMembers(communityId, { page: membersPage, limit: PAGE_SIZE });
+            setMembers(res.members ?? []);
+            setMembersTotal(res.total);
+        } catch {
+            // ignore
+        } finally {
+            setMembersLoading(false);
+        }
+    }, [communityId, membersPage]);
+
+    useEffect(() => {
+        if (activeTab === "members") {
+            loadMembers();
+        }
+    }, [activeTab, loadMembers]);
+
+    const membersTotalPages = Math.ceil(membersTotal / PAGE_SIZE);
+
+    const handleRemoveMember = async (memberId: number) => {
+        if (!confirm("Remove this user from the community?")) return;
+        setRemovingMember(memberId);
+        try {
+            await removeMemberFromSubnotery(communityId, memberId);
+            toast({ title: "Member removed" });
+            loadMembers();
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to remove member";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setRemovingMember(null);
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex">
@@ -390,6 +459,12 @@ export default function CommunityDetailPage() {
                             {isAdmin && (
                                 <TabsTrigger value="pending">
                                     Pending ({pendingNotes.length})
+                                </TabsTrigger>
+                            )}
+                            {isAdmin && (
+                                <TabsTrigger value="members">
+                                    <Users className="h-3.5 w-3.5 mr-1" />
+                                    Members
                                 </TabsTrigger>
                             )}
                             {isAdmin && (
@@ -534,6 +609,88 @@ export default function CommunityDetailPage() {
                                         ))}
                                     </div>
                                 )}
+                            </TabsContent>
+                        )}
+
+                        {/* Members tab (admin only) */}
+                        {isAdmin && (
+                            <TabsContent value="members" className="mt-4">
+                                <Card className="p-6 space-y-4">
+                                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                                        <Users className="h-5 w-5" /> Community Members
+                                    </h3>
+                                    {membersLoading ? (
+                                        <div className="space-y-2">
+                                            <Skeleton className="h-10 w-full" />
+                                            <Skeleton className="h-10 w-full" />
+                                            <Skeleton className="h-10 w-full" />
+                                        </div>
+                                    ) : members.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground">No members yet.</p>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            {members.map((member) => (
+                                                <div
+                                                    key={member.id}
+                                                    className="flex items-center justify-between py-2 px-3 rounded hover:bg-accent/50"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <Link
+                                                            href={`/user/${member.id}`}
+                                                            className="text-sm font-medium hover:text-primary"
+                                                        >
+                                                            u/{member.username}
+                                                        </Link>
+                                                        {member.is_admin && (
+                                                            <Badge variant="secondary" className="text-xs">
+                                                                <Shield className="h-3 w-3 mr-0.5" />
+                                                                Admin
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    {member.id !== user?.id && !member.is_admin && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-7 text-xs text-destructive hover:text-destructive"
+                                                            onClick={() => handleRemoveMember(member.id)}
+                                                            disabled={removingMember === member.id}
+                                                        >
+                                                            <UserMinus className="h-3 w-3 mr-1" />
+                                                            {removingMember === member.id ? "..." : "Remove"}
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {membersTotalPages > 1 && (
+                                        <div className="flex items-center justify-center gap-4 mt-4">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={membersPage <= 1}
+                                                onClick={() => setMembersPage((p) => Math.max(1, p - 1))}
+                                            >
+                                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                                Previous
+                                            </Button>
+                                            <span className="text-sm text-muted-foreground">
+                                                Page {membersPage} of {membersTotalPages}
+                                            </span>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={membersPage >= membersTotalPages}
+                                                onClick={() => setMembersPage((p) => p + 1)}
+                                            >
+                                                Next
+                                                <ChevronRight className="h-4 w-4 ml-1" />
+                                            </Button>
+                                        </div>
+                                    )}
+                                </Card>
                             </TabsContent>
                         )}
 
@@ -709,28 +866,65 @@ export default function CommunityDetailPage() {
                                         <Shield className="h-5 w-5" /> Manage Admins
                                     </h3>
                                     <div className="space-y-2">
-                                        {community?.admins.map((admin) => (
-                                            <div key={admin.id} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-accent/50">
-                                                <Link href={`/user/${admin.id}`} className="text-sm hover:text-primary">
-                                                    u/{admin.username}
-                                                </Link>
-                                                {admin.id !== user?.id && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="h-7 text-xs text-destructive hover:text-destructive"
-                                                        onClick={() => handleRemoveAdmin(admin.id)}
-                                                        disabled={removingAdmin === admin.id}
-                                                    >
-                                                        {removingAdmin === admin.id ? "..." : "Remove"}
-                                                    </Button>
-                                                )}
-                                            </div>
-                                        ))}
+                                        {community?.admins.map((admin) => {
+                                            // Only show Remove for admins added AFTER the current user
+                                            const myAdminSince = community?.admins.find((a) => a.id === user?.id)?.admin_since;
+                                            const canRemove =
+                                                admin.id !== user?.id &&
+                                                myAdminSince &&
+                                                admin.admin_since &&
+                                                new Date(myAdminSince) < new Date(admin.admin_since);
+                                            return (
+                                                <div key={admin.id} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-accent/50">
+                                                    <Link href={`/user/${admin.id}`} className="text-sm hover:text-primary">
+                                                        u/{admin.username}
+                                                    </Link>
+                                                    {canRemove && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-7 text-xs text-destructive hover:text-destructive"
+                                                            onClick={() => handleRemoveAdmin(admin.id)}
+                                                            disabled={removingAdmin === admin.id}
+                                                        >
+                                                            {removingAdmin === admin.id ? "..." : "Remove"}
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                     <p className="text-xs text-muted-foreground">
                                         You can only remove admins who were added after you.
                                     </p>
+
+                                    {/* Invite admin */}
+                                    <div className="pt-4 border-t border-border">
+                                        <h4 className="text-sm font-medium mb-2">Invite Admin</h4>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                                placeholder="Enter username..."
+                                                value={inviteUsername}
+                                                onChange={(e) => setInviteUsername(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter") handleInviteAdmin();
+                                                }}
+                                            />
+                                            <Button
+                                                size="sm"
+                                                onClick={handleInviteAdmin}
+                                                disabled={inviting || !inviteUsername.trim()}
+                                            >
+                                                <Send className="h-4 w-4 mr-1" />
+                                                {inviting ? "Sending..." : "Send Invite"}
+                                            </Button>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                            The user will receive a notification they can accept or decline.
+                                        </p>
+                                    </div>
                                 </Card>
                             </TabsContent>
                         )}

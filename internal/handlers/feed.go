@@ -461,6 +461,7 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 	}
 
 	noteIDUint := uint64(note.ID)
+	oldUpvotes := note.Upvotes // Capture pre-vote upvote count for milestone check
 	opposite := models.VoteDown
 	if direction == models.VoteDown {
 		opposite = models.VoteUp
@@ -612,6 +613,11 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 	// Recalculate hotness.
 	if err := app.UpdateNoteHotness(ctx, &note); err != nil {
 		feedLog.Log("VOTE", "hotness update failed", "note_id", noteID, "error", err)
+	}
+
+	// Check for upvote milestone notifications (best-effort, non-blocking).
+	if direction == models.VoteUp && note.Upvotes > oldUpvotes {
+		go app.checkAndSendNoteMilestone(note.ID, oldUpvotes, note.Upvotes, note.CreatorID, note.Title)
 	}
 
 	feedLog.Log("VOTE", "completed", "user_id", userID, "note_id", noteID,
