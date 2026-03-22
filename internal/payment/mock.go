@@ -22,6 +22,11 @@ type MockService struct {
 	// VerifyFn overrides VerifyWebhookSignature behaviour. If nil, ErrUnsupportedEvent is returned.
 	VerifyFn func(payload []byte, sig string) (*WebhookEvent, error)
 
+	// Connect method overrides
+	CreateConnectedAccountFn func(ctx context.Context, email string) (string, error)
+	CreateOnboardingLinkFn   func(ctx context.Context, accountID, returnURL, refreshURL string) (string, error)
+	GetAccountStatusFn       func(ctx context.Context, accountID string) (bool, error)
+
 	// Tracking fields for test assertions.
 	CreateCalls   []CreateIntentParams
 	RetrieveCalls []string
@@ -71,12 +76,18 @@ func (m *MockService) VerifyWebhookSignature(payload []byte, sig string) (*Webho
 var _ Service = (*MockService)(nil) // compile-time check
 
 // CreateConnectedAccount implements Service.
-func (m *MockService) CreateConnectedAccount(_ context.Context, email string) (string, error) {
+func (m *MockService) CreateConnectedAccount(ctx context.Context, email string) (string, error) {
+	if m.CreateConnectedAccountFn != nil {
+		return m.CreateConnectedAccountFn(ctx, email)
+	}
 	return "acct_mock_" + email, nil
 }
 
 // CreateOnboardingLink implements Service.
-func (m *MockService) CreateOnboardingLink(_ context.Context, accountID, _, _ string) (string, error) {
+func (m *MockService) CreateOnboardingLink(ctx context.Context, accountID, returnURL, refreshURL string) (string, error) {
+	if m.CreateOnboardingLinkFn != nil {
+		return m.CreateOnboardingLinkFn(ctx, accountID, returnURL, refreshURL)
+	}
 	return "https://connect.stripe.com/mock/onboard/" + accountID, nil
 }
 
@@ -86,6 +97,9 @@ func (m *MockService) CreateTransfer(_ context.Context, _ int64, _, destAccountI
 }
 
 // GetAccountStatus implements Service.
-func (m *MockService) GetAccountStatus(_ context.Context, _ string) (bool, error) {
+func (m *MockService) GetAccountStatus(ctx context.Context, accountID string) (bool, error) {
+	if m.GetAccountStatusFn != nil {
+		return m.GetAccountStatusFn(ctx, accountID)
+	}
 	return true, nil
 }

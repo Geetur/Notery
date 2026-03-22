@@ -85,9 +85,13 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 	// Try LOGIN auth first (required by Outlook/Office365), then fall back to PLAIN.
 	auth := &loginAuth{username: m.User, password: m.Pass}
 	err := m.sendWithTimeout(addr, auth, to, []byte(msg))
-	if err != nil && strings.Contains(err.Error(), "Unrecognized authentication type") {
-		plainAuth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
-		return m.sendWithTimeout(addr, plainAuth, to, []byte(msg))
+	if err != nil {
+		// Fall back to PLAIN auth if LOGIN was rejected (error messages vary by provider).
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "auth") || strings.Contains(errLower, "unrecognized") || strings.Contains(errLower, "login") {
+			plainAuth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
+			return m.sendWithTimeout(addr, plainAuth, to, []byte(msg))
+		}
 	}
 	return err
 }
