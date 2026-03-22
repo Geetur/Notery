@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/config";
 import { timeAgo } from "@/lib/format";
 import { approveNote, deleteNote, getPendingNotes, rejectNote } from "@/services/notes";
 import { inviteAdmin } from "@/services/notifications";
@@ -467,7 +468,7 @@ export default function CommunityDetailPage() {
                             <div className="relative w-full h-32 bg-muted">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
-                                    src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
+                                    src={`${API_BASE_URL}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
                                     alt={`Banner for n/${community.name}`}
                                     className="w-full h-full object-cover"
                                 />
@@ -1060,7 +1061,7 @@ export default function CommunityDetailPage() {
                                             <div className="relative w-full h-32 rounded-md overflow-hidden border border-border">
                                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                                 <img
-                                                    src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
+                                                    src={`${API_BASE_URL}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
                                                     alt="Current banner"
                                                     className="w-full h-full object-cover"
                                                 />

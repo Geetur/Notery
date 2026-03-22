@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { API_BASE_URL } from "@/lib/config";
 import { timeAgo } from "@/lib/format";
 import { listSubnoteries } from "@/services/subnoteries";
 import type { SubnoteryListItem } from "@/types";
@@ -73,7 +74,7 @@ export default function CommunitiesPage() {
                                         {sub.banner_url && (
                                             <div className="h-20 w-full bg-muted overflow-hidden">
                                                 <img
-                                                    src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/v1/subnoteries/${sub.id}/banner`}
+                                                    src={`${API_BASE_URL}/api/v1/subnoteries/${sub.id}/banner`}
                                                     alt={`Banner for n/${sub.name}`}
                                                     className="w-full h-full object-cover"
                                                 />

@@ -297,9 +297,11 @@ func TestConcurrency_CommentVote_RemoveContention(t *testing.T) {
 	voteURL := fmt.Sprintf("/comments/%d/vote", comment.ID)
 
 	// Phase 1: all upvote sequentially (deterministic setup)
+	// Use serveWithRetry because SQLite's single-writer model can cause
+	// "database table is locked" even on sequential writes.
 	for i := 0; i < numVoters; i++ {
-		w := serve("POST", "/comments/:comment_id/vote", voteURL,
-			jsonBody(map[string]int8{"value": 1}), app.VoteComment, authMW(voterIDs[i]))
+		w := serveWithRetry("POST", "/comments/:comment_id/vote", voteURL,
+			jsonBody(map[string]int8{"value": 1}), app.VoteComment, authMW(voterIDs[i]), 10)
 		if w.Code != http.StatusOK {
 			t.Fatalf("setup vote %d: status=%d", i, w.Code)
 		}
@@ -518,9 +520,11 @@ func TestConcurrency_NoteVote_SwitchDirection(t *testing.T) {
 	}
 
 	// Phase 1: all upvote sequentially
+	// Use serveWithRetry because SQLite's single-writer model can cause
+	// "database table is locked" even on sequential writes.
 	for i := 0; i < numVoters; i++ {
-		w := serve("POST", "/notes/:id/upvote", fmt.Sprintf("/notes/%d/upvote", noteID),
-			nil, app.Upvote, authMW(voterIDs[i]))
+		w := serveWithRetry("POST", "/notes/:id/upvote", fmt.Sprintf("/notes/%d/upvote", noteID),
+			nil, app.Upvote, authMW(voterIDs[i]), 10)
 		if w.Code != http.StatusOK {
 			t.Fatalf("setup upvote %d: status=%d", i, w.Code)
 		}
@@ -574,9 +578,11 @@ func TestConcurrency_CommentVote_SwitchDirection(t *testing.T) {
 	voteURL := fmt.Sprintf("/comments/%d/vote", comment.ID)
 
 	// Phase 1: all upvote sequentially
+	// Use serveWithRetry because SQLite's single-writer model can cause
+	// "database table is locked" even on sequential writes.
 	for i := 0; i < numVoters; i++ {
-		w := serve("POST", "/comments/:comment_id/vote", voteURL,
-			jsonBody(map[string]int8{"value": 1}), app.VoteComment, authMW(voterIDs[i]))
+		w := serveWithRetry("POST", "/comments/:comment_id/vote", voteURL,
+			jsonBody(map[string]int8{"value": 1}), app.VoteComment, authMW(voterIDs[i]), 10)
 		if w.Code != http.StatusOK {
 			t.Fatalf("setup upvote %d: status=%d", i, w.Code)
 		}

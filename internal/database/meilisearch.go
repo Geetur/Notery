@@ -7,6 +7,8 @@ import (
 	"log"
 
 	"github.com/meilisearch/meilisearch-go"
+
+	"github.com/Geetur/Notery/internal/config"
 )
 
 // InitMeilisearch initializes the Meilisearch client and ensures the index exists.
@@ -20,6 +22,10 @@ func InitMeilisearch() (meilisearch.ServiceManager, string, error) {
 		apiKey = getenv("MEILISEARCH_MASTER_KEY", "")
 	}
 	indexName := getenv("MEILISEARCH_INDEX", "notes")
+
+	if config.IsProduction() && apiKey == "" {
+		log.Fatal("FATAL: MEILISEARCH_API_KEY or MEILISEARCH_MASTER_KEY must be set in production")
+	}
 
 	var client meilisearch.ServiceManager
 	if apiKey != "" {

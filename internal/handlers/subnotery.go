@@ -33,10 +33,12 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -195,13 +197,11 @@ func (app *App) LeaveSubnotery(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 	subnoteryLog.Log("LEAVE", "User identified", "userID", userID, "subnoteryID", subnoteryID)
 
-	subnotery, ok := helpers.FetchSubnotery(c, app.DB, subnoteryID)
-	if !ok {
+	if _, ok := helpers.FetchSubnotery(c, app.DB, subnoteryID); !ok {
 		return
 	}
 
-	user, ok := helpers.FetchUser(c, app.DB, userID)
-	if !ok {
+	if _, ok := helpers.FetchUser(c, app.DB, userID); !ok {
 		subnoteryLog.Log("LEAVE", "User not found", "userID", userID)
 		return
 	}
@@ -212,47 +212,50 @@ func (app *App) LeaveSubnotery(c *gin.Context) {
 		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
 		Count(&isAdmin)
 
-	if isAdmin > 0 {
-		// Admin is leaving — handle succession
-		var totalAdmins int64
-		app.DB.Table("user_admins").Where("subnotery_id = ?", subnoteryID).Count(&totalAdmins)
+	// Wrap leave + succession in a transaction to prevent races
+	// (e.g. multiple admins leaving simultaneously causing duplicate promotions).
+	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+		if isAdmin > 0 {
+			var totalAdmins int64
+			tx.Table("user_admins").Where("subnotery_id = ?", subnoteryID).Count(&totalAdmins)
 
-		// Remove this user from admins
-		if err := app.DB.Model(subnotery).Association("Admins").Delete(user); err != nil {
-			subnoteryLog.Log("LEAVE", "Failed to remove admin", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to leave subnotery"})
-			return
-		}
-
-		if totalAdmins <= 1 {
-			// This was the last admin — promote the oldest remaining member
-			type memberRow struct {
-				UserID uint64
+			// Remove this user from admins
+			if err := tx.Exec("DELETE FROM user_admins WHERE user_id = ? AND subnotery_id = ?", userID, subnoteryID).Error; err != nil {
+				return err
 			}
-			var oldest memberRow
-			err := app.DB.Table("user_memberships").
-				Select("user_id").
-				Where("subnotery_id = ? AND user_id != ?", subnoteryID, userID).
-				Order("user_id ASC").
-				Limit(1).
-				Scan(&oldest).Error
-			if err == nil && oldest.UserID != 0 {
-				var newAdmin models.User
-				if err := app.DB.First(&newAdmin, oldest.UserID).Error; err == nil {
-					app.DB.Model(subnotery).Association("Admins").Append(&newAdmin)
-					subnoteryLog.Log("LEAVE", "Promoted oldest member to admin",
-						"newAdminID", newAdmin.ID, "subnoteryID", subnoteryID)
+
+			if totalAdmins <= 1 {
+				// Last admin leaving — promote the oldest remaining member.
+				type memberRow struct {
+					UserID uint64
 				}
-			} else {
-				subnoteryLog.Log("LEAVE", "No members to promote — subnotery has no admin",
-					"subnoteryID", subnoteryID)
+				var oldest memberRow
+				err := tx.Table("user_memberships").
+					Select("user_id").
+					Where("subnotery_id = ? AND user_id != ?", subnoteryID, userID).
+					Order("user_id ASC").
+					Limit(1).
+					Scan(&oldest).Error
+				if err == nil && oldest.UserID != 0 {
+					if err := tx.Exec("INSERT INTO user_admins (user_id, subnotery_id, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)", oldest.UserID, subnoteryID).Error; err != nil {
+						return err
+					}
+					subnoteryLog.Log("LEAVE", "Promoted oldest member to admin",
+						"newAdminID", oldest.UserID, "subnoteryID", subnoteryID)
+				} else {
+					subnoteryLog.Log("LEAVE", "No members to promote — subnotery has no admin",
+						"subnoteryID", subnoteryID)
+				}
 			}
 		}
-	}
 
-	// Remove user from members
-	if err := app.DB.Model(subnotery).Association("Members").Delete(user); err != nil {
-		subnoteryLog.Log("LEAVE", "Failed to remove member", "error", err)
+		// Remove user from members
+		if err := tx.Exec("DELETE FROM user_memberships WHERE user_id = ? AND subnotery_id = ?", userID, subnoteryID).Error; err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		subnoteryLog.Log("LEAVE", "Transaction failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to leave subnotery"})
 		return
 	}
@@ -558,12 +561,24 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 	// Apply updates
 	updates := map[string]interface{}{}
 	if req.Description != nil {
+		if utf8.RuneCountInString(*req.Description) > models.MaxSubnoteryDescriptionLength {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Description too long", "max": models.MaxSubnoteryDescriptionLength})
+			return
+		}
 		updates["description"] = *req.Description
 	}
 	if req.ContentType != nil {
+		if utf8.RuneCountInString(*req.ContentType) > 100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Content type too long", "max": 100})
+			return
+		}
 		updates["content_type"] = *req.ContentType
 	}
 	if req.Rules != nil {
+		if utf8.RuneCountInString(*req.Rules) > models.MaxSubnoteryRulesLength {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Rules too long", "max": models.MaxSubnoteryRulesLength})
+			return
+		}
 		updates["rules"] = *req.Rules
 	}
 	if req.BannerURL != nil {
