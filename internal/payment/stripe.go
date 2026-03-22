@@ -7,7 +7,10 @@ import (
 	"fmt"
 
 	"github.com/stripe/stripe-go/v82"
+	"github.com/stripe/stripe-go/v82/account"
+	"github.com/stripe/stripe-go/v82/accountlink"
 	"github.com/stripe/stripe-go/v82/paymentintent"
+	"github.com/stripe/stripe-go/v82/transfer"
 	"github.com/stripe/stripe-go/v82/webhook"
 )
 
@@ -146,4 +149,73 @@ func (s *StripeService) VerifyWebhookSignature(payload []byte, signature string)
 	default:
 		return nil, ErrUnsupportedEvent
 	}
+}
+
+// --- Stripe Connect (Payouts) ---
+
+// CreateConnectedAccount creates a Stripe Express Connected Account for a creator.
+func (s *StripeService) CreateConnectedAccount(ctx context.Context, email string) (string, error) {
+	params := &stripe.AccountParams{
+		Type:    stripe.String(string(stripe.AccountTypeExpress)),
+		Email:   stripe.String(email),
+		Country: stripe.String("US"),
+		Capabilities: &stripe.AccountCapabilitiesParams{
+			Transfers: &stripe.AccountCapabilitiesTransfersParams{
+				Requested: stripe.Bool(true),
+			},
+		},
+	}
+	params.Context = ctx
+
+	acct, err := account.New(params)
+	if err != nil {
+		return "", fmt.Errorf("stripe: create connected account: %w", err)
+	}
+	return acct.ID, nil
+}
+
+// CreateOnboardingLink generates a Stripe Account Link for Express onboarding.
+func (s *StripeService) CreateOnboardingLink(ctx context.Context, accountID, returnURL, refreshURL string) (string, error) {
+	params := &stripe.AccountLinkParams{
+		Account:    stripe.String(accountID),
+		RefreshURL: stripe.String(refreshURL),
+		ReturnURL:  stripe.String(returnURL),
+		Type:       stripe.String("account_onboarding"),
+	}
+	params.Context = ctx
+
+	link, err := accountlink.New(params)
+	if err != nil {
+		return "", fmt.Errorf("stripe: create onboarding link: %w", err)
+	}
+	return link.URL, nil
+}
+
+// CreateTransfer sends funds to a creator's Connected Account.
+func (s *StripeService) CreateTransfer(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup string) (string, error) {
+	params := &stripe.TransferParams{
+		Amount:        stripe.Int64(amountCents),
+		Currency:      stripe.String(currency),
+		Destination:   stripe.String(destAccountID),
+		TransferGroup: stripe.String(transferGroup),
+	}
+	params.Context = ctx
+
+	tr, err := transfer.New(params)
+	if err != nil {
+		return "", fmt.Errorf("stripe: create transfer: %w", err)
+	}
+	return tr.ID, nil
+}
+
+// GetAccountStatus checks whether a Connected Account has charges_enabled.
+func (s *StripeService) GetAccountStatus(ctx context.Context, accountID string) (bool, error) {
+	params := &stripe.AccountParams{}
+	params.Context = ctx
+
+	acct, err := account.GetByID(accountID, params)
+	if err != nil {
+		return false, fmt.Errorf("stripe: get account status: %w", err)
+	}
+	return acct.ChargesEnabled, nil
 }

@@ -73,7 +73,7 @@ func migrate(db *gorm.DB) error {
 	}
 
 	// First, migrate all models
-	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}, &models.RefreshToken{}, &models.EmailVerification{}, &models.PasswordReset{}, &models.Bookmark{}, &models.KarmaLedger{}, &models.Notification{}); err != nil {
+	if err := db.AutoMigrate(&models.Subnotery{}, &models.Note{}, &models.User{}, &models.Purchase{}, &models.Vote{}, &models.Order{}, &models.OrderItem{}, &models.Comment{}, &models.CommentVote{}, &models.RefreshToken{}, &models.EmailVerification{}, &models.PasswordReset{}, &models.Bookmark{}, &models.KarmaLedger{}, &models.Notification{}, &models.Ban{}, &models.PayoutRecord{}); err != nil {
 		return err
 	}
 

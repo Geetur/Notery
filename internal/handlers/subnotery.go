@@ -141,6 +141,15 @@ func (app *App) JoinSubnotery(c *gin.Context) {
 		return
 	}
 
+	// Check if user is banned from this subnotery or site-wide
+	if ban, err := helpers.CheckAnyBan(app.DB, userID, uint(subnoteryID)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check ban status"})
+		return
+	} else if ban != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are banned", "reason": ban.Reason})
+		return
+	}
+
 	// Add user as member to subnotery
 	if err := app.DB.Model(subnotery).Association("Members").Append(user); err != nil {
 		subnoteryLog.Log("JOIN", "Failed to add member", "error", err)
@@ -287,6 +296,7 @@ func (app *App) ListSubnoteries(c *gin.Context) {
 	type subnoteryItem struct {
 		ID           uint   `json:"id"`
 		Name         string `json:"name"`
+		BannerURL    string `json:"banner_url"`
 		AdminCount   int    `json:"admin_count"`
 		MemberCount  int    `json:"member_count"`
 		CreatedAt    string `json:"created_at"`
@@ -296,6 +306,7 @@ func (app *App) ListSubnoteries(c *gin.Context) {
 		items[i] = subnoteryItem{
 			ID:          s.ID,
 			Name:        s.Name,
+			BannerURL:   s.BannerURL,
 			AdminCount:  len(s.Admins),
 			MemberCount: len(s.Members),
 			CreatedAt:   s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -377,20 +388,21 @@ func (app *App) GetSubnoteryDetail(c *gin.Context) {
 
 	subnoteryLog.Log("DETAIL", "Subnotery detail retrieved", "subnoteryID", subnoteryID)
 	c.JSON(http.StatusOK, gin.H{
-		"id":                    subnotery.ID,
-		"name":                  subnotery.Name,
-		"description":           subnotery.Description,
-		"content_type":          subnotery.ContentType,
-		"rules":                 subnotery.Rules,
-		"banner_url":            subnotery.BannerURL,
-		"background_color":      subnotery.BackgroundColor,
-		"min_post_notoriety":    subnotery.MinPostNotoriety,
-		"min_comment_notoriety": subnotery.MinCommentNotoriety,
-		"admins":                admins,
-		"member_count":          len(subnotery.Members),
-		"is_member":             isMember,
-		"created_at":            subnotery.CreatedAt,
-		"updated_at":            subnotery.UpdatedAt,
+		"id":                      subnotery.ID,
+		"name":                    subnotery.Name,
+		"description":             subnotery.Description,
+		"content_type":            subnotery.ContentType,
+		"rules":                   subnotery.Rules,
+		"banner_url":              subnotery.BannerURL,
+		"background_color":        subnotery.BackgroundColor,
+		"min_post_notoriety":      subnotery.MinPostNotoriety,
+		"min_comment_notoriety":   subnotery.MinCommentNotoriety,
+		"auto_approve_free_notes": subnotery.AutoApproveFreeNotes,
+		"admins":                  admins,
+		"member_count":            len(subnotery.Members),
+		"is_member":               isMember,
+		"created_at":              subnotery.CreatedAt,
+		"updated_at":              subnotery.UpdatedAt,
 	})
 }
 
@@ -530,13 +542,14 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 
 	// Bind request
 	var req struct {
-		Description         *string  `json:"description"`
-		ContentType         *string  `json:"content_type"`
-		Rules               *string  `json:"rules"`
-		BannerURL           *string  `json:"banner_url"`
-		BackgroundColor     *string  `json:"background_color"`
-		MinPostNotoriety    *float64 `json:"min_post_notoriety"`
-		MinCommentNotoriety *float64 `json:"min_comment_notoriety"`
+		Description          *string  `json:"description"`
+		ContentType          *string  `json:"content_type"`
+		Rules                *string  `json:"rules"`
+		BannerURL            *string  `json:"banner_url"`
+		BackgroundColor      *string  `json:"background_color"`
+		MinPostNotoriety     *float64 `json:"min_post_notoriety"`
+		MinCommentNotoriety  *float64 `json:"min_comment_notoriety"`
+		AutoApproveFreeNotes *bool    `json:"auto_approve_free_notes"`
 	}
 	if !helpers.BindJSON(c, &req) {
 		return
@@ -564,6 +577,9 @@ func (app *App) UpdateSubnoterySettings(c *gin.Context) {
 	}
 	if req.MinCommentNotoriety != nil {
 		updates["min_comment_notoriety"] = *req.MinCommentNotoriety
+	}
+	if req.AutoApproveFreeNotes != nil {
+		updates["auto_approve_free_notes"] = *req.AutoApproveFreeNotes
 	}
 
 	if len(updates) == 0 {

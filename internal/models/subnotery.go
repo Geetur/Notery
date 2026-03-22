@@ -41,6 +41,10 @@ type Subnotery struct {
 	MinPostNotoriety    float64 `json:"min_post_notoriety" gorm:"default:0;not null"`
 	MinCommentNotoriety float64 `json:"min_comment_notoriety" gorm:"default:0;not null"`
 
+	// AutoApproveFreeNotes when true causes free (price=0) notes to skip the
+	// Pending state and go directly to Approved on creation.
+	AutoApproveFreeNotes bool `json:"auto_approve_free_notes" gorm:"default:false"`
+
 	Admins      []User    `json:"admins" gorm:"many2many:user_admins;"`
 	Members     []User    `json:"members" gorm:"many2many:user_memberships;"`
 	CreatedAt   time.Time `json:"created_at"`

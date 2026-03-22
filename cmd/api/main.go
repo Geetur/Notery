@@ -166,6 +166,9 @@ func main() {
 	readOnly.GET("/bookmarks", app.GetBookmarks)
 	readOnly.GET("/bookmarks/:note_id", app.CheckBookmark)
 
+	// Stripe Connect (payout) — read-only status check
+	readOnly.GET("/me/stripe/status", app.StripeStatus)
+
 	// Notifications (read-only)
 	readOnly.GET("/notifications", app.GetNotifications)
 	readOnly.GET("/notifications/unread-count", app.GetUnreadCount)
@@ -190,6 +193,7 @@ func main() {
 	write.POST("/cart", app.AddToCart)
 	write.DELETE("/cart/:item_id", app.RemoveFromCart)
 	write.POST("/checkout", app.CheckoutCart)
+	write.POST("/checkout/selected", app.CheckoutSelected)
 	write.POST("/notes/:id/purchase", app.PurchaseSingleNote)
 
 	// Profile & Avatar
@@ -233,6 +237,15 @@ func main() {
 	// Subnotery member management (admin action)
 	write.DELETE("/subnoteries/:subnotery_id/members/:uid", app.RemoveMemberFromSubnotery)
 
+	// Stripe Connect (payout)
+	write.POST("/me/stripe/connect", app.StripeConnect)
+	write.POST("/me/stripe/refresh-link", app.StripeRefreshLink)
+
+	// Bans (subnotery-scoped)
+	write.POST("/subnoteries/:subnotery_id/bans", app.BanUser)
+	write.DELETE("/subnoteries/:subnotery_id/bans/:uid", app.UnbanUser)
+	write.GET("/subnoteries/:subnotery_id/bans", app.ListBans)
+
 	// ── Admin Endpoints (verified + admin role) ────────────────────────────
 	admin := write.Group("", middleware.RequireAdmin(db))
 	admin.GET("/notes/pending", app.GetPendingNotes)
@@ -244,6 +257,10 @@ func main() {
 	admin.GET("/admin/notes/:id/preview", app.AdminPreviewPDF)
 	admin.DELETE("/admin/notes/:id/content", app.DeleteNotePDF)
 	admin.POST("/subnoteries/:subnotery_id/admins", app.AddAdminToSubnotery)
+
+	// Site-wide bans (global admin only)
+	admin.POST("/admin/bans", app.SiteWideBan)
+	admin.DELETE("/admin/bans/:uid", app.RemoveSiteWideBan)
 
 	// ── Server Start & Graceful Shutdown ───────────────────────────────────
 	srv := &http.Server{

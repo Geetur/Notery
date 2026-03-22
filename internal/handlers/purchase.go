@@ -567,6 +567,189 @@ func (app *App) PurchaseSingleNote(c *gin.Context) {
 	})
 }
 
+// CheckoutSelected processes a purchase for selected cart items (not all).
+// This allows users to "Buy Selected" items from their cart.
+//
+// Request body: { "item_ids": ["1","2"], "idempotency_key": "uuid-here" }
+//
+// Route: POST /api/v1/checkout/selected
+func (app *App) CheckoutSelected(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := helpers.GetUserID(c)
+	start := time.Now()
+
+	var body struct {
+		ItemIDs        []string `json:"item_ids" binding:"required"`
+		IdempotencyKey string   `json:"idempotency_key"`
+	}
+	if !helpers.BindJSON(c, &body) {
+		return
+	}
+	if len(body.ItemIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No items selected"})
+		return
+	}
+
+	purchaseLog.Log("CHECKOUT_SELECTED", "processing", "user_id", userID, "item_count", len(body.ItemIDs))
+
+	// Idempotency check
+	if body.IdempotencyKey != "" {
+		var existing models.Order
+		if err := app.DB.Where("idempotency_key = ? AND user_id = ?", body.IdempotencyKey, userID).
+			Preload("Items").First(&existing).Error; err == nil {
+			if existing.Status != models.OrderPending {
+				c.JSON(http.StatusOK, gin.H{"order_id": existing.ID, "status": existing.Status, "idempotent": true})
+				return
+			}
+		}
+	}
+
+	// Verify selected items are in cart
+	if app.RDB != nil {
+		cartKey := helpers.CartKey(userID)
+		cartMembers, err := app.RDB.SMembers(ctx, cartKey).Result()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read cart"})
+			return
+		}
+		cartSet := make(map[string]bool, len(cartMembers))
+		for _, m := range cartMembers {
+			cartSet[m] = true
+		}
+		for _, id := range body.ItemIDs {
+			if !cartSet[id] {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Item " + id + " is not in your cart"})
+				return
+			}
+		}
+	}
+
+	// Validate each item
+	var orderItems []models.OrderItem
+	var warnings []string
+	var totalCents int64
+
+	for _, idStr := range body.ItemIDs {
+		noteID, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			warnings = append(warnings, "Invalid item ID: "+idStr)
+			continue
+		}
+		var note models.Note
+		if err := app.DB.First(&note, noteID).Error; err != nil {
+			warnings = append(warnings, "Note "+idStr+" not found")
+			continue
+		}
+		if note.Status != models.StatusApproved {
+			warnings = append(warnings, "Note "+idStr+" is not approved")
+			continue
+		}
+		if !note.HasPDF {
+			warnings = append(warnings, "Note "+idStr+" has no PDF")
+			continue
+		}
+		// Check not already purchased
+		var count int64
+		app.DB.Model(&models.Purchase{}).Where("user_id = ? AND note_id = ?", userID, noteID).Count(&count)
+		if count > 0 {
+			warnings = append(warnings, "Note "+idStr+" already purchased")
+			continue
+		}
+
+		orderItems = append(orderItems, models.OrderItem{
+			NoteID:     uint(noteID),
+			PriceCents: note.Price,
+		})
+		totalCents += note.Price
+	}
+
+	if len(orderItems) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid items to purchase", "warnings": warnings})
+		return
+	}
+
+	// Create order
+	order := models.Order{
+		UserID:         userID,
+		Status:         models.OrderPending,
+		TotalCents:     totalCents,
+		Currency:       "usd",
+		IdempotencyKey: body.IdempotencyKey,
+	}
+	if err := app.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&order).Error; err != nil {
+			return err
+		}
+		for i := range orderItems {
+			orderItems[i].OrderID = order.ID
+		}
+		return tx.Create(&orderItems).Error
+	}); err != nil {
+		purchaseLog.Log("CHECKOUT_SELECTED", "failed to create order", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create order"})
+		return
+	}
+	order.Items = orderItems
+
+	// Auto-fulfil or payment intent (same as CheckoutCart)
+	if totalCents == 0 || app.Payment == nil {
+		if err := app.fulfilOrder(&order); err != nil {
+			purchaseLog.Log("CHECKOUT_SELECTED", "fulfilment failed", "order_id", order.ID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Fulfilment failed"})
+			return
+		}
+		// Remove purchased items from cart
+		if app.RDB != nil {
+			cartKey := helpers.CartKey(userID)
+			for _, id := range body.ItemIDs {
+				app.RDB.SRem(ctx, cartKey, id)
+			}
+		}
+		response := gin.H{
+			"order_id":        order.ID,
+			"status":          order.Status,
+			"purchased_count": len(orderItems),
+			"total_cents":     totalCents,
+		}
+		if len(warnings) > 0 {
+			response["warnings"] = warnings
+		}
+		duration := time.Since(start)
+		purchaseLog.Log("CHECKOUT_SELECTED", "completed (auto-fulfilled)", "order_id", order.ID, "items", len(orderItems), "duration_ms", duration.Milliseconds())
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
+	// Create payment intent
+	piResult, err := app.Payment.CreatePaymentIntent(ctx, payment.CreateIntentParams{
+		OrderID:        order.ID,
+		AmountCents:    totalCents,
+		Currency:       "usd",
+		IdempotencyKey: body.IdempotencyKey,
+		Metadata: map[string]string{
+			"order_id": strconv.FormatUint(uint64(order.ID), 10),
+			"user_id":  strconv.FormatUint(userID, 10),
+		},
+	})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to initiate payment — please retry", "order_id": order.ID, "retryable": true})
+		return
+	}
+	app.DB.Model(&order).Update("payment_intent_id", piResult.PaymentIntentID)
+
+	response := gin.H{
+		"order_id":          order.ID,
+		"status":            order.Status,
+		"total_cents":       totalCents,
+		"client_secret":     piResult.ClientSecret,
+		"payment_intent_id": piResult.PaymentIntentID,
+	}
+	if len(warnings) > 0 {
+		response["warnings"] = warnings
+	}
+	c.JSON(http.StatusOK, response)
+}
+
 // CheckPurchaseStatus checks if the user has purchased a specific note.
 //
 // Useful for frontend to show "Buy" vs "View" button.
@@ -746,6 +929,50 @@ func (app *App) fulfilOrder(order *models.Order) error {
 			}
 		}
 
+		// Process creator payouts (async, best-effort — records created in DB for audit)
+		for _, item := range order.Items {
+			if item.PriceCents <= 0 {
+				continue // free notes: no payout
+			}
+			var note models.Note
+			if err := tx.Select("id", "creator_id").First(&note, item.NoteID).Error; err != nil {
+				continue
+			}
+			flatFee, mktFee, creatorAmt := models.CalculatePayoutSplit(item.PriceCents)
+			record := models.PayoutRecord{
+				OrderID:             order.ID,
+				NoteID:              item.NoteID,
+				CreatorID:           note.CreatorID,
+				BuyerID:             order.UserID,
+				GrossCents:          item.PriceCents,
+				FlatFeeCents:        flatFee,
+				MarketplaceFeeCents: mktFee,
+				CreatorPayoutCents:  creatorAmt,
+				Status:              models.PayoutRetained, // default: Notery keeps
+			}
+
+			// Check if creator has payout enabled
+			var creator models.User
+			if err := tx.Select("id", "stripe_account_id", "payout_enabled").
+				First(&creator, note.CreatorID).Error; err == nil &&
+				creator.PayoutEnabled && creator.StripeAccountID != "" && creatorAmt > 0 {
+				record.Status = models.PayoutPending
+			}
+
+			if err := tx.Create(&record).Error; err != nil {
+				purchaseLog.Log("PAYOUT", "Failed to create payout record", "noteID", item.NoteID, "error", err)
+			}
+
+			// Execute transfer asynchronously if creator is eligible
+			if record.Status == models.PayoutPending && app.Payment != nil {
+				recordID := record.ID
+				acctID := creator.StripeAccountID
+				amt := creatorAmt
+				group := fmt.Sprintf("order_%d", order.ID)
+				go app.executePayoutTransfer(recordID, amt, "usd", acctID, group)
+			}
+		}
+
 		return nil
 	})
 }
@@ -756,6 +983,25 @@ func (app *App) clearCartItems(ctx context.Context, userID uint64, items []model
 	for _, item := range items {
 		app.RDB.SRem(ctx, cartKey, strconv.FormatUint(uint64(item.NoteID), 10))
 	}
+}
+
+// executePayoutTransfer runs a Stripe Transfer for a payout record and updates its status.
+// This is called asynchronously from fulfilOrder.
+func (app *App) executePayoutTransfer(recordID uint, amountCents int64, currency, destAccountID, transferGroup string) {
+	ctx := context.Background()
+	transferID, err := app.Payment.CreateTransfer(ctx, amountCents, currency, destAccountID, transferGroup)
+	if err != nil {
+		purchaseLog.Log("PAYOUT", "Transfer failed", "recordID", recordID, "error", err)
+		app.DB.Model(&models.PayoutRecord{}).Where("id = ?", recordID).
+			Update("status", models.PayoutFailed)
+		return
+	}
+	app.DB.Model(&models.PayoutRecord{}).Where("id = ?", recordID).
+		Updates(map[string]interface{}{
+			"stripe_transfer_id": transferID,
+			"status":             models.PayoutCompleted,
+		})
+	purchaseLog.Log("PAYOUT", "Transfer completed", "recordID", recordID, "transferID", transferID)
 }
 
 // ----- ORDER STATUS & RECONCILIATION ENDPOINTS -----

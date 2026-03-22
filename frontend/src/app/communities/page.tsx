@@ -69,8 +69,17 @@ export default function CommunitiesPage() {
                         <div className="space-y-2">
                             {subnoteries.map((sub) => (
                                 <Link key={sub.id} href={`/communities/${sub.id}`}>
-                                    <Card className="p-4 hover:border-primary/30 transition-colors cursor-pointer">
-                                        <div className="flex items-center justify-between">
+                                    <Card className="overflow-hidden hover:border-primary/30 transition-colors cursor-pointer">
+                                        {sub.banner_url && (
+                                            <div className="h-20 w-full bg-muted overflow-hidden">
+                                                <img
+                                                    src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/v1/subnoteries/${sub.id}/banner`}
+                                                    alt={`Banner for n/${sub.name}`}
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            </div>
+                                        )}
+                                        <div className="p-4 flex items-center justify-between">
                                             <div className="flex-1 min-w-0">
                                                 <h3 className="font-semibold text-lg">
                                                     n/{sub.name}

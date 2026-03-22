@@ -64,15 +64,40 @@ export function VoteButtons({
         }
 
         if (loading) return;
-        setLoading(true);
 
+        // Save previous state for rollback
+        const prevUpvotes = upvotes;
+        const prevDownvotes = downvotes;
+        const prevVote = userVote;
+
+        // Optimistic update — apply immediately
+        if (userVote === direction) {
+            // Toggle off
+            setUserVote(null);
+            if (direction === "up") setUpvotes((v) => v - 1);
+            else setDownvotes((v) => v - 1);
+        } else {
+            // Switch or new vote
+            if (userVote === "up") setUpvotes((v) => v - 1);
+            else if (userVote === "down") setDownvotes((v) => v - 1);
+            setUserVote(direction);
+            if (direction === "up") setUpvotes((v) => v + 1);
+            else setDownvotes((v) => v + 1);
+        }
+
+        setLoading(true);
         try {
             const fn = direction === "up" ? upvoteNote : downvoteNote;
             const res = await fn(noteId);
+            // Reconcile with server state
             setUpvotes(res.upvotes);
             setDownvotes(res.downvotes);
-            setUserVote((prev) => (prev === direction ? null : direction));
+            setUserVote(res.user_vote === "up" ? "up" : res.user_vote === "down" ? "down" : null);
         } catch {
+            // Rollback to previous state
+            setUpvotes(prevUpvotes);
+            setDownvotes(prevDownvotes);
+            setUserVote(prevVote);
             toast({
                 title: "Vote failed",
                 description: "Could not register your vote. Try again.",
@@ -95,7 +120,7 @@ export function VoteButtons({
         >
             <button
                 onClick={() => handleVote("up")}
-                disabled={loading || isDisabled}
+                disabled={isDisabled}
                 className={cn(
                     "p-1 rounded hover:bg-accent transition-colors",
                     isDisabled && "opacity-50 cursor-not-allowed",
@@ -121,7 +146,7 @@ export function VoteButtons({
 
             <button
                 onClick={() => handleVote("down")}
-                disabled={loading || isDisabled}
+                disabled={isDisabled}
                 className={cn(
                     "p-1 rounded hover:bg-accent transition-colors",
                     isDisabled && "opacity-50 cursor-not-allowed",
