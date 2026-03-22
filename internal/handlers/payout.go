@@ -89,9 +89,10 @@ func (app *App) StripeStatus(c *gin.Context) {
 	}
 
 	resp := gin.H{
-		"has_account":    user.StripeAccountID != "",
-		"payout_enabled": user.PayoutEnabled,
+		"has_account":         user.StripeAccountID != "",
+		"payout_enabled":      user.PayoutEnabled,
 		"onboarding_complete": user.StripeOnboardingComplete,
+		"account_id":          user.StripeAccountID,
 	}
 
 	// If they have an account and payment service is available, refresh from Stripe

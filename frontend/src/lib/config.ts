@@ -17,3 +17,7 @@ export const DEFAULT_PAGE_SIZE = 25;
 
 /** Max pagination limit (server enforced). */
 export const MAX_PAGE_SIZE = 100;
+
+/** Stripe publishable key for client-side payment confirmation. */
+export const STRIPE_PUBLISHABLE_KEY =
+    process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";

@@ -87,6 +87,7 @@ Copy `.env.example` and configure. Key groups:
 | **CORS** | `CORS_ORIGINS` | Comma-separated origins |
 | **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Omit for dev auto-verify |
 | **Stripe** | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Omit for dev auto-fulfil |
+| **Stripe (frontend)** | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Required for card payments |
 | **OAuth** | `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET` | Optional |
 | **Server** | `PORT`, `TRUSTED_PROXIES`, `BASE_URL`, `FRONTEND_URL` | Port defaults to 8080 |
 

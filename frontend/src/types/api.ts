@@ -503,13 +503,14 @@ export interface BanRequest {
 // ─── Stripe Connect / Payouts ─────────────────────────────────────────────────
 
 export interface StripeConnectResponse {
-    url: string;
+    onboarding_url: string;
     account_id: string;
 }
 
 export interface StripeStatusResponse {
+    has_account: boolean;
     onboarding_complete: boolean;
-    payouts_enabled: boolean;
+    payout_enabled: boolean;
     account_id: string;
 }
 

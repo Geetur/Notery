@@ -7,6 +7,7 @@
 import { CommentSection } from "@/components/comments";
 import { VoteButtons } from "@/components/feed/vote-buttons";
 import { PDFViewer } from "@/components/pdf-viewer";
+import { StripeCheckout } from "@/components/stripe-checkout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -46,6 +47,12 @@ export default function NoteDetailPage() {
     const [approving, setApproving] = useState(false);
     const [rejecting, setRejecting] = useState(false);
     const queryClient = useQueryClient();
+
+    // Stripe payment dialog state
+    const [stripeOpen, setStripeOpen] = useState(false);
+    const [stripeClientSecret, setStripeClientSecret] = useState("");
+    const [stripeOrderId, setStripeOrderId] = useState(0);
+    const [stripeTotalCents, setStripeTotalCents] = useState(0);
 
     const {
         data: note,
@@ -112,11 +119,11 @@ export default function NoteDetailPage() {
 
                 toast({ title: "Purchase successful!", description: "You now have full access to this note." });
             } else if (res.client_secret) {
-                // Stripe payment flow — order created but payment pending
-                toast({
-                    title: "Payment required",
-                    description: "Complete payment to access this note.",
-                });
+                // Stripe payment flow — open checkout dialog
+                setStripeClientSecret(res.client_secret);
+                setStripeOrderId(res.order_id);
+                setStripeTotalCents(res.total_cents ?? note?.price ?? 0);
+                setStripeOpen(true);
             } else {
                 toast({ title: "Purchase initiated", description: "Your order is being processed." });
             }
@@ -472,6 +479,20 @@ export default function NoteDetailPage() {
                     )}
                 </Card>
             </div>
+
+            {/* Stripe payment dialog for single-note purchase */}
+            <StripeCheckout
+                open={stripeOpen}
+                onClose={() => setStripeOpen(false)}
+                clientSecret={stripeClientSecret}
+                totalCents={stripeTotalCents}
+                orderId={stripeOrderId}
+                onPaymentSuccess={() => {
+                    setStripeOpen(false);
+                    queryClient.invalidateQueries({ queryKey: ["note", noteId] });
+                    toast({ title: "Payment successful", description: "You now have full access to this note." });
+                }}
+            />
         </div>
     );
 }

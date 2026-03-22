@@ -1,6 +1,7 @@
 // page.tsx — Shopping cart page with checkbox selection, pagination, and buy selected/buy all.
 "use client";
 
+import { StripeCheckout } from "@/components/stripe-checkout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -42,6 +43,12 @@ export default function CartPage() {
     const [checkingOut, setCheckingOut] = useState(false);
     const [selected, setSelected] = useState<Set<number>>(new Set());
     const [page, setPage] = useState(1);
+
+    // Stripe payment dialog state
+    const [stripeOpen, setStripeOpen] = useState(false);
+    const [stripeClientSecret, setStripeClientSecret] = useState("");
+    const [stripeOrderId, setStripeOrderId] = useState(0);
+    const [stripeTotalCents, setStripeTotalCents] = useState(0);
 
     const { data: cartData, isLoading } = useQuery({
         queryKey: ["cart"],
@@ -134,10 +141,10 @@ export default function CartPage() {
                 await invalidateAfterPurchase();
                 router.push("/purchases");
             } else if (res.client_secret) {
-                toast({
-                    title: "Payment initiated",
-                    description: "Complete payment to finalize.",
-                });
+                setStripeClientSecret(res.client_secret);
+                setStripeOrderId(res.order_id);
+                setStripeTotalCents(res.total_cents);
+                setStripeOpen(true);
             }
         } catch {
             toast({ title: "Checkout failed", variant: "destructive" });
@@ -165,10 +172,10 @@ export default function CartPage() {
                 await invalidateAfterPurchase();
                 router.push("/purchases");
             } else if (res.client_secret) {
-                toast({
-                    title: "Payment initiated",
-                    description: "Complete payment to finalize.",
-                });
+                setStripeClientSecret(res.client_secret);
+                setStripeOrderId(res.order_id);
+                setStripeTotalCents(res.total_cents);
+                setStripeOpen(true);
             }
         } catch {
             toast({ title: "Checkout failed", variant: "destructive" });
@@ -251,8 +258,8 @@ export default function CartPage() {
                             <Card
                                 key={note.id}
                                 className={`border-border transition-colors ${selected.has(note.id)
-                                        ? "ring-1 ring-primary/50 bg-primary/5"
-                                        : ""
+                                    ? "ring-1 ring-primary/50 bg-primary/5"
+                                    : ""
                                     }`}
                             >
                                 <CardContent className="flex items-center gap-3 p-3">
@@ -381,6 +388,30 @@ export default function CartPage() {
                         </CardContent>
                     </Card>
                 </>
+            )}
+
+            {/* Stripe payment dialog */}
+            {stripeClientSecret && (
+                <StripeCheckout
+                    open={stripeOpen}
+                    onClose={() => {
+                        setStripeOpen(false);
+                        setStripeClientSecret("");
+                    }}
+                    clientSecret={stripeClientSecret}
+                    totalCents={stripeTotalCents}
+                    orderId={stripeOrderId}
+                    onPaymentSuccess={async () => {
+                        toast({
+                            title: "Payment successful!",
+                            description: "Your notes are now available.",
+                        });
+                        await invalidateAfterPurchase();
+                        setStripeOpen(false);
+                        setStripeClientSecret("");
+                        router.push("/purchases");
+                    }}
+                />
             )}
         </div>
     );
