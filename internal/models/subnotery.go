@@ -15,6 +15,15 @@ import (
 	"time"
 )
 
+const (
+	// MaxSubnoteryDescriptionLength is the maximum allowed length for a subnotery description (in runes).
+	MaxSubnoteryDescriptionLength = 2000
+	// MaxSubnoteryRulesLength is the maximum allowed length for subnotery rules (in runes).
+	MaxSubnoteryRulesLength = 5000
+	// MaxSubnoteryNameLength is the maximum allowed length for a subnotery name (in runes).
+	MaxSubnoteryNameLength = 100
+)
+
 // Subnotery represents a note community with designated admins and members.
 //
 // Fields:

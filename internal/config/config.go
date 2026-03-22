@@ -10,6 +10,11 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// IsProduction returns true when the ENVIRONMENT env var is set to "production".
+func IsProduction() bool {
+	return strings.EqualFold(os.Getenv("ENVIRONMENT"), "production")
+}
+
 // Config holds all application configuration values loaded from environment variables.
 type Config struct {
 	// JWTSecret is the HMAC key used to sign and verify JWT tokens.
@@ -83,10 +88,32 @@ func Load() *Config {
 	}
 
 	if cfg.JWTSecret == "" {
+		if IsProduction() {
+			log.Fatal("FATAL: JWT_SECRET is not set — refusing to start in production")
+		}
 		log.Println("WARNING: JWT_SECRET is not set — authentication will fail")
 	}
 	if cfg.StripeSecretKey == "" {
 		log.Println("INFO: STRIPE_SECRET_KEY is not set — payments will auto-fulfil (development mode)")
+	}
+	if cfg.StripeWebhookSecret == "" && cfg.StripeSecretKey != "" {
+		if IsProduction() {
+			log.Fatal("FATAL: STRIPE_WEBHOOK_SECRET is not set while Stripe is active — refusing to start in production")
+		}
+		log.Println("WARNING: STRIPE_WEBHOOK_SECRET is not set — webhook verification disabled")
+	}
+
+	// In production, URLs must be explicitly configured.
+	if IsProduction() {
+		if baseURL == "" || strings.HasPrefix(baseURL, "http://localhost") {
+			log.Fatal("FATAL: BASE_URL must be set to a public URL in production")
+		}
+		if frontendURL == "" || strings.HasPrefix(frontendURL, "http://localhost") {
+			log.Fatal("FATAL: FRONTEND_URL must be set to a public URL in production")
+		}
+		if os.Getenv("CORS_ORIGINS") == "" {
+			log.Fatal("FATAL: CORS_ORIGINS must be set in production")
+		}
 	}
 
 	return cfg

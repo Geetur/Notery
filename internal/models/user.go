@@ -40,6 +40,10 @@ type User struct {
 	PostKarma    float64 `json:"post_karma" gorm:"default:0;not null"`
 	CommentKarma float64 `json:"comment_karma" gorm:"default:0;not null"`
 
+	// ----- Terms of Service -----
+	AgreedToTerms   bool       `json:"-" gorm:"default:false"`
+	AgreedToTermsAt *time.Time `json:"-"`
+
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }

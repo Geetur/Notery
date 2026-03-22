@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/meilisearch/meilisearch-go"
@@ -91,6 +92,18 @@ func (app *App) CreateNote(c *gin.Context) {
 	if req.Title == "" || req.SubnoteryName == "" || req.Price < 0 {
 		noteLog.Log("CREATE", "Validation failed: missing required fields")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Title, SubnoteryName, and Price are required"})
+		return
+	}
+	if utf8.RuneCountInString(req.Title) > models.MaxNoteTitleLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title too long", "max": models.MaxNoteTitleLength})
+		return
+	}
+	if utf8.RuneCountInString(req.Description) > models.MaxNoteDescriptionLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Description too long", "max": models.MaxNoteDescriptionLength})
+		return
+	}
+	if utf8.RuneCountInString(req.SubnoteryName) > models.MaxSubnoteryNameLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Subnotery name too long", "max": models.MaxSubnoteryNameLength})
 		return
 	}
 

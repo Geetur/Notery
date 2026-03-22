@@ -7,10 +7,12 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"github.com/Geetur/Notery/internal/config"
 	"github.com/Geetur/Notery/internal/models"
 )
 
@@ -43,20 +45,38 @@ func connect() (*gorm.DB, error) {
 	// NOTE: godotenv.Load() is called once in config.Load() at startup.
 	// No need to reload here.
 
-	// format the DSN string, fetch local environment variables or use defaults
-	// make sure to replace ssl mode to required in production
+	// Default sslmode to "require" in production, "disable" in development.
+	defaultSSL := "disable"
+	if config.IsProduction() {
+		defaultSSL = "require"
+	}
+
 	DSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
 		getenv("DB_HOST", "localhost"),
 		getenv("DB_USER", "admin"),
 		getenv("DB_PASSWORD", ""),
 		getenv("DB_NAME", "notery_db"),
 		getenv("DB_PORT", "5432"),
-		getenv("DB_SSLMODE", "disable"),
+		getenv("DB_SSLMODE", defaultSSL),
 		getenv("DB_TIMEZONE", "UTC"),
 	)
 
 	db, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
-	return db, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Configure connection pool to prevent connection exhaustion at scale.
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying *sql.DB: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(getenvInt("DB_MAX_OPEN_CONNS", 25))
+	sqlDB.SetMaxIdleConns(getenvInt("DB_MAX_IDLE_CONNS", 5))
+	sqlDB.SetConnMaxLifetime(time.Duration(getenvInt("DB_CONN_MAX_LIFETIME_SEC", 300)) * time.Second)
+	sqlDB.SetConnMaxIdleTime(time.Duration(getenvInt("DB_CONN_MAX_IDLE_SEC", 60)) * time.Second)
+
+	return db, nil
 }
 
 // migrate applies database schema migrations using GORM AutoMigrate.
@@ -121,6 +141,36 @@ func migrate(db *gorm.DB) error {
 		ON users(display_name) WHERE display_name != ''
 	`).Error; err != nil {
 		log.Printf("Warning: Could not create partial unique index on users.display_name (may already exist): %v", err)
+	}
+
+	// ── Performance indexes ────────────────────────────────────────────────
+	// These indexes accelerate the most common query patterns at scale.
+	perfIndexes := []string{
+		// Note listing (approved feed, pending queue)
+		`CREATE INDEX IF NOT EXISTS idx_notes_status_created ON notes(status, created_at DESC)`,
+		// Community note browsing
+		`CREATE INDEX IF NOT EXISTS idx_notes_subnotery_status ON notes(subnotery_id, status)`,
+		// Comment tree building
+		`CREATE INDEX IF NOT EXISTS idx_comments_note_parent ON comments(note_id, parent_id)`,
+		// My comments listing
+		`CREATE INDEX IF NOT EXISTS idx_comments_user_created ON comments(user_id, created_at DESC)`,
+		// Vote lookups (does user have existing vote on this note?)
+		`CREATE INDEX IF NOT EXISTS idx_votes_user_note ON votes(user_id, note_id)`,
+		// Email lookup for login/OAuth
+		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+		// Bookmark listing
+		`CREATE INDEX IF NOT EXISTS idx_bookmarks_user_created ON bookmarks(user_id, created_at DESC)`,
+		// Ban checks
+		`CREATE INDEX IF NOT EXISTS idx_bans_user_subnotery ON bans(user_id, subnotery_id)`,
+		// Order history
+		`CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC)`,
+		// Notification listing
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read, created_at DESC)`,
+	}
+	for _, sql := range perfIndexes {
+		if err := db.Exec(sql).Error; err != nil {
+			log.Printf("Warning: index creation skipped: %v", err)
+		}
 	}
 
 	// Backfill materialized paths for comments that don't have one yet.

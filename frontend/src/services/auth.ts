@@ -19,6 +19,7 @@ export async function signup(
         email,
         password,
         username,
+        agreed_to_terms: true,
     } satisfies AuthRequest);
     setTokens(data.access_token, data.refresh_token);
     return data;

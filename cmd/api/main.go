@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -60,7 +61,11 @@ func main() {
 
 	// ── Router & Global Middleware ─────────────────────────────────────────
 	router := gin.Default()
-	_ = router.SetTrustedProxies([]string{"127.0.0.1"})
+	trustedProxies := []string{"127.0.0.1"}
+	if tp := os.Getenv("TRUSTED_PROXIES"); tp != "" {
+		trustedProxies = strings.Split(tp, ",")
+	}
+	_ = router.SetTrustedProxies(trustedProxies)
 	router.Use(middleware.SecurityHeaders())
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,
@@ -91,7 +96,47 @@ func main() {
 
 	// ── Health ─────────────────────────────────────────────────────────────
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "OK", "message": "Notery API is alive"})
+		status := http.StatusOK
+		deps := gin.H{}
+
+		// Postgres
+		if sqlDB, err := db.DB(); err != nil {
+			deps["postgres"] = "error: " + err.Error()
+			status = http.StatusServiceUnavailable
+		} else if err := sqlDB.Ping(); err != nil {
+			deps["postgres"] = "unreachable: " + err.Error()
+			status = http.StatusServiceUnavailable
+		} else {
+			deps["postgres"] = "ok"
+		}
+
+		// Redis
+		if redisClient != nil {
+			if err := redisClient.Ping(c.Request.Context()).Err(); err != nil {
+				deps["redis"] = "unreachable: " + err.Error()
+				status = http.StatusServiceUnavailable
+			} else {
+				deps["redis"] = "ok"
+			}
+		} else {
+			deps["redis"] = "not configured"
+		}
+
+		// Meilisearch
+		if meiliClient != nil {
+			if health, err := meiliClient.Health(); err != nil {
+				deps["meilisearch"] = "unreachable: " + err.Error()
+				// Meilisearch is optional — don't downgrade status
+			} else if health.Status != "available" {
+				deps["meilisearch"] = "unhealthy: " + health.Status
+			} else {
+				deps["meilisearch"] = "ok"
+			}
+		} else {
+			deps["meilisearch"] = "not configured"
+		}
+
+		c.JSON(status, gin.H{"status": status == http.StatusOK, "dependencies": deps})
 	})
 
 	api := router.Group("/api/v1")
@@ -128,29 +173,36 @@ func main() {
 	// Stripe webhook (secured via Stripe signature, not JWT)
 	api.POST("/webhooks/stripe", app.HandleStripeWebhook)
 
-	// ── Public Endpoints (optional auth for personalization) ───────────────
+	// ── Public Endpoints (optional auth, rate-limited reads) ──────────────
 	optAuth := middleware.OptionalAuth(cfg.JWTSecret)
-	api.GET("/feed/hot", optAuth, app.GetHotFeed)
-	api.GET("/notes/:id/comments", optAuth, app.GetNoteComments)
-	api.GET("/comments/:comment_id", optAuth, app.GetComment)
-	api.GET("/search", optAuth, app.SearchAll)
-	api.GET("/users/:id/profile", app.GetUserProfile)
-	api.GET("/users/:id/avatar", app.GetAvatar)
-	api.GET("/users/:id/banner", app.GetUserBanner)
-	api.GET("/users/:id/notes", optAuth, app.GetUserNotes)
-	api.GET("/users/:id/comments", app.GetUserComments)
-	api.GET("/notes/:id/thumbnail", app.GetThumbnail)
+	readPublic := api.Group("", optAuth)
+	if redisClient != nil {
+		readPublic.Use(middleware.RateLimit(redisClient, middleware.DefaultReadRateLimit, "read:"))
+	}
+	readPublic.GET("/feed/hot", app.GetHotFeed)
+	readPublic.GET("/notes/:id/comments", app.GetNoteComments)
+	readPublic.GET("/comments/:comment_id", app.GetComment)
+	readPublic.GET("/search", app.SearchAll)
+	readPublic.GET("/users/:id/profile", app.GetUserProfile)
+	readPublic.GET("/users/:id/avatar", app.GetAvatar)
+	readPublic.GET("/users/:id/banner", app.GetUserBanner)
+	readPublic.GET("/users/:id/notes", app.GetUserNotes)
+	readPublic.GET("/users/:id/comments", app.GetUserComments)
+	readPublic.GET("/notes/:id/thumbnail", app.GetThumbnail)
 
-	// Subnotery browsing (public)
-	api.GET("/subnoteries", app.ListSubnoteries)
-	api.GET("/subnoteries/:subnotery_id", optAuth, app.GetSubnoteryDetail)
-	api.GET("/subnoteries/:subnotery_id/notes", optAuth, app.GetSubnoteryNotes)
-	api.GET("/subnoteries/:subnotery_id/banner", app.GetSubnoteryBanner)
-	api.GET("/subnoteries/:subnotery_id/members", app.GetSubnoteryMembers)
+	// Subnotery browsing (public, rate-limited)
+	readPublic.GET("/subnoteries", app.ListSubnoteries)
+	readPublic.GET("/subnoteries/:subnotery_id", app.GetSubnoteryDetail)
+	readPublic.GET("/subnoteries/:subnotery_id/notes", app.GetSubnoteryNotes)
+	readPublic.GET("/subnoteries/:subnotery_id/banner", app.GetSubnoteryBanner)
+	readPublic.GET("/subnoteries/:subnotery_id/members", app.GetSubnoteryMembers)
 
 	// ── Authenticated Read-Only (login required, no verification) ──────────
 	// Unverified users can browse, view profile, check purchases — read-only.
 	readOnly := api.Group("", middleware.RequireAuth(cfg.JWTSecret))
+	if redisClient != nil {
+		readOnly.Use(middleware.RateLimit(redisClient, middleware.DefaultReadRateLimit, "read:"))
+	}
 	readOnly.GET("/notes/:id", app.GetNoteByID)
 	readOnly.GET("/notes/approved", app.GetApprovedNotes)
 	readOnly.GET("/notes/:id/content", app.GetNotePDFContent)
@@ -263,8 +315,13 @@ func main() {
 	admin.DELETE("/admin/bans/:uid", app.RemoveSiteWideBan)
 
 	// ── Server Start & Graceful Shutdown ───────────────────────────────────
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	srv := &http.Server{
-		Addr:         ":8080",
+		Addr:         ":" + port,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -272,7 +329,7 @@ func main() {
 	}
 
 	go func() {
-		log.Println("server starting on :8080")
+		log.Printf("server starting on :%s", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server failed: %v", err)
 		}
@@ -288,5 +345,24 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("forced shutdown: %v", err)
 	}
+
+	// Close database connection pool.
+	if sqlDB, err := db.DB(); err == nil {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("error closing database: %v", err)
+		} else {
+			log.Println("database connection closed.")
+		}
+	}
+
+	// Close Redis connection.
+	if redisClient != nil {
+		if err := redisClient.Close(); err != nil {
+			log.Printf("error closing redis: %v", err)
+		} else {
+			log.Println("redis connection closed.")
+		}
+	}
+
 	log.Println("server stopped.")
 }

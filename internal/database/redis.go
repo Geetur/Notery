@@ -3,9 +3,13 @@ package database
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Geetur/Notery/internal/config"
 )
 
 // InitRedis initializes a Redis client with configuration from environment variables.
@@ -13,11 +17,22 @@ import (
 func InitRedis() (*redis.Client, error) {
 	// NOTE: godotenv.Load() is called once in config.Load() at startup.
 
-	client := redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:     getenv("REDIS_ADDR", "localhost:6379"),
 		Password: getenv("REDIS_PASSWORD", ""),
 		DB:       getenvInt("REDIS_DB", 0),
-	})
+	}
+
+	// Enable TLS if configured (required for most managed Redis providers)
+	if strings.EqualFold(getenv("REDIS_TLS_ENABLED", ""), "true") {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	if config.IsProduction() && opts.Password == "" {
+		log.Println("WARNING: REDIS_PASSWORD is empty in production")
+	}
+
+	client := redis.NewClient(opts)
 	if err := TestRedisConnection(client); err != nil {
 		return nil, err
 	}

@@ -280,19 +280,21 @@ func TestSignup_DuplicateUsername(t *testing.T) {
 
 	// First signup
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "first@test.com",
-			"password": "securepass123",
-			"username": "dupname",
+		jsonBody(map[string]interface{}{
+			"email":           "first@test.com",
+			"password":        "Securepass1",
+			"username":        "dupname",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
 
 	// Second signup with same username should fail
 	w2 := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "second@test.com",
-			"password": "securepass123",
-			"username": "dupname",
+		jsonBody(map[string]interface{}{
+			"email":           "second@test.com",
+			"password":        "Securepass1",
+			"username":        "dupname",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w2, http.StatusConflict)
 }
@@ -307,10 +309,11 @@ func TestSignup_DevModeAutoVerify(t *testing.T) {
 	app.Mailer = &email.LogMailer{}
 
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "devuser@test.com",
-			"password": "securepass123",
-			"username": "devuser",
+		jsonBody(map[string]interface{}{
+			"email":           "devuser@test.com",
+			"password":        "Securepass1",
+			"username":        "devuser",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
 
@@ -326,10 +329,11 @@ func TestSignup_ProductionSendsVerificationEmail(t *testing.T) {
 	app, mock := testAppWithMailer(t)
 
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "produser@test.com",
-			"password": "securepass123",
-			"username": "produser",
+		jsonBody(map[string]interface{}{
+			"email":           "produser@test.com",
+			"password":        "Securepass1",
+			"username":        "produser",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
 

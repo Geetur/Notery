@@ -13,6 +13,11 @@ const (
 	StatusApproved NoteStatus = "Approved"
 	// StatusRejected means the note was declined by an admin.
 	StatusRejected NoteStatus = "Rejected"
+
+	// MaxNoteTitleLength is the maximum allowed length for a note title (in runes).
+	MaxNoteTitleLength = 300
+	// MaxNoteDescriptionLength is the maximum allowed length for a note description (in runes).
+	MaxNoteDescriptionLength = 10000
 )
 
 // Note represents a note entity in the system.

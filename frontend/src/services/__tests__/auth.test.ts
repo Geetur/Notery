@@ -53,6 +53,7 @@ describe("signup", () => {
             email: "user@test.com",
             password: "pass1234",
             username: "user1",
+            agreed_to_terms: true,
         });
         expect(result).toEqual(mockResponse);
     });

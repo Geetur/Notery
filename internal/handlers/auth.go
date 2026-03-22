@@ -46,9 +46,10 @@ var authLog = helpers.AuthLog
 
 // AuthRequest represents the JSON body for signup and login requests.
 type AuthRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
-	Username string `json:"username"` // optional on signup, ignored on login
+	Email          string `json:"email" binding:"required,email"`
+	Password       string `json:"password" binding:"required"`
+	Username       string `json:"username"`         // optional on signup, ignored on login
+	AgreedToTerms  bool   `json:"agreed_to_terms"` // required on signup
 }
 
 // ----- TOKEN ISSUANCE HELPERS -----
@@ -116,8 +117,15 @@ func (app *App) Signup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters"})
 		return
 	}
+	if !hasPasswordComplexity(authReq.Password) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must contain at least one uppercase letter, one lowercase letter, and one digit"})
+		return
+	}
 
-	// Check username uniqueness before creating user
+	if !authReq.AgreedToTerms {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "You must agree to the Terms of Service"})
+		return
+	}
 	if authReq.Username != "" {
 		var usernameCount int64
 		app.DB.Model(&models.User{}).Where("username = ?", authReq.Username).Count(&usernameCount)
@@ -129,6 +137,9 @@ func (app *App) Signup(c *gin.Context) {
 	}
 
 	user := &models.User{Email: authReq.Email, Username: authReq.Username}
+	now := time.Now()
+	user.AgreedToTerms = true
+	user.AgreedToTermsAt = &now
 	if err := user.SetPassword(authReq.Password); err != nil {
 		authLog.Log("SIGNUP", "Failed to hash password", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
@@ -488,6 +499,11 @@ func (app *App) ResetPassword(c *gin.Context) {
 		return
 	}
 
+	if !hasPasswordComplexity(req.NewPassword) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must contain at least one uppercase letter, one lowercase letter, and one digit"})
+		return
+	}
+
 	hash := models.HashToken(req.Token)
 	var pr models.PasswordReset
 	if err := app.DB.Where("token_hash = ? AND used = ?", hash, false).First(&pr).Error; err != nil {
@@ -549,6 +565,11 @@ func (app *App) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	if !hasPasswordComplexity(req.NewPassword) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must contain at least one uppercase letter, one lowercase letter, and one digit"})
+		return
+	}
+
 	if req.CurrentPassword == req.NewPassword {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "New password must be different from current password"})
 		return
@@ -577,4 +598,21 @@ func (app *App) ChangePassword(c *gin.Context) {
 
 	authLog.Log("CHANGE_PW", "password changed and sessions revoked", "user", userID)
 	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully. All other sessions have been revoked."})
+}
+
+// hasPasswordComplexity checks that a password contains at least one uppercase
+// letter, one lowercase letter, and one digit. Length is checked separately.
+func hasPasswordComplexity(pw string) bool {
+	var hasUpper, hasLower, hasDigit bool
+	for _, r := range pw {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		}
+	}
+	return hasUpper && hasLower && hasDigit
 }

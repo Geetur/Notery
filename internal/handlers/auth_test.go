@@ -26,10 +26,11 @@ func TestSignup_HappyPath(t *testing.T) {
 	app, mock := testAppWithMailer(t)
 
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "new@test.com",
-			"password": "securepass123",
-			"username": "newuser",
+		jsonBody(map[string]interface{}{
+			"email":           "new@test.com",
+			"password":        "Securepass1",
+			"username":        "newuser",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
 	r := respJSON(t, w)
@@ -55,8 +56,9 @@ func TestSignup_HappyPath(t *testing.T) {
 func TestSignup_MissingEmail(t *testing.T) {
 	app := testApp(t)
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"password": "securepass123",
+		jsonBody(map[string]interface{}{
+			"password":        "Securepass1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -64,8 +66,9 @@ func TestSignup_MissingEmail(t *testing.T) {
 func TestSignup_MissingPassword(t *testing.T) {
 	app := testApp(t)
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email": "test@test.com",
+		jsonBody(map[string]interface{}{
+			"email":           "test@test.com",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -73,9 +76,10 @@ func TestSignup_MissingPassword(t *testing.T) {
 func TestSignup_InvalidEmail(t *testing.T) {
 	app := testApp(t)
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "not-an-email",
-			"password": "securepass123",
+		jsonBody(map[string]interface{}{
+			"email":           "not-an-email",
+			"password":        "Securepass1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -84,15 +88,17 @@ func TestSignup_DuplicateEmail(t *testing.T) {
 	app, _ := testAppWithMailer(t)
 
 	serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "dupe@test.com",
-			"password": "securepass123",
+		jsonBody(map[string]interface{}{
+			"email":           "dupe@test.com",
+			"password":        "Securepass1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "dupe@test.com",
-			"password": "differentpass",
+		jsonBody(map[string]interface{}{
+			"email":           "dupe@test.com",
+			"password":        "Different1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusInternalServerError)
 }
@@ -106,9 +112,10 @@ func TestSignup_EmptyBody(t *testing.T) {
 func TestSignup_UsernameOptional(t *testing.T) {
 	app, _ := testAppWithMailer(t)
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "nouser@test.com",
-			"password": "securepass123",
+		jsonBody(map[string]interface{}{
+			"email":           "nouser@test.com",
+			"password":        "Securepass1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
 }
@@ -116,9 +123,10 @@ func TestSignup_UsernameOptional(t *testing.T) {
 func TestSignup_PasswordTooShort(t *testing.T) {
 	app := testApp(t)
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "short@test.com",
-			"password": "1234567",
+		jsonBody(map[string]interface{}{
+			"email":           "short@test.com",
+			"password":        "1234567",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusBadRequest)
 	r := respJSON(t, w)
@@ -130,9 +138,10 @@ func TestSignup_PasswordTooShort(t *testing.T) {
 func TestSignup_PasswordExactly8Chars(t *testing.T) {
 	app, _ := testAppWithMailer(t)
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "exact8@test.com",
-			"password": "12345678",
+		jsonBody(map[string]interface{}{
+			"email":           "exact8@test.com",
+			"password":        "Abcdefg1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
 }
@@ -143,9 +152,10 @@ func TestSignup_NoMailer_StillSucceeds(t *testing.T) {
 	// Mailer is nil — signup should still succeed without sending email
 
 	w := serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "nomailer@test.com",
-			"password": "securepass123",
+		jsonBody(map[string]interface{}{
+			"email":           "nomailer@test.com",
+			"password":        "Securepass1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
 	r := respJSON(t, w)
@@ -248,10 +258,11 @@ func TestSignup_PasswordStoredAsHash(t *testing.T) {
 	app, _ := testAppWithMailer(t)
 
 	serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "hashcheck@test.com",
-			"password": "securepass123",
-			"username": "hashcheck",
+		jsonBody(map[string]interface{}{
+			"email":           "hashcheck@test.com",
+			"password":        "Securepass1",
+			"username":        "hashcheck",
+			"agreed_to_terms": true,
 		}), app.Signup)
 
 	var user models.User
@@ -259,8 +270,22 @@ func TestSignup_PasswordStoredAsHash(t *testing.T) {
 	if user.Hash == "" {
 		t.Fatal("password hash should be stored")
 	}
-	if user.Hash == "securepass123" {
+	if user.Hash == "Securepass1" {
 		t.Fatal("password must not be stored in plaintext")
+	}
+}
+
+func TestSignup_MissingTermsAgreement(t *testing.T) {
+	app := testApp(t)
+	w := serve("POST", "/signup", "/signup",
+		jsonBody(map[string]interface{}{
+			"email":    "notos@test.com",
+			"password": "Securepass1",
+		}), app.Signup)
+	assertStatus(t, w, http.StatusBadRequest)
+	r := respJSON(t, w)
+	if r["error"] != "You must agree to the Terms of Service" {
+		t.Fatalf("unexpected error: %v", r["error"])
 	}
 }
 
@@ -270,9 +295,10 @@ func TestSignup_MultipleUsers_UniqueIDs(t *testing.T) {
 	users := make(map[float64]bool)
 	for i := 0; i < 5; i++ {
 		w := serve("POST", "/signup", "/signup",
-			jsonBody(map[string]string{
-				"email":    fmt.Sprintf("multi%d@test.com", i),
-				"password": "securepass123",
+			jsonBody(map[string]interface{}{
+				"email":           fmt.Sprintf("multi%d@test.com", i),
+				"password":        "Securepass1",
+				"agreed_to_terms": true,
 			}), app.Signup)
 		assertStatus(t, w, http.StatusCreated)
 		r := respJSON(t, w)
@@ -464,9 +490,10 @@ func TestVerifyEmail_HappyPath(t *testing.T) {
 
 	// Signup to trigger verification email
 	serve("POST", "/signup", "/signup",
-		jsonBody(map[string]string{
-			"email":    "verify@test.com",
-			"password": "securepass123",
+		jsonBody(map[string]interface{}{
+			"email":           "verify@test.com",
+			"password":        "Securepass1",
+			"agreed_to_terms": true,
 		}), app.Signup)
 
 	// Extract token from the email body (it's in the URL)
@@ -606,7 +633,7 @@ func TestResetPassword_HappyPath(t *testing.T) {
 	w := serve("POST", "/reset", "/reset",
 		jsonBody(map[string]string{
 			"token":        rawToken,
-			"new_password": "newpassword123",
+			"new_password": "Newpassword1",
 		}), app.ResetPassword)
 	assertStatus(t, w, http.StatusOK)
 
@@ -616,7 +643,7 @@ func TestResetPassword_HappyPath(t *testing.T) {
 	if user.CheckPassword("test123") {
 		t.Fatal("old password should not work after reset")
 	}
-	if !user.CheckPassword("newpassword123") {
+	if !user.CheckPassword("Newpassword1") {
 		t.Fatal("new password should work after reset")
 	}
 }
@@ -626,7 +653,7 @@ func TestResetPassword_InvalidToken(t *testing.T) {
 	w := serve("POST", "/reset", "/reset",
 		jsonBody(map[string]string{
 			"token":        "invalid-token",
-			"new_password": "newpassword123",
+			"new_password": "Newpassword1",
 		}), app.ResetPassword)
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -646,7 +673,7 @@ func TestResetPassword_ExpiredToken(t *testing.T) {
 	w := serve("POST", "/reset", "/reset",
 		jsonBody(map[string]string{
 			"token":        rawToken,
-			"new_password": "newpassword123",
+			"new_password": "Newpassword1",
 		}), app.ResetPassword)
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -667,7 +694,7 @@ func TestResetPassword_UsedToken(t *testing.T) {
 	w := serve("POST", "/reset", "/reset",
 		jsonBody(map[string]string{
 			"token":        rawToken,
-			"new_password": "newpassword123",
+			"new_password": "Newpassword1",
 		}), app.ResetPassword)
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -708,7 +735,7 @@ func TestResetPassword_RevokesAllSessions(t *testing.T) {
 	serve("POST", "/reset", "/reset",
 		jsonBody(map[string]string{
 			"token":        rawToken,
-			"new_password": "newpassword123",
+			"new_password": "Newpassword1",
 		}), app.ResetPassword)
 
 	// Old refresh token should be revoked
@@ -728,14 +755,14 @@ func TestChangePassword_HappyPath(t *testing.T) {
 	w := serve("POST", "/change", "/change",
 		jsonBody(map[string]string{
 			"current_password": "test123",
-			"new_password":     "newpassword123",
+			"new_password":     "Newpassword1",
 		}), app.ChangePassword, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
 
 	// Verify new password works
 	var user models.User
 	app.DB.First(&user, uid)
-	if !user.CheckPassword("newpassword123") {
+	if !user.CheckPassword("Newpassword1") {
 		t.Fatal("new password should work")
 	}
 }
@@ -747,7 +774,7 @@ func TestChangePassword_WrongCurrentPassword(t *testing.T) {
 	w := serve("POST", "/change", "/change",
 		jsonBody(map[string]string{
 			"current_password": "wrongpassword",
-			"new_password":     "newpassword123",
+			"new_password":     "Newpassword1",
 		}), app.ChangePassword, authMW(uid))
 	assertStatus(t, w, http.StatusUnauthorized)
 }
@@ -793,7 +820,7 @@ func TestChangePassword_RevokesAllSessions(t *testing.T) {
 	serve("POST", "/change", "/change",
 		jsonBody(map[string]string{
 			"current_password": "test123",
-			"new_password":     "newpassword123",
+			"new_password":     "Newpassword1",
 		}), app.ChangePassword, authMW(uid))
 
 	// Old refresh token should be revoked

@@ -4,6 +4,7 @@
 import OAuthButtons from "@/components/auth/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -23,11 +24,12 @@ export default function SignupPage() {
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [agreedToTerms, setAgreedToTerms] = useState(false);
     const [loading, setLoading] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!username.trim() || !email.trim() || !password) return;
+        if (!username.trim() || !email.trim() || !password || !agreedToTerms) return;
 
         setLoading(true);
         try {
@@ -97,7 +99,20 @@ export default function SignupPage() {
                                 minLength={8}
                             />
                         </div>
-                        <Button type="submit" className="w-full" disabled={loading}>
+                        <div className="flex items-start gap-2">
+                            <Checkbox
+                                id="terms"
+                                checked={agreedToTerms}
+                                onCheckedChange={(checked) => setAgreedToTerms(checked === true)}
+                            />
+                            <Label htmlFor="terms" className="text-sm leading-tight cursor-pointer">
+                                I agree to the{" "}
+                                <Link href="/terms" className="text-primary hover:underline" target="_blank">
+                                    Terms of Service
+                                </Link>
+                            </Label>
+                        </div>
+                        <Button type="submit" className="w-full" disabled={loading || !agreedToTerms}>
                             {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                             Sign Up
                         </Button>

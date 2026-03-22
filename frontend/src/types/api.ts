@@ -143,6 +143,7 @@ export interface AuthRequest {
     email: string;
     password: string;
     username?: string;
+    agreed_to_terms?: boolean;
 }
 
 export interface AuthResponse {

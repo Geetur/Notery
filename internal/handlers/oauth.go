@@ -33,11 +33,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 	oauthGithub "golang.org/x/oauth2/github"
 
+	"github.com/Geetur/Notery/internal/config"
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 )
@@ -167,6 +169,7 @@ func (app *App) oauthFindOrCreateUser(provider, oauthID, email, displayName stri
 		}
 
 		// Try to create the user — username IS display name (project convention).
+		now := time.Now()
 		user = models.User{
 			Email:            email,
 			Username:         username,
@@ -175,6 +178,8 @@ func (app *App) oauthFindOrCreateUser(provider, oauthID, email, displayName stri
 			OAuthID:          oauthID,
 			EmailVerified:    true,
 			Hash:             "", // No password for OAuth users
+			AgreedToTerms:    true,
+			AgreedToTermsAt:  &now,
 		}
 		if result := app.DB.Create(&user); result.Error != nil {
 			createErr = result.Error
@@ -255,7 +260,8 @@ func (app *App) OAuthGoogle(c *gin.Context) {
 	}
 
 	// Store state in a short-lived cookie for CSRF verification
-	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("oauth_state", state, 300, "/", "", config.IsProduction(), true)
 
 	cfg := app.googleOAuthConfig()
 	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "select_account"))
@@ -274,7 +280,8 @@ func (app *App) OAuthGoogleCallback(c *gin.Context) {
 		return
 	}
 	// Clear state cookie
-	c.SetCookie("oauth_state", "", -1, "/", "", false, true)
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("oauth_state", "", -1, "/", "", config.IsProduction(), true)
 
 	code := c.Query("code")
 	if code == "" {
@@ -345,7 +352,8 @@ func (app *App) OAuthGitHub(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("oauth_state", state, 300, "/", "", config.IsProduction(), true)
 
 	cfg := app.githubOAuthConfig()
 	url := cfg.AuthCodeURL(state, oauth2.SetAuthURLParam("prompt", "select_account"))
@@ -363,7 +371,8 @@ func (app *App) OAuthGitHubCallback(c *gin.Context) {
 		c.Redirect(http.StatusTemporaryRedirect, app.FrontendURL+"/login?error=invalid_state")
 		return
 	}
-	c.SetCookie("oauth_state", "", -1, "/", "", false, true)
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("oauth_state", "", -1, "/", "", config.IsProduction(), true)
 
 	code := c.Query("code")
 	if code == "" {

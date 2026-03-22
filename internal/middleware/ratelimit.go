@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -113,8 +114,19 @@ func RateLimit(rdb *redis.Client, cfg RateLimitConfig, keyPrefix string) gin.Han
 		pipe.ExpireNX(ctx, key, cfg.Window)
 
 		if _, err := pipe.Exec(ctx); err != nil {
-			// Redis down: fail open — don't block the user, just log.
-			mwLog.Log("RATE", "Redis pipeline error, failing open", "key", key, "error", err)
+			// Redis down: fall back to in-memory rate limiter rather than
+			// allowing unlimited requests (prevents brute-force when Redis crashes).
+			mwLog.Log("RATE", "Redis pipeline error, falling back to in-memory limiter", "key", key, "error", err)
+			count := memLimiter.Increment(key, cfg.Window)
+			if count > cfg.MaxRequests {
+				retryAfter := int(cfg.Window.Seconds())
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+					"error":       "Rate limit exceeded. Please slow down.",
+					"retry_after": retryAfter,
+				})
+				return
+			}
 			c.Next()
 			return
 		}
@@ -145,4 +157,35 @@ func RateLimit(rdb *redis.Client, cfg RateLimitConfig, keyPrefix string) gin.Han
 
 		c.Next()
 	}
+}
+
+// ── In-memory fallback rate limiter ────────────────────────────────────────
+// Used when Redis is unavailable. Simple per-key counter with expiry.
+// Not shared across instances — acceptable for degraded-mode protection.
+
+type memEntry struct {
+	count   int64
+	expires time.Time
+}
+
+type inMemoryLimiter struct {
+	mu      sync.Mutex
+	entries map[string]*memEntry
+}
+
+var memLimiter = &inMemoryLimiter{entries: make(map[string]*memEntry)}
+
+// Increment atomically increments the counter for a key, auto-expiring stale entries.
+func (l *inMemoryLimiter) Increment(key string, window time.Duration) int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	e, ok := l.entries[key]
+	if !ok || now.After(e.expires) {
+		l.entries[key] = &memEntry{count: 1, expires: now.Add(window)}
+		return 1
+	}
+	e.count++
+	return e.count
 }

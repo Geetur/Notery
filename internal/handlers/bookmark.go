@@ -172,6 +172,10 @@ func (app *App) GetBookmarks(c *gin.Context) {
 		}
 	}
 
+	// Populate SubnoteryName and comment counts so cards render fully.
+	app.populateSubnoteryNames(ordered)
+	app.populateCommentCounts(ordered)
+
 	bookmarkLog.Log("LIST", "Bookmarks listed", "userID", userID, "count", len(ordered), "total", total)
 	c.JSON(http.StatusOK, gin.H{
 		"notes": ordered,
