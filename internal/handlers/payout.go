@@ -10,11 +10,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
 	"github.com/gin-gonic/gin"
+	"github.com/stripe/stripe-go/v82"
 )
 
 var payoutLog = helpers.NewLogger("PAYOUT")
@@ -45,7 +47,12 @@ func (app *App) StripeConnect(c *gin.Context) {
 		acctID, err := app.Payment.CreateConnectedAccount(c.Request.Context(), user.Email)
 		if err != nil {
 			payoutLog.Log("CONNECT", "Failed to create connected account", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create payout account"})
+			errMsg := "Failed to create payout account"
+			var stripeErr *stripe.Error
+			if errors.As(err, &stripeErr) {
+				errMsg = stripeErr.Msg
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
 			return
 		}
 		user.StripeAccountID = acctID
@@ -64,7 +71,12 @@ func (app *App) StripeConnect(c *gin.Context) {
 	link, err := app.Payment.CreateOnboardingLink(c.Request.Context(), user.StripeAccountID, returnURL, refreshURL)
 	if err != nil {
 		payoutLog.Log("CONNECT", "Failed to create onboarding link", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create onboarding link"})
+		errMsg := "Failed to create onboarding link"
+		var stripeErr *stripe.Error
+		if errors.As(err, &stripeErr) {
+			errMsg = stripeErr.Msg
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
 		return
 	}
 
@@ -108,7 +120,7 @@ func (app *App) StripeStatus(c *gin.Context) {
 		// Update local cache if changed
 		if chargesEnabled != user.PayoutEnabled || (chargesEnabled && !user.StripeOnboardingComplete) {
 			updates := map[string]interface{}{
-				"payout_enabled":            chargesEnabled,
+				"payout_enabled":             chargesEnabled,
 				"stripe_onboarding_complete": chargesEnabled || user.StripeOnboardingComplete,
 			}
 			app.DB.Model(&user).Updates(updates)
@@ -148,7 +160,12 @@ func (app *App) StripeRefreshLink(c *gin.Context) {
 	link, err := app.Payment.CreateOnboardingLink(c.Request.Context(), user.StripeAccountID, returnURL, refreshURL)
 	if err != nil {
 		payoutLog.Log("REFRESH", "Failed to create onboarding link", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create onboarding link"})
+		errMsg := "Failed to create onboarding link"
+		var stripeErr *stripe.Error
+		if errors.As(err, &stripeErr) {
+			errMsg = stripeErr.Msg
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
 		return
 	}
 

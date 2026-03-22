@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Geetur/Notery/internal/email"
@@ -15,6 +16,7 @@ func testAppWithMailer(t *testing.T) (*App, *email.MockMailer) {
 	app := testApp(t)
 	app.JWTSecret = "test-secret-key"
 	app.BaseURL = "http://localhost:8080"
+	app.FrontendURL = "http://localhost:3000"
 	mock := &email.MockMailer{}
 	app.Mailer = mock
 	return app, mock
@@ -614,6 +616,66 @@ func TestForgotPassword_NonexistentEmail_StillReturns200(t *testing.T) {
 	// No email should be sent
 	if len(mock.Sent) != 0 {
 		t.Fatal("no email should be sent for nonexistent users")
+	}
+}
+
+func TestForgotPassword_EmailContainsFrontendURL(t *testing.T) {
+	app, mock := testAppWithMailer(t)
+	seedUser(t, app.DB, "reseturl")
+
+	w := serve("POST", "/forgot", "/forgot",
+		jsonBody(map[string]string{
+			"email": "reseturl@test.com",
+		}), app.ForgotPassword)
+	assertStatus(t, w, http.StatusOK)
+
+	if len(mock.Sent) < 1 {
+		t.Fatal("expected password reset email to be sent")
+	}
+
+	body := mock.Sent[0].Body
+	// Must link to the frontend, NOT the backend API
+	if !strings.Contains(body, app.FrontendURL+"/reset-password?token=") {
+		t.Fatalf("password reset email must contain frontend URL (%s), got body: %s", app.FrontendURL, body)
+	}
+	// Must NOT contain the backend API URL in reset links
+	if strings.Contains(body, app.BaseURL+"/reset-password") {
+		t.Fatal("password reset email must NOT contain backend BaseURL for reset links")
+	}
+}
+
+func TestForgotPassword_EmailNotSentWithNilMailer(t *testing.T) {
+	app := testApp(t)
+	app.Mailer = nil
+	app.FrontendURL = "http://localhost:3000"
+	seedUser(t, app.DB, "nilmailer")
+
+	w := serve("POST", "/forgot", "/forgot",
+		jsonBody(map[string]string{
+			"email": "nilmailer@test.com",
+		}), app.ForgotPassword)
+	assertStatus(t, w, http.StatusOK) // Still 200 (anti-enumeration)
+}
+
+func TestVerificationEmail_UsesBackendURL(t *testing.T) {
+	app, mock := testAppWithMailer(t)
+
+	w := serve("POST", "/signup", "/signup",
+		jsonBody(map[string]interface{}{
+			"email":           "verifyurl@test.com",
+			"password":        "Securepass1",
+			"username":        "verifyurl",
+			"agreed_to_terms": true,
+		}), app.Signup)
+	assertStatus(t, w, http.StatusCreated)
+
+	if len(mock.Sent) < 1 {
+		t.Fatal("expected verification email to be sent")
+	}
+	body := mock.Sent[0].Body
+	// Verification links must point to the backend API endpoint
+	if !strings.Contains(body, app.BaseURL+"/api/v1/auth/verify-email?token=") {
+		t.Fatalf("verification email must contain backend URL (%s), got body: %s", app.BaseURL, body)
 	}
 }
 

@@ -471,7 +471,7 @@ func (app *App) ForgotPassword(c *gin.Context) {
 	}
 
 	if app.Mailer != nil {
-		subject, body := email.PasswordResetEmail(app.BaseURL, raw)
+		subject, body := email.PasswordResetEmail(app.FrontendURL, raw)
 		userEmail := user.Email
 		go func() {
 			if err := app.Mailer.Send(userEmail, subject, body); err != nil {
