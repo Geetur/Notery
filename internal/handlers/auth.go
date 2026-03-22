@@ -334,7 +334,9 @@ func (app *App) LogoutAll(c *gin.Context) {
 // ----- EMAIL VERIFICATION -----
 
 // sendVerificationEmail generates a verification token and emails it to the user.
-// Best-effort: failures are logged but do not block the caller.
+// The token is saved synchronously (so the caller can verify immediately),
+// but the actual SMTP send runs in a background goroutine to avoid blocking
+// the HTTP response when the mail server is slow or unreachable.
 func (app *App) sendVerificationEmail(userID uint64, userEmail string) {
 	if app.Mailer == nil {
 		authLog.Log("VERIFY", "no mailer configured, skipping verification email")
@@ -358,9 +360,11 @@ func (app *App) sendVerificationEmail(userID uint64, userEmail string) {
 	}
 
 	subject, body := email.VerificationEmail(app.BaseURL, raw)
-	if err := app.Mailer.Send(userEmail, subject, body); err != nil {
-		authLog.Log("VERIFY", "failed to send verification email", "error", err, "email", userEmail)
-	}
+	go func() {
+		if err := app.Mailer.Send(userEmail, subject, body); err != nil {
+			authLog.Log("VERIFY", "failed to send verification email", "error", err, "email", userEmail)
+		}
+	}()
 }
 
 // VerifyEmail validates an email verification token from the URL query string.
@@ -468,9 +472,12 @@ func (app *App) ForgotPassword(c *gin.Context) {
 
 	if app.Mailer != nil {
 		subject, body := email.PasswordResetEmail(app.BaseURL, raw)
-		if err := app.Mailer.Send(user.Email, subject, body); err != nil {
-			authLog.Log("FORGOT_PW", "failed to send reset email", "error", err)
-		}
+		userEmail := user.Email
+		go func() {
+			if err := app.Mailer.Send(userEmail, subject, body); err != nil {
+				authLog.Log("FORGOT_PW", "failed to send reset email", "error", err)
+			}
+		}()
 	}
 
 	authLog.Log("FORGOT_PW", "reset token created", "user", user.ID)

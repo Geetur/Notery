@@ -11,10 +11,19 @@
 package email
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"strings"
+	"time"
+)
+
+// SMTP connection timeouts to prevent goroutine leaks and blocked handlers.
+const (
+	smtpDialTimeout = 10 * time.Second // TCP dial timeout
+	smtpSendTimeout = 30 * time.Second // Overall send deadline (dial + auth + data)
 )
 
 // Mailer defines the interface for sending emails.
@@ -57,7 +66,7 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	}
 }
 
-// Send delivers an email via SMTP.
+// Send delivers an email via SMTP with connection timeouts to prevent blocking.
 // Uses LOGIN auth for providers that don't support PLAIN (e.g. Outlook/Office365),
 // falling back to PLAIN auth for providers that support it.
 func (m *SMTPMailer) Send(to, subject, body string) error {
@@ -75,13 +84,71 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 
 	// Try LOGIN auth first (required by Outlook/Office365), then fall back to PLAIN.
 	auth := &loginAuth{username: m.User, password: m.Pass}
-	err := smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg))
+	err := m.sendWithTimeout(addr, auth, to, []byte(msg))
 	if err != nil && strings.Contains(err.Error(), "Unrecognized authentication type") {
-		// Fall back to PLAIN auth for providers that don't support LOGIN
 		plainAuth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
-		return smtp.SendMail(addr, plainAuth, m.From, []string{to}, []byte(msg))
+		return m.sendWithTimeout(addr, plainAuth, to, []byte(msg))
 	}
 	return err
+}
+
+// sendWithTimeout establishes an SMTP connection with dial and overall timeouts,
+// preventing indefinite blocking when the SMTP server is slow or unreachable.
+func (m *SMTPMailer) sendWithTimeout(addr string, auth smtp.Auth, to string, msg []byte) error {
+	// Dial with timeout instead of blocking indefinitely
+	conn, err := net.DialTimeout("tcp", addr, smtpDialTimeout)
+	if err != nil {
+		return fmt.Errorf("smtp dial: %w", err)
+	}
+	// Set an overall deadline for the entire SMTP session
+	if err := conn.SetDeadline(time.Now().Add(smtpSendTimeout)); err != nil {
+		conn.Close()
+		return fmt.Errorf("smtp set deadline: %w", err)
+	}
+
+	// Create SMTP client on the raw connection
+	c, err := smtp.NewClient(conn, m.Host)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("smtp new client: %w", err)
+	}
+	defer c.Close()
+
+	// STARTTLS if supported
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{ServerName: m.Host}); err != nil {
+			return fmt.Errorf("smtp starttls: %w", err)
+		}
+	}
+
+	// Authenticate
+	if err := c.Auth(auth); err != nil {
+		return fmt.Errorf("smtp auth: %w", err)
+	}
+
+	// Set sender
+	if err := c.Mail(m.From); err != nil {
+		return fmt.Errorf("smtp mail from: %w", err)
+	}
+
+	// Set recipient
+	if err := c.Rcpt(to); err != nil {
+		return fmt.Errorf("smtp rcpt: %w", err)
+	}
+
+	// Write message body
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("smtp data close: %w", err)
+	}
+
+	return c.Quit()
 }
 
 // LogMailer logs emails to stdout instead of sending them.

@@ -874,7 +874,7 @@ export default function ProfilePage() {
                                             <Loader2 className="h-4 w-4 animate-spin" />
                                             Loading payout status...
                                         </div>
-                                    ) : stripeStatus?.payouts_enabled ? (
+                                    ) : stripeStatus?.payout_enabled ? (
                                         <div className="space-y-2">
                                             <div className="flex items-center gap-2">
                                                 <CheckCircle className="h-4 w-4 text-green-500" />
@@ -912,10 +912,10 @@ export default function ProfilePage() {
                                                 onClick={async () => {
                                                     setStripeConnecting(true);
                                                     try {
-                                                        const res = stripeStatus?.account_id
+                                                        const res = stripeStatus?.has_account
                                                             ? await refreshStripeLink()
                                                             : await setupStripeConnect();
-                                                        window.location.href = res.url;
+                                                        window.location.href = res.onboarding_url;
                                                     } catch (err: unknown) {
                                                         const msg = err instanceof Error ? err.message : "Failed to start Stripe setup";
                                                         toast({ title: "Error", description: msg, variant: "destructive" });
@@ -929,7 +929,7 @@ export default function ProfilePage() {
                                                 ) : (
                                                     <CreditCard className="h-4 w-4 mr-1" />
                                                 )}
-                                                {stripeStatus?.account_id ? "Continue Setup" : "Connect Stripe"}
+                                                {stripeStatus?.has_account ? "Continue Setup" : "Connect Stripe"}
                                             </Button>
                                         </div>
                                     )}
