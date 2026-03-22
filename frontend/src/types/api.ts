@@ -60,6 +60,7 @@ export interface SubnoteryListItem {
     name: string;
     admin_count: number;
     member_count: number;
+    banner_url: string;
     created_at: string;
 }
 
@@ -73,6 +74,7 @@ export interface SubnoteryDetail {
     background_color: string;
     min_post_notoriety: number;
     min_comment_notoriety: number;
+    auto_approve_free_notes: boolean;
     admins: { id: number; username: string; admin_since: string }[];
     member_count: number;
     is_member: boolean;
@@ -265,6 +267,8 @@ export interface VoteResponse {
     upvotes: number;
     downvotes: number;
     hotness: number;
+    /** User's current vote direction after the action: "up", "down", or "" (no vote). */
+    user_vote: string;
 }
 
 export interface CreateNoteRequest {
@@ -409,7 +413,7 @@ export interface ApiError {
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 
-export type NotificationType = "admin_invite" | "upvote_milestone" | "purchase" | "comment" | "reply";
+export type NotificationType = "admin_invite" | "upvote_milestone" | "purchase" | "comment" | "reply" | "ban";
 export type NotificationStatus = "pending" | "accepted" | "denied";
 
 export interface NotificationItem {
@@ -466,3 +470,51 @@ export interface PaginationParams {
 export type FeedSort = "hot" | "new" | "top" | "controversial";
 export type TimeFilter = "day" | "week" | "month" | "year" | "all";
 export type ViewMode = "card" | "compact";
+
+// ─── Ban System ───────────────────────────────────────────────────────────────
+
+export type BanDuration = "1d" | "7d" | "30d" | "1y" | "permanent";
+
+export interface Ban {
+    id: number;
+    user_id: number;
+    username: string;
+    reason: string;
+    duration: string;
+    expires_at: string | null;
+    created_at: string;
+    is_expired: boolean;
+}
+
+export interface BanListResponse {
+    bans: Ban[];
+    total: number;
+    page: number;
+    limit: number;
+}
+
+export interface BanRequest {
+    user_id: number;
+    duration: BanDuration;
+    reason: string;
+}
+
+// ─── Stripe Connect / Payouts ─────────────────────────────────────────────────
+
+export interface StripeConnectResponse {
+    url: string;
+    account_id: string;
+}
+
+export interface StripeStatusResponse {
+    onboarding_complete: boolean;
+    payouts_enabled: boolean;
+    account_id: string;
+}
+
+// ─── Checkout Selected ───────────────────────────────────────────────────────
+
+export interface CheckoutSelectedRequest {
+    item_ids: string[];
+    idempotency_key: string;
+}

@@ -30,6 +30,11 @@ type User struct {
 	OAuthProvider    string          `json:"-" gorm:"column:oauth_provider;default:''"` // "google", "github", or "" for email/password
 	OAuthID          string          `json:"-" gorm:"column:oauth_id;default:''"` // Provider's unique user ID
 
+	// ----- Stripe Connect (Payout) Fields -----
+	StripeAccountID          string `json:"-" gorm:"type:varchar(255);default:''"` // Stripe Connected Account ID (acct_...)
+	StripeOnboardingComplete bool   `json:"-" gorm:"default:false"`               // Whether onboarding was finished
+	PayoutEnabled            bool   `json:"-" gorm:"default:false"`               // Whether charges_enabled on Stripe
+
 	// ----- Notoriety (Karma) Fields -----
 	// Stored as float64 for precision; displayed rounded to the user.
 	PostKarma    float64 `json:"post_karma" gorm:"default:0;not null"`

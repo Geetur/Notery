@@ -39,6 +39,17 @@ export function checkoutCart(
     return apiPost("/checkout", body);
 }
 
+/** POST /checkout/selected — Checkout selected items from cart. */
+export function checkoutSelected(
+    itemIds: string[],
+    idempotencyKey: string
+): Promise<CheckoutResponse> {
+    return apiPost("/checkout/selected", {
+        item_ids: itemIds,
+        idempotency_key: idempotencyKey,
+    });
+}
+
 /** POST /notes/:id/purchase — Direct purchase of a single note. */
 export function purchaseNote(
     noteId: number

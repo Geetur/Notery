@@ -64,3 +64,28 @@ func (m *MockService) VerifyWebhookSignature(payload []byte, sig string) (*Webho
 	}
 	return nil, ErrUnsupportedEvent
 }
+
+// --- Stripe Connect mock methods ---
+
+// ConnectAccountFn overrides CreateConnectedAccount.
+var _ Service = (*MockService)(nil) // compile-time check
+
+// CreateConnectedAccount implements Service.
+func (m *MockService) CreateConnectedAccount(_ context.Context, email string) (string, error) {
+	return "acct_mock_" + email, nil
+}
+
+// CreateOnboardingLink implements Service.
+func (m *MockService) CreateOnboardingLink(_ context.Context, accountID, _, _ string) (string, error) {
+	return "https://connect.stripe.com/mock/onboard/" + accountID, nil
+}
+
+// CreateTransfer implements Service.
+func (m *MockService) CreateTransfer(_ context.Context, _ int64, _, destAccountID, _ string) (string, error) {
+	return "tr_mock_" + destAccountID, nil
+}
+
+// GetAccountStatus implements Service.
+func (m *MockService) GetAccountStatus(_ context.Context, _ string) (bool, error) {
+	return true, nil
+}

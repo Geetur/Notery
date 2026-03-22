@@ -44,6 +44,8 @@ const (
 	NotifComment NotificationType = "comment"
 	// NotifReply is an informational notification sent when someone replies to a comment.
 	NotifReply NotificationType = "reply"
+	// NotifBan is an informational notification sent when a user is banned.
+	NotifBan NotificationType = "ban"
 )
 
 // NotificationStatus tracks whether an actionable notification has been resolved.

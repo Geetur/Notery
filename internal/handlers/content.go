@@ -246,6 +246,28 @@ func (app *App) UploadNotePDF(c *gin.Context) {
 		return
 	}
 
+	// Auto-approve free notes if the subnotery setting is enabled.
+	// This runs after upload so the note is still Pending when the PDF is saved.
+	if note.Price == 0 && note.Status == models.StatusPending {
+		var sub models.Subnotery
+		if err := app.DB.Select("id", "auto_approve_free_notes").First(&sub, note.SubnoteryID).Error; err == nil && sub.AutoApproveFreeNotes {
+			if err := app.DB.Model(&note).Update("status", models.StatusApproved).Error; err != nil {
+				contentLog.Log("UPLOAD", "auto-approve update failed", "note_id", noteID, "error", err)
+			} else {
+				note.Status = models.StatusApproved
+				contentLog.Log("UPLOAD", "auto-approved free note", "note_id", noteID)
+
+				// Index in Meilisearch and add to hot feed
+				if err := app.indexNote(note); err != nil {
+					contentLog.Log("UPLOAD", "failed to index auto-approved note", "note_id", noteID, "error", err)
+				}
+				if err := app.AddNoteToFeed(c.Request.Context(), &note); err != nil {
+					contentLog.Log("UPLOAD", "failed to add auto-approved note to feed", "note_id", noteID, "error", err)
+				}
+			}
+		}
+	}
+
 	duration := time.Since(start)
 	contentLog.Log("UPLOAD", "completed successfully", "note_id", noteID, "size_bytes", header.Size, "duration_ms", duration.Milliseconds())
 	c.JSON(http.StatusOK, gin.H{

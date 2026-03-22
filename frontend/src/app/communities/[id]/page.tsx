@@ -14,16 +14,17 @@ import { useToast } from "@/hooks/use-toast";
 import { timeAgo } from "@/lib/format";
 import { approveNote, deleteNote, getPendingNotes, rejectNote } from "@/services/notes";
 import { inviteAdmin } from "@/services/notifications";
-import { deleteSubnoteryBanner, getSubnotery, getSubnoteryMembers, getSubnoteryNotes, joinSubnotery, leaveSubnotery, removeAdminFromSubnotery, removeMemberFromSubnotery, updateSubnoterySettings, uploadSubnoteryBanner } from "@/services/subnoteries";
+import { banUser, deleteSubnoteryBanner, getSubnotery, getSubnoteryMembers, getSubnoteryNotes, joinSubnotery, leaveSubnotery, listBans, removeAdminFromSubnotery, removeMemberFromSubnotery, unbanUser, updateSubnoterySettings, uploadSubnoteryBanner } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useFeedStore } from "@/stores/feed-store";
-import type { Note, SubnoteryDetail, SubnoteryMember } from "@/types";
+import type { Ban, BanDuration, Note, SubnoteryDetail, SubnoteryMember } from "@/types";
 import {
     CheckCircle,
     ChevronLeft,
     ChevronRight,
     Eye,
     FileText,
+    Ban as BanIcon,
     ImageIcon,
     Paintbrush,
     Send,
@@ -66,6 +67,7 @@ export default function CommunityDetailPage() {
     const [settingsMinPostNotoriety, setSettingsMinPostNotoriety] = useState(0);
     const [settingsMinCommentNotoriety, setSettingsMinCommentNotoriety] = useState(0);
     const [settingsBackgroundColor, setSettingsBackgroundColor] = useState("");
+    const [settingsAutoApprove, setSettingsAutoApprove] = useState(false);
     const [savingSettings, setSavingSettings] = useState(false);
     const [uploadingBanner, setUploadingBanner] = useState(false);
     const [removingAdmin, setRemovingAdmin] = useState<number | null>(null);
@@ -81,6 +83,18 @@ export default function CommunityDetailPage() {
     const [membersPage, setMembersPage] = useState(1);
     const [membersLoading, setMembersLoading] = useState(false);
     const [removingMember, setRemovingMember] = useState<number | null>(null);
+
+    // Ban state
+    const [bans, setBans] = useState<Ban[]>([]);
+    const [bansTotal, setBansTotal] = useState(0);
+    const [bansPage, setBansPage] = useState(1);
+    const [bansLoading, setBansLoading] = useState(false);
+    const [banningMember, setBanningMember] = useState<number | null>(null);
+    const [banDuration, setBanDuration] = useState<BanDuration>("7d");
+    const [banReason, setBanReason] = useState("");
+    const [showBanModal, setShowBanModal] = useState(false);
+    const [banTargetId, setBanTargetId] = useState<number | null>(null);
+    const [banTargetName, setBanTargetName] = useState("");
 
     const isAdmin =
         user &&
@@ -103,6 +117,7 @@ export default function CommunityDetailPage() {
                 setSettingsMinPostNotoriety(data.min_post_notoriety ?? 0);
                 setSettingsMinCommentNotoriety(data.min_comment_notoriety ?? 0);
                 setSettingsBackgroundColor(data.background_color || "");
+                setSettingsAutoApprove(data.auto_approve_free_notes || false);
             })
             .catch((err) => setError(err.message || "Failed to load community"))
             .finally(() => setLoading(false));
@@ -236,6 +251,7 @@ export default function CommunityDetailPage() {
                 background_color: settingsBackgroundColor,
                 min_post_notoriety: settingsMinPostNotoriety,
                 min_comment_notoriety: settingsMinCommentNotoriety,
+                auto_approve_free_notes: settingsAutoApprove,
             });
             toast({ title: "Saved", description: "Community settings updated." });
             // Refresh community data
@@ -352,6 +368,68 @@ export default function CommunityDetailPage() {
         }
     };
 
+    // Open the ban modal for a member
+    const openBanModal = (memberId: number, memberName: string) => {
+        setBanTargetId(memberId);
+        setBanTargetName(memberName);
+        setBanDuration("7d");
+        setBanReason("");
+        setShowBanModal(true);
+    };
+
+    const handleBanMember = async () => {
+        if (!banTargetId) return;
+        setBanningMember(banTargetId);
+        try {
+            await banUser(communityId, {
+                user_id: banTargetId,
+                duration: banDuration,
+                reason: banReason,
+            });
+            toast({ title: "User banned", description: `${banTargetName} has been banned.` });
+            setShowBanModal(false);
+            loadMembers();
+            loadBans();
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to ban user";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setBanningMember(null);
+        }
+    };
+
+    const handleUnban = async (userId: number) => {
+        try {
+            await unbanUser(communityId, userId);
+            toast({ title: "User unbanned" });
+            loadBans();
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to unban";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        }
+    };
+
+    const loadBans = useCallback(async () => {
+        setBansLoading(true);
+        try {
+            const res = await listBans(communityId, { page: bansPage, limit: PAGE_SIZE });
+            setBans(res.bans ?? []);
+            setBansTotal(res.total);
+        } catch {
+            // ignore
+        } finally {
+            setBansLoading(false);
+        }
+    }, [communityId, bansPage]);
+
+    useEffect(() => {
+        if (activeTab === "bans" && isAdmin) {
+            loadBans();
+        }
+    }, [activeTab, isAdmin, loadBans]);
+
     if (loading) {
         return (
             <div className="flex">
@@ -465,6 +543,12 @@ export default function CommunityDetailPage() {
                                 <TabsTrigger value="members">
                                     <Users className="h-3.5 w-3.5 mr-1" />
                                     Members
+                                </TabsTrigger>
+                            )}
+                            {isAdmin && (
+                                <TabsTrigger value="bans">
+                                    <BanIcon className="h-3.5 w-3.5 mr-1" />
+                                    Bans
                                 </TabsTrigger>
                             )}
                             {isAdmin && (
@@ -649,16 +733,28 @@ export default function CommunityDetailPage() {
                                                         )}
                                                     </div>
                                                     {member.id !== user?.id && !member.is_admin && (
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="h-7 text-xs text-destructive hover:text-destructive"
-                                                            onClick={() => handleRemoveMember(member.id)}
-                                                            disabled={removingMember === member.id}
-                                                        >
-                                                            <UserMinus className="h-3 w-3 mr-1" />
-                                                            {removingMember === member.id ? "..." : "Remove"}
-                                                        </Button>
+                                                        <div className="flex items-center gap-1">
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-7 text-xs text-orange-600 hover:text-orange-600"
+                                                                onClick={() => openBanModal(member.id, member.username)}
+                                                                disabled={banningMember === member.id}
+                                                            >
+                                                                <BanIcon className="h-3 w-3 mr-1" />
+                                                                Ban
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-7 text-xs text-destructive hover:text-destructive"
+                                                                onClick={() => handleRemoveMember(member.id)}
+                                                                disabled={removingMember === member.id}
+                                                            >
+                                                                <UserMinus className="h-3 w-3 mr-1" />
+                                                                {removingMember === member.id ? "..." : "Remove"}
+                                                            </Button>
+                                                        </div>
                                                     )}
                                                 </div>
                                             ))}
@@ -692,6 +788,141 @@ export default function CommunityDetailPage() {
                                     )}
                                 </Card>
                             </TabsContent>
+                        )}
+
+                        {/* Bans tab (admin only) */}
+                        {isAdmin && (
+                            <TabsContent value="bans" className="mt-4">
+                                <Card className="p-6 space-y-4">
+                                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                                        <BanIcon className="h-5 w-5" /> Banned Users
+                                    </h3>
+                                    {bansLoading ? (
+                                        <div className="space-y-2">
+                                            <Skeleton className="h-10 w-full" />
+                                            <Skeleton className="h-10 w-full" />
+                                        </div>
+                                    ) : bans.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground">No active bans.</p>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            {bans.map((ban) => (
+                                                <div
+                                                    key={ban.id}
+                                                    className="flex items-center justify-between py-2 px-3 rounded hover:bg-accent/50"
+                                                >
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <Link
+                                                                href={`/user/${ban.user_id}`}
+                                                                className="text-sm font-medium hover:text-primary"
+                                                            >
+                                                                u/{ban.username}
+                                                            </Link>
+                                                            <Badge variant="outline" className="text-xs">
+                                                                {ban.duration}
+                                                            </Badge>
+                                                        </div>
+                                                        {ban.reason && (
+                                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                                                Reason: {ban.reason}
+                                                            </p>
+                                                        )}
+                                                        <p className="text-xs text-muted-foreground">
+                                                            {ban.expires_at
+                                                                ? `Expires ${timeAgo(ban.expires_at)}`
+                                                                : "Permanent"}
+                                                        </p>
+                                                    </div>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-xs"
+                                                        onClick={() => handleUnban(ban.user_id)}
+                                                    >
+                                                        Unban
+                                                    </Button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {Math.ceil(bansTotal / PAGE_SIZE) > 1 && (
+                                        <div className="flex items-center justify-center gap-4 mt-4">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={bansPage <= 1}
+                                                onClick={() => setBansPage((p) => Math.max(1, p - 1))}
+                                            >
+                                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                                Previous
+                                            </Button>
+                                            <span className="text-sm text-muted-foreground">
+                                                Page {bansPage} of {Math.ceil(bansTotal / PAGE_SIZE)}
+                                            </span>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={bansPage >= Math.ceil(bansTotal / PAGE_SIZE)}
+                                                onClick={() => setBansPage((p) => p + 1)}
+                                            >
+                                                Next
+                                                <ChevronRight className="h-4 w-4 ml-1" />
+                                            </Button>
+                                        </div>
+                                    )}
+                                </Card>
+                            </TabsContent>
+                        )}
+
+                        {/* Ban modal */}
+                        {showBanModal && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                                <Card className="w-full max-w-md p-6 space-y-4">
+                                    <h3 className="text-lg font-semibold">
+                                        Ban u/{banTargetName}
+                                    </h3>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Duration</label>
+                                        <select
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                            value={banDuration}
+                                            onChange={(e) => setBanDuration(e.target.value as BanDuration)}
+                                        >
+                                            <option value="1d">1 Day</option>
+                                            <option value="7d">7 Days</option>
+                                            <option value="30d">30 Days</option>
+                                            <option value="1y">1 Year</option>
+                                            <option value="permanent">Permanent</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Reason (optional)</label>
+                                        <textarea
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm min-h-[60px] resize-y"
+                                            placeholder="Reason for ban..."
+                                            value={banReason}
+                                            onChange={(e) => setBanReason(e.target.value)}
+                                            maxLength={500}
+                                        />
+                                    </div>
+                                    <div className="flex justify-end gap-2">
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => setShowBanModal(false)}
+                                        >
+                                            Cancel
+                                        </Button>
+                                        <Button
+                                            variant="destructive"
+                                            onClick={handleBanMember}
+                                            disabled={banningMember === banTargetId}
+                                        >
+                                            {banningMember === banTargetId ? "Banning..." : "Ban User"}
+                                        </Button>
+                                    </div>
+                                </Card>
+                            </div>
                         )}
 
                         {/* Settings tab (admin only) */}
@@ -791,6 +1022,24 @@ export default function CommunityDetailPage() {
                                             )}
                                         </div>
                                         <p className="text-xs text-muted-foreground mt-1">Custom background colour for the content area. Leave empty for the default theme.</p>
+                                    </div>
+
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="checkbox"
+                                            id="auto-approve-free"
+                                            checked={settingsAutoApprove}
+                                            onChange={(e) => setSettingsAutoApprove(e.target.checked)}
+                                            className="h-4 w-4 rounded border-border"
+                                        />
+                                        <div>
+                                            <label htmlFor="auto-approve-free" className="text-sm font-medium cursor-pointer">
+                                                Auto-approve free notes
+                                            </label>
+                                            <p className="text-xs text-muted-foreground">
+                                                When enabled, notes with a price of $0 are automatically approved without admin review.
+                                            </p>
+                                        </div>
                                     </div>
 
                                     <Button

@@ -30,6 +30,20 @@ type Service interface {
 	// VerifyWebhookSignature validates an incoming webhook payload against its signature.
 	// Returns the parsed event on success or an error if verification fails.
 	VerifyWebhookSignature(payload []byte, signature string) (*WebhookEvent, error)
+
+	// --- Stripe Connect (payouts) ---
+
+	// CreateConnectedAccount creates a Stripe Express Connected Account for a creator.
+	CreateConnectedAccount(ctx context.Context, email string) (accountID string, err error)
+
+	// CreateOnboardingLink generates a Stripe Account Link for onboarding.
+	CreateOnboardingLink(ctx context.Context, accountID, returnURL, refreshURL string) (url string, err error)
+
+	// CreateTransfer sends funds to a creator's Connected Account.
+	CreateTransfer(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup string) (transferID string, err error)
+
+	// GetAccountStatus checks whether a Connected Account has charges_enabled.
+	GetAccountStatus(ctx context.Context, accountID string) (chargesEnabled bool, err error)
 }
 
 // CreateIntentParams holds the parameters for creating a payment intent.

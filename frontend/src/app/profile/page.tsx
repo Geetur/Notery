@@ -23,15 +23,17 @@ import { avatarUrl, formatDate, timeAgo, userBannerUrl } from "@/lib/format";
 import { resendVerification } from "@/services/auth";
 import { getMyComments } from "@/services/comments";
 import { getMyNotes } from "@/services/notes";
+import { getStripeStatus, refreshStripeLink, setupStripeConnect } from "@/services/payouts";
 import { deleteAvatar, deleteBanner, updateMyProfile, uploadAvatar, uploadBanner } from "@/services/profile";
 import { getPurchaseHistory } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
-import type { MyComment, Note, NoteStatus, ProfileVisibility, PurchaseWithNote } from "@/types";
+import type { MyComment, Note, NoteStatus, ProfileVisibility, PurchaseWithNote, StripeStatusResponse } from "@/types";
 import {
     AlertCircle,
     BookOpen,
     Camera,
     CheckCircle,
+    CreditCard,
     FileText,
     ImageIcon,
     Loader2,
@@ -82,6 +84,11 @@ export default function ProfilePage() {
     const [purchasedTotal, setPurchasedTotal] = useState(0);
     const [purchasedPage, setPurchasedPage] = useState(1);
     const [purchasedLoading, setPurchasedLoading] = useState(false);
+
+    // Stripe Connect state
+    const [stripeStatus, setStripeStatus] = useState<StripeStatusResponse | null>(null);
+    const [stripeLoading, setStripeLoading] = useState(false);
+    const [stripeConnecting, setStripeConnecting] = useState(false);
 
     const fetchMyNotes = useCallback(async (page: number, status: NoteStatus | "all") => {
         setNotesLoading(true);
@@ -157,6 +164,17 @@ export default function ProfilePage() {
             fetchPurchased(purchasedPage);
         }
     }, [isAuthenticated, purchasedPage, fetchPurchased]);
+
+    // Load Stripe Connect status on settings tab
+    useEffect(() => {
+        if (isAuthenticated && activeTab === "settings") {
+            setStripeLoading(true);
+            getStripeStatus()
+                .then(setStripeStatus)
+                .catch(() => setStripeStatus(null))
+                .finally(() => setStripeLoading(false));
+        }
+    }, [isAuthenticated, activeTab]);
 
     if (!isAuthenticated || !user) {
         return null;
@@ -841,6 +859,82 @@ export default function ProfilePage() {
                                 {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                                 Save Changes
                             </Button>
+
+                            {/* Stripe Connect — Payout Setup */}
+                            <Card className="border-border">
+                                <CardHeader className="py-3 px-4">
+                                    <CardTitle className="text-sm flex items-center gap-1.5">
+                                        <CreditCard className="h-4 w-4" />
+                                        Payout Setup
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="px-4 pb-4 pt-0 space-y-3">
+                                    {stripeLoading ? (
+                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            Loading payout status...
+                                        </div>
+                                    ) : stripeStatus?.payouts_enabled ? (
+                                        <div className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                                <CheckCircle className="h-4 w-4 text-green-500" />
+                                                <span className="text-sm font-medium text-green-600">Payouts enabled</span>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground">
+                                                Your Stripe account is connected. Earnings from note sales will be automatically transferred to your account.
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                                Fee structure: 25¢ flat fee + 15% marketplace fee per sale.
+                                            </p>
+                                        </div>
+                                    ) : stripeStatus?.onboarding_complete ? (
+                                        <div className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                                <AlertCircle className="h-4 w-4 text-yellow-500" />
+                                                <span className="text-sm font-medium">Onboarding complete — awaiting verification</span>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground">
+                                                Stripe is reviewing your account. Payouts will be enabled once verification is complete.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            <p className="text-sm text-muted-foreground">
+                                                Connect a Stripe account to receive payouts from your note sales. Without a connected account, earnings are retained by Notery.
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                                Fee structure: 25¢ flat fee + 15% marketplace fee per sale.
+                                            </p>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={stripeConnecting}
+                                                onClick={async () => {
+                                                    setStripeConnecting(true);
+                                                    try {
+                                                        const res = stripeStatus?.account_id
+                                                            ? await refreshStripeLink()
+                                                            : await setupStripeConnect();
+                                                        window.location.href = res.url;
+                                                    } catch (err: unknown) {
+                                                        const msg = err instanceof Error ? err.message : "Failed to start Stripe setup";
+                                                        toast({ title: "Error", description: msg, variant: "destructive" });
+                                                    } finally {
+                                                        setStripeConnecting(false);
+                                                    }
+                                                }}
+                                            >
+                                                {stripeConnecting ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                                                ) : (
+                                                    <CreditCard className="h-4 w-4 mr-1" />
+                                                )}
+                                                {stripeStatus?.account_id ? "Continue Setup" : "Connect Stripe"}
+                                            </Button>
+                                        </div>
+                                    )}
+                                </CardContent>
+                            </Card>
                         </div>
                     )}
                 </div>

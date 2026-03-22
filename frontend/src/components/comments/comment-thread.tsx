@@ -74,19 +74,44 @@ export function CommentThread({
             toast({ title: "Login required", variant: "destructive" });
             return;
         }
+
+        // Save previous state for rollback
+        const prevVote = currentVote;
+        const prevUpvotes = upvotes;
+        const prevDownvotes = downvotes;
+
+        // Optimistic update
+        if (currentVote === value) {
+            // Toggle off
+            setCurrentVote(0);
+            if (value === 1) setUpvotes((v) => v - 1);
+            else setDownvotes((v) => v - 1);
+        } else {
+            // Remove old vote effect
+            if (currentVote === 1) setUpvotes((v) => v - 1);
+            else if (currentVote === -1) setDownvotes((v) => v - 1);
+            // Apply new vote
+            setCurrentVote(value);
+            if (value === 1) setUpvotes((v) => v + 1);
+            else setDownvotes((v) => v + 1);
+        }
+
         try {
-            if (currentVote === value) {
+            if (prevVote === value) {
+                // Toggle off — remove vote
                 await removeCommentVote(comment.id);
-                setCurrentVote(0);
-                setUpvotes(value === 1 ? upvotes - 1 : upvotes);
-                setDownvotes(value === -1 ? downvotes - 1 : downvotes);
             } else {
                 const res = await voteComment(comment.id, value);
+                // Reconcile with server
                 setCurrentVote(res.user_vote);
                 setUpvotes(res.upvotes);
                 setDownvotes(res.downvotes);
             }
         } catch {
+            // Rollback
+            setCurrentVote(prevVote);
+            setUpvotes(prevUpvotes);
+            setDownvotes(prevDownvotes);
             toast({ title: "Vote failed", variant: "destructive" });
         }
     };

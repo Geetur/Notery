@@ -460,6 +460,15 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		return
 	}
 
+	// Check if user is banned from the note's subnotery or site-wide
+	if ban, err := helpers.CheckAnyBan(app.DB, userID, note.SubnoteryID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check ban status"})
+		return
+	} else if ban != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are banned", "reason": ban.Reason})
+		return
+	}
+
 	noteIDUint := uint64(note.ID)
 	oldUpvotes := note.Upvotes // Capture pre-vote upvote count for milestone check
 	opposite := models.VoteDown
@@ -593,15 +602,21 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		return
 	}
 
+	// Determine user's final vote state after the transaction.
+	var userVote string
+	var currentVote models.Vote
+	if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err == nil {
+		userVote = string(currentVote.Direction)
+	}
+
 	// Update Redis vote cache (best-effort, skip if Redis unavailable).
 	if app.RDB != nil {
 		voteKey := fmt.Sprintf("votes:%s", noteID)
 		userVoteKey := fmt.Sprintf("%d", userID)
-		var currentVote models.Vote
-		if err := app.DB.Where("user_id = ? AND note_id = ?", userID, noteIDUint).First(&currentVote).Error; err != nil {
+		if userVote == "" {
 			app.RDB.HDel(ctx, voteKey, userVoteKey)
 		} else {
-			app.RDB.HSet(ctx, voteKey, userVoteKey, string(currentVote.Direction))
+			app.RDB.HSet(ctx, voteKey, userVoteKey, userVote)
 		}
 	}
 
@@ -626,6 +641,7 @@ func (app *App) voteNote(c *gin.Context, direction models.VoteDirection) {
 		"upvotes":   note.Upvotes,
 		"downvotes": note.Downvotes,
 		"hotness":   note.Hotness,
+		"user_vote": userVote,
 	})
 }
 

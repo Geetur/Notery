@@ -307,6 +307,9 @@ func (app *App) CreateComment(c *gin.Context) {
 		return
 	}
 
+	// Check if user is banned from the note's subnotery or site-wide
+	// (We need the note's subnotery ID, so we check after fetching the note below)
+
 	// Verify note exists and is approved (or pending — admins can comment on pending)
 	var note models.Note
 	if err := app.DB.First(&note, noteID).Error; err != nil {
@@ -317,6 +320,15 @@ func (app *App) CreateComment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
+	// Check ban status now that we have the note's subnotery ID
+	if ban, err := helpers.CheckAnyBan(app.DB, userID, note.SubnoteryID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check ban status"})
+		return
+	} else if ban != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are banned", "reason": ban.Reason})
+		return
+	}
+
 	if note.Status == models.StatusApproved {
 		// Check if note is locked (no new comments allowed)
 		if note.IsLocked {

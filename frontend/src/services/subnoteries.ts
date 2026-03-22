@@ -64,9 +64,37 @@ export function addAdminToSubnotery(
 /** PATCH /subnoteries/:id/settings — Update subnotery settings (admin only). */
 export function updateSubnoterySettings(
     subnoteryId: number,
-    settings: { description?: string; content_type?: string; rules?: string; background_color?: string; min_post_notoriety?: number; min_comment_notoriety?: number }
+    settings: { description?: string; content_type?: string; rules?: string; background_color?: string; min_post_notoriety?: number; min_comment_notoriety?: number; auto_approve_free_notes?: boolean }
 ): Promise<{ message: string }> {
     return apiPatch(`/subnoteries/${subnoteryId}/settings`, settings);
+}
+
+/** POST /subnoteries/:id/bans — Ban a user from a subnotery. */
+export function banUser(
+    subnoteryId: number,
+    req: { user_id: number; duration: string; reason: string }
+): Promise<{ message: string }> {
+    return apiPost(`/subnoteries/${subnoteryId}/bans`, req);
+}
+
+/** DELETE /subnoteries/:id/bans/:uid — Unban a user from a subnotery. */
+export function unbanUser(
+    subnoteryId: number,
+    userId: number
+): Promise<{ message: string }> {
+    return apiDelete(`/subnoteries/${subnoteryId}/bans/${userId}`);
+}
+
+/** GET /subnoteries/:id/bans — List active bans in a subnotery. */
+export function listBans(
+    subnoteryId: number,
+    params?: { page?: number; limit?: number }
+): Promise<{ bans: import("@/types").Ban[]; total: number; page: number; limit: number }> {
+    const query = new URLSearchParams();
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return apiGet(`/subnoteries/${subnoteryId}/bans${qs ? `?${qs}` : ""}`);
 }
 
 /** DELETE /subnoteries/:id/admins/:uid — Remove admin from subnotery. */

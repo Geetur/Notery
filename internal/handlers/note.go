@@ -123,6 +123,17 @@ func (app *App) CreateNote(c *gin.Context) {
 			return err
 		}
 
+		// Check if user is banned from this subnotery or site-wide
+		if !subnoteryCreated {
+			if ban, err := helpers.CheckAnyBan(tx, userID, subnotery.ID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check ban status"})
+				return fmt.Errorf("ban check: %w", err)
+			} else if ban != nil {
+				c.JSON(http.StatusForbidden, gin.H{"error": "You are banned from this community", "reason": ban.Reason})
+				return fmt.Errorf("banned")
+			}
+		}
+
 		// Enforce minimum post notoriety (skip for admins and new subnoteries)
 		if !subnoteryCreated && subnotery.MinPostNotoriety > 0 {
 			isAdmin := creator.IsGlobalAdmin
@@ -162,6 +173,8 @@ func (app *App) CreateNote(c *gin.Context) {
 		noteLog.Log("CREATE", "Creator ensured as member", "subnoteryID", subnotery.ID)
 
 		// Create the note record (author = creator's display name)
+		// Always starts as Pending — auto-approve (if eligible) happens after PDF upload
+		// in UploadNotePDF to avoid rejecting the upload for already-approved notes.
 		note = models.Note{
 			Title:       req.Title,
 			Description: req.Description,
@@ -171,6 +184,7 @@ func (app *App) CreateNote(c *gin.Context) {
 			SubnoteryID: subnotery.ID,
 			CreatorID:   userID,
 		}
+
 		if err := tx.Create(&note).Error; err != nil {
 			noteLog.Log("CREATE", "Failed to create note", "error", err)
 			return err
