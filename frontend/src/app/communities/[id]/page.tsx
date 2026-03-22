@@ -19,12 +19,12 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useFeedStore } from "@/stores/feed-store";
 import type { Ban, BanDuration, Note, SubnoteryDetail, SubnoteryMember } from "@/types";
 import {
+    Ban as BanIcon,
     CheckCircle,
     ChevronLeft,
     ChevronRight,
     Eye,
     FileText,
-    Ban as BanIcon,
     ImageIcon,
     Paintbrush,
     Send,

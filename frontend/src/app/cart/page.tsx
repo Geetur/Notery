@@ -250,11 +250,10 @@ export default function CartPage() {
                         {pagedNotes.map((note) => (
                             <Card
                                 key={note.id}
-                                className={`border-border transition-colors ${
-                                    selected.has(note.id)
+                                className={`border-border transition-colors ${selected.has(note.id)
                                         ? "ring-1 ring-primary/50 bg-primary/5"
                                         : ""
-                                }`}
+                                    }`}
                             >
                                 <CardContent className="flex items-center gap-3 p-3">
                                     <Checkbox
