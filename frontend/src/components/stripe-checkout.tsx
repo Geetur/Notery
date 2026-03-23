@@ -94,7 +94,7 @@ function CheckoutForm({
     );
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="relative space-y-4">
             {!elementReady && !elementError && (
                 <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -109,7 +109,7 @@ function CheckoutForm({
                 </div>
             )}
 
-            <div className={elementReady ? undefined : "sr-only"}>
+            <div className={elementReady ? undefined : "opacity-0 absolute -z-10 left-0 right-0"}>
                 <PaymentElement
                     options={{ layout: "tabs" }}
                     onReady={() => setElementReady(true)}
