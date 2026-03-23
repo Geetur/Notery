@@ -969,7 +969,8 @@ func (app *App) fulfilOrder(order *models.Order) error {
 				acctID := creator.StripeAccountID
 				amt := creatorAmt
 				group := fmt.Sprintf("order_%d", order.ID)
-				go app.executePayoutTransfer(recordID, amt, "usd", acctID, group)
+				srcTxn := order.ChargeID
+				go app.executePayoutTransfer(recordID, amt, "usd", acctID, group, srcTxn)
 			}
 		}
 
@@ -979,6 +980,9 @@ func (app *App) fulfilOrder(order *models.Order) error {
 
 // clearCartItems removes the specified order items from a user's cart in Redis (best-effort).
 func (app *App) clearCartItems(ctx context.Context, userID uint64, items []models.OrderItem) {
+	if app.RDB == nil {
+		return
+	}
 	cartKey := helpers.CartKey(userID)
 	for _, item := range items {
 		app.RDB.SRem(ctx, cartKey, strconv.FormatUint(uint64(item.NoteID), 10))
@@ -987,9 +991,11 @@ func (app *App) clearCartItems(ctx context.Context, userID uint64, items []model
 
 // executePayoutTransfer runs a Stripe Transfer for a payout record and updates its status.
 // This is called asynchronously from fulfilOrder.
-func (app *App) executePayoutTransfer(recordID uint, amountCents int64, currency, destAccountID, transferGroup string) {
+// sourceTransaction is the Charge ID from the buyer's payment; Stripe holds the
+// transfer until the charge's funds are available.
+func (app *App) executePayoutTransfer(recordID uint, amountCents int64, currency, destAccountID, transferGroup, sourceTransaction string) {
 	ctx := context.Background()
-	transferID, err := app.Payment.CreateTransfer(ctx, amountCents, currency, destAccountID, transferGroup)
+	transferID, err := app.Payment.CreateTransfer(ctx, amountCents, currency, destAccountID, transferGroup, sourceTransaction)
 	if err != nil {
 		purchaseLog.Log("PAYOUT", "Transfer failed", "recordID", recordID, "error", err)
 		app.DB.Model(&models.PayoutRecord{}).Where("id = ?", recordID).
@@ -1131,6 +1137,10 @@ func (app *App) ConfirmOrder(c *gin.Context) {
 		}
 
 		// Payment confirmed — fulfil order
+		if result.ChargeID != "" {
+			app.DB.Model(&order).Update("charge_id", result.ChargeID)
+			order.ChargeID = result.ChargeID
+		}
 		if err := app.fulfilOrder(&order); err != nil {
 			purchaseLog.Log("CONFIRM", "fulfilment failed", "order_id", order.ID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Fulfilment failed"})

@@ -149,6 +149,12 @@ func (app *App) handlePaymentSucceeded(c *gin.Context, event *payment.WebhookEve
 		return
 	}
 
+	// Store charge ID on order for source_transaction in transfers
+	if event.ChargeID != "" {
+		app.DB.Model(&order).Update("charge_id", event.ChargeID)
+		order.ChargeID = event.ChargeID
+	}
+
 	// Fulfil the order
 	if err := app.fulfilOrder(&order); err != nil {
 		webhookLog.Log("SUCCESS", "fulfilment failed", "order_id", order.ID, "error", err)

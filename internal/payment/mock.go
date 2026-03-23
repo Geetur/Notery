@@ -25,6 +25,7 @@ type MockService struct {
 	// Connect method overrides
 	CreateConnectedAccountFn func(ctx context.Context, email string) (string, error)
 	CreateOnboardingLinkFn   func(ctx context.Context, accountID, returnURL, refreshURL string) (string, error)
+	CreateTransferFn         func(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup, sourceTransaction string) (string, error)
 	GetAccountStatusFn       func(ctx context.Context, accountID string) (bool, error)
 
 	// Tracking fields for test assertions.
@@ -92,7 +93,10 @@ func (m *MockService) CreateOnboardingLink(ctx context.Context, accountID, retur
 }
 
 // CreateTransfer implements Service.
-func (m *MockService) CreateTransfer(_ context.Context, _ int64, _, destAccountID, _ string) (string, error) {
+func (m *MockService) CreateTransfer(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup, sourceTransaction string) (string, error) {
+	if m.CreateTransferFn != nil {
+		return m.CreateTransferFn(ctx, amountCents, currency, destAccountID, transferGroup, sourceTransaction)
+	}
 	return "tr_mock_" + destAccountID, nil
 }
 

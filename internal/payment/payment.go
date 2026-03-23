@@ -40,7 +40,9 @@ type Service interface {
 	CreateOnboardingLink(ctx context.Context, accountID, returnURL, refreshURL string) (url string, err error)
 
 	// CreateTransfer sends funds to a creator's Connected Account.
-	CreateTransfer(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup string) (transferID string, err error)
+	// sourceTransaction is the Charge ID from the originating payment; when set,
+	// Stripe holds the transfer until the charge's funds are available.
+	CreateTransfer(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup, sourceTransaction string) (transferID string, err error)
 
 	// GetAccountStatus checks whether a Connected Account has charges_enabled.
 	GetAccountStatus(ctx context.Context, accountID string) (chargesEnabled bool, err error)
@@ -84,6 +86,10 @@ type IntentResult struct {
 
 	// Currency is the ISO 4217 currency code (e.g., "usd") from the provider.
 	Currency string
+
+	// ChargeID is the Stripe Charge ID from the latest successful charge.
+	// Populated when status is "succeeded" and used for source_transaction on transfers.
+	ChargeID string
 }
 
 // WebhookEventType categorises webhook events the system handles.
@@ -116,6 +122,11 @@ type WebhookEvent struct {
 
 	// FailureMessage describes why payment failed (populated only for failed events).
 	FailureMessage string
+
+	// ChargeID is the Stripe Charge ID linked to a succeeded payment.
+	// Used as source_transaction when creating transfers so Stripe
+	// holds the transfer until the charge's funds are available.
+	ChargeID string
 }
 
 // ErrUnsupportedEvent is returned when the system receives a webhook event type it doesn't handle.
