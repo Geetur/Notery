@@ -72,7 +72,10 @@ describe("purchaseNote", () => {
     it("calls POST /notes/:id/purchase", async () => {
         mockApiPost.mockResolvedValue({ purchase_id: 1 });
         await purchaseNote(3);
-        expect(mockApiPost).toHaveBeenCalledWith("/notes/3/purchase", {});
+        expect(mockApiPost).toHaveBeenCalledWith(
+            "/notes/3/purchase",
+            expect.objectContaining({ idempotency_key: expect.any(String) })
+        );
     });
 });
 

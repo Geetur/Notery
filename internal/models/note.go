@@ -1,7 +1,11 @@
 // note.go — Note model definition and status constants.
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // NoteStatus represents the approval state of a note.
 type NoteStatus string
@@ -85,8 +89,9 @@ type Note struct {
 	IsLocked bool `json:"is_locked" gorm:"default:false;not null"`
 
 	// ----- Timestamps -----
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// ----- Computed (non-DB) Fields -----
 	// SubnoteryName is populated at query time — not stored in the database.

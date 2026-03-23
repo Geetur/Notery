@@ -20,7 +20,7 @@ import {
 } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import { AlertCircle, Loader2, Lock } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 
 // Stripe singleton — loaded once per app lifecycle.
 const stripePromise = STRIPE_PUBLISHABLE_KEY
@@ -56,6 +56,7 @@ function CheckoutForm({
     const elements = useElements();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [elementReady, setElementReady] = useState(false);
 
     const handleSubmit = useCallback(
         async (e: React.FormEvent) => {
@@ -93,11 +94,20 @@ function CheckoutForm({
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
-            <PaymentElement
-                options={{
-                    layout: "tabs",
-                }}
-            />
+            {!elementReady && (
+                <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <span className="ml-2 text-sm text-muted-foreground">Loading payment form…</span>
+                </div>
+            )}
+            <div className={elementReady ? "" : "hidden"}>
+                <PaymentElement
+                    options={{
+                        layout: "tabs",
+                    }}
+                    onReady={() => setElementReady(true)}
+                />
+            </div>
 
             {error && (
                 <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
@@ -116,7 +126,7 @@ function CheckoutForm({
                 >
                     Cancel
                 </Button>
-                <Button type="submit" disabled={!stripe || loading} size="sm">
+                <Button type="submit" disabled={!stripe || !elementReady || loading} size="sm">
                     {loading ? (
                         <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
                     ) : (
@@ -153,15 +163,23 @@ export function StripeCheckout({
         [onPaymentSuccess]
     );
 
+    // Reset paymentComplete when the dialog reopens with a new clientSecret
+    useEffect(() => {
+        if (open) setPaymentComplete(false);
+    }, [open, clientSecret]);
+
+    const handleClose = useCallback(() => {
+        setPaymentComplete(false);
+        onClose();
+    }, [onClose]);
+
     const elementsOptions = useMemo(
         () => ({
             clientSecret,
             appearance: {
-                theme: "night" as const,
+                theme: "stripe" as const,
                 variables: {
                     colorPrimary: "#f97316",
-                    colorBackground: "#1a1a1a",
-                    colorText: "#e5e5e5",
                     borderRadius: "6px",
                 },
             },
@@ -171,7 +189,7 @@ export function StripeCheckout({
 
     if (!stripePromise) {
         return (
-            <Dialog open={open} onOpenChange={onClose}>
+            <Dialog open={open} onOpenChange={handleClose}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>Payment Unavailable</DialogTitle>
@@ -186,7 +204,7 @@ export function StripeCheckout({
     }
 
     return (
-        <Dialog open={open} onOpenChange={onClose}>
+        <Dialog open={open} onOpenChange={handleClose}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle>
@@ -221,7 +239,7 @@ export function StripeCheckout({
                         <p className="text-sm text-muted-foreground">
                             You now have full access to your purchased notes.
                         </p>
-                        <Button size="sm" onClick={onClose}>
+                        <Button size="sm" onClick={handleClose}>
                             Done
                         </Button>
                     </div>
@@ -231,7 +249,7 @@ export function StripeCheckout({
                             totalCents={totalCents}
                             orderId={orderId}
                             onPaymentSuccess={handleSuccess}
-                            onClose={onClose}
+                            onClose={handleClose}
                         />
                     </Elements>
                 )}

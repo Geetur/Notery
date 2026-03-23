@@ -54,7 +54,9 @@ export function checkoutSelected(
 export function purchaseNote(
     noteId: number
 ): Promise<SinglePurchaseResponse> {
-    return apiPost(`/notes/${noteId}/purchase`, {});
+    return apiPost(`/notes/${noteId}/purchase`, {
+        idempotency_key: crypto.randomUUID(),
+    });
 }
 
 // ─── Purchase Status ──────────────────────────────────────────────────────────

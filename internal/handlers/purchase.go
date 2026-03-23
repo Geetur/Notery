@@ -1176,7 +1176,7 @@ func (app *App) GetMyPurchases(c *gin.Context) {
 
 	var purchasedNotes []PurchasedNote
 
-	err := app.DB.Table("purchases").
+	err := app.DB.Unscoped().Table("purchases").
 		Select("notes.*, purchases.price_paid, purchases.purchased_at").
 		Joins("JOIN notes ON notes.id = purchases.note_id").
 		Where("purchases.user_id = ?", userID).

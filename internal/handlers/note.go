@@ -261,7 +261,7 @@ func (app *App) DeleteNote(c *gin.Context) {
 		noteLog.Log("DELETE", "Removed from search index and feed", "noteID", note.ID)
 	}
 
-	// Delete from database
+	// Soft-delete from database (keeps R2 files so purchasers retain access)
 	if err := app.DB.Delete(note).Error; err != nil {
 		noteLog.Log("DELETE", "Failed to delete from database", "noteID", note.ID, "error", err)
 		// Attempt to re-index if we had removed it
@@ -274,17 +274,7 @@ func (app *App) DeleteNote(c *gin.Context) {
 		return
 	}
 
-	// Cleanup PDF from R2 if exists
-	if note.HasPDF {
-		app.deletePDFFromR2(c.Request.Context(), note.ID)
-	}
-
-	// Cleanup thumbnail from R2 if exists
-	if note.HasThumbnail && note.ThumbnailURL != "" {
-		app.deleteThumbnailFromR2(c.Request.Context(), note.ThumbnailURL)
-	}
-
-	noteLog.Log("DELETE", "Note deleted successfully", "noteID", note.ID)
+	noteLog.Log("DELETE", "Note soft-deleted successfully", "noteID", note.ID)
 	c.JSON(http.StatusOK, gin.H{"message": "Note deleted successfully"})
 }
 
@@ -516,17 +506,39 @@ func (app *App) ApproveNote(c *gin.Context) {
 func (app *App) GetNoteByID(c *gin.Context) {
 	noteLog.Log("GET", "Processing get note by ID request")
 
-	note, ok := helpers.MustFetchNote(c, app.DB)
+	noteID, ok := helpers.MustParseNoteID(c)
 	if !ok {
-		noteLog.Log("GET", "Note not found")
+		noteLog.Log("GET", "Invalid note ID")
 		return
+	}
+
+	// Fetch note including soft-deleted (purchasers always retain access to deleted notes)
+	var note models.Note
+	if err := app.DB.Unscoped().First(&note, noteID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+		}
+		return
+	}
+
+	userID := helpers.GetUserID(c)
+
+	// If the note is soft-deleted, only purchasers (or creator/admins) can view it
+	if note.DeletedAt.Valid {
+		access := app.CheckNoteAccess(userID, &note)
+		if access == AccessNone {
+			noteLog.Log("GET", "Soft-deleted note, no access", "noteID", note.ID, "userID", userID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+			return
+		}
+		noteLog.Log("GET", "Viewing soft-deleted note", "noteID", note.ID, "userID", userID, "access", access)
 	}
 
 	// Approved notes are visible to all authenticated users.
 	// Non-approved notes are only visible to admins (global or scoped to the note's subnotery).
-	if note.Status != models.StatusApproved {
-		userID := helpers.GetUserID(c)
-
+	if note.Status != models.StatusApproved && !note.DeletedAt.Valid {
 		// Check global admin
 		var user models.User
 		if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
@@ -560,15 +572,14 @@ func (app *App) GetNoteByID(c *gin.Context) {
 	}
 
 	// Populate user vote and comment count
-	viewerID := helpers.GetUserID(c)
-	notes := []models.Note{*note}
-	app.populateUserVotes(viewerID, notes)
-	app.populateCommentCounts(notes)
-	note.UserVote = notes[0].UserVote
-	note.CommentCount = notes[0].CommentCount
+	noteSlice := []models.Note{note}
+	app.populateUserVotes(userID, noteSlice)
+	app.populateCommentCounts(noteSlice)
+	note.UserVote = noteSlice[0].UserVote
+	note.CommentCount = noteSlice[0].CommentCount
 
 	// Determine if the requesting user has full PDF access (creator, admin, or purchased/free).
-	access := app.CheckNoteAccess(viewerID, note)
+	access := app.CheckNoteAccess(userID, &note)
 	note.HasFullAccess = (access != AccessNone)
 
 	c.JSON(http.StatusOK, note)

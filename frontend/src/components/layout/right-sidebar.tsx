@@ -1,13 +1,27 @@
 // right-sidebar.tsx — Reddit-style right sidebar.
 // Shows default Notery info on homepage, or subnotery-specific info on community pages.
+// Includes a "Report a Bug" button in the footer section.
 "use client";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { submitBugReport } from "@/services/reports";
 import { useAuthStore } from "@/stores/auth-store";
+import { Bug, Loader2 } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { usePathname } from "next/navigation";
+import { type ReactNode, useState } from "react";
 
 export interface SubnoterySidebarData {
     name: string;
@@ -27,6 +41,11 @@ interface RightSidebarProps {
 
 export function RightSidebar({ children, subnotery }: RightSidebarProps) {
     const { isAuthenticated } = useAuthStore();
+    const { toast } = useToast();
+    const pathname = usePathname();
+    const [bugOpen, setBugOpen] = useState(false);
+    const [bugDesc, setBugDesc] = useState("");
+    const [submitting, setSubmitting] = useState(false);
 
     return (
         <aside className="hidden lg:block w-72 shrink-0 border-l border-border">
@@ -168,9 +187,64 @@ export function RightSidebar({ children, subnotery }: RightSidebarProps) {
                 )}
 
                 {/* Footer links */}
-                <div className="px-4 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <div className="px-4 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground items-center">
                     <Link href="/about" className="hover:underline">About</Link>
                     <Link href="/help" className="hover:underline">Help</Link>
+                    {isAuthenticated && (
+                        <Dialog open={bugOpen} onOpenChange={(open) => {
+                            setBugOpen(open);
+                            if (!open) { setBugDesc(""); }
+                        }}>
+                            <DialogTrigger asChild>
+                                <button className="inline-flex items-center gap-1 hover:underline cursor-pointer">
+                                    <Bug className="h-3 w-3" />
+                                    Report Bug
+                                </button>
+                            </DialogTrigger>
+                            <DialogContent className="sm:max-w-md">
+                                <DialogHeader>
+                                    <DialogTitle>Report a Bug</DialogTitle>
+                                    <DialogDescription>
+                                        Describe the issue you encountered. Our team will investigate.
+                                    </DialogDescription>
+                                </DialogHeader>
+                                <form
+                                    onSubmit={async (e) => {
+                                        e.preventDefault();
+                                        if (!bugDesc.trim()) return;
+                                        setSubmitting(true);
+                                        try {
+                                            await submitBugReport(bugDesc.trim(), pathname);
+                                            toast({ title: "Bug report submitted", description: "Thank you for your feedback!" });
+                                            setBugOpen(false);
+                                            setBugDesc("");
+                                        } catch {
+                                            toast({ title: "Failed to submit", description: "Please try again later.", variant: "destructive" });
+                                        } finally {
+                                            setSubmitting(false);
+                                        }
+                                    }}
+                                    className="space-y-3"
+                                >
+                                    <Textarea
+                                        placeholder="What went wrong? Please include steps to reproduce if possible."
+                                        value={bugDesc}
+                                        onChange={(e) => setBugDesc(e.target.value)}
+                                        rows={5}
+                                        maxLength={5000}
+                                        required
+                                    />
+                                    <div className="flex justify-end gap-2">
+                                        <Button type="button" variant="ghost" size="sm" onClick={() => setBugOpen(false)}>Cancel</Button>
+                                        <Button type="submit" size="sm" disabled={submitting || !bugDesc.trim()}>
+                                            {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Bug className="h-4 w-4 mr-1" />}
+                                            Submit
+                                        </Button>
+                                    </div>
+                                </form>
+                            </DialogContent>
+                        </Dialog>
+                    )}
                     <span>© 2026 Notery</span>
                 </div>
             </div>

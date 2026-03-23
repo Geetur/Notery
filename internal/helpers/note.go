@@ -51,3 +51,18 @@ func MustFetchNote(c *gin.Context, db *gorm.DB) (*models.Note, bool) {
 	}
 	return FetchNote(c, db, noteID)
 }
+
+// FetchNoteUnscoped retrieves a note by ID, including soft-deleted notes.
+// Returns the note and true on success. On failure, sends HTTP response.
+func FetchNoteUnscoped(c *gin.Context, db *gorm.DB, noteID uint64) (*models.Note, bool) {
+	var note models.Note
+	if err := db.Unscoped().First(&note, noteID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
+		}
+		return nil, false
+	}
+	return &note, true
+}

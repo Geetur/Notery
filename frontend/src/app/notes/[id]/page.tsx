@@ -483,13 +483,22 @@ export default function NoteDetailPage() {
             {/* Stripe payment dialog for single-note purchase */}
             <StripeCheckout
                 open={stripeOpen}
-                onClose={() => setStripeOpen(false)}
+                onClose={() => {
+                    setStripeOpen(false);
+                    setStripeClientSecret("");
+                    setStripeOrderId(0);
+                    setStripeTotalCents(0);
+                }}
                 clientSecret={stripeClientSecret}
                 totalCents={stripeTotalCents}
                 orderId={stripeOrderId}
                 onPaymentSuccess={() => {
                     setStripeOpen(false);
+                    setStripeClientSecret("");
+                    setStripeOrderId(0);
+                    setStripeTotalCents(0);
                     queryClient.invalidateQueries({ queryKey: ["note", noteId] });
+                    queryClient.invalidateQueries({ queryKey: ["purchaseStatus", noteId] });
                     toast({ title: "Payment successful", description: "You now have full access to this note." });
                 }}
             />
