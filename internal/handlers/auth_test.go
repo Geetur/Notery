@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Geetur/Notery/internal/email"
 	"github.com/Geetur/Notery/internal/models"
@@ -46,7 +47,8 @@ func TestSignup_HappyPath(t *testing.T) {
 		t.Fatal("expected refresh_token in response")
 	}
 
-	// Check verification email was sent
+	// Check verification email was sent (async goroutine — brief sleep needed)
+	time.Sleep(100 * time.Millisecond)
 	if len(mock.Sent) != 1 {
 		t.Fatalf("expected 1 email sent, got %d", len(mock.Sent))
 	}
@@ -499,6 +501,7 @@ func TestVerifyEmail_HappyPath(t *testing.T) {
 		}), app.Signup)
 
 	// Extract token from the email body (it's in the URL)
+	time.Sleep(100 * time.Millisecond)
 	if len(mock.Sent) < 1 {
 		t.Fatal("expected verification email to be sent")
 	}
@@ -567,7 +570,8 @@ func TestResendVerification_HappyPath(t *testing.T) {
 		nil, app.ResendVerification, authMW(uid))
 	assertStatus(t, w, http.StatusOK)
 
-	// Check email was sent
+	// Check email was sent (async goroutine — brief sleep needed)
+	time.Sleep(100 * time.Millisecond)
 	if len(mock.Sent) < 1 {
 		t.Fatal("expected verification email to be sent")
 	}
@@ -595,6 +599,7 @@ func TestForgotPassword_HappyPath(t *testing.T) {
 		}), app.ForgotPassword)
 	assertStatus(t, w, http.StatusOK)
 
+	time.Sleep(100 * time.Millisecond)
 	if len(mock.Sent) < 1 {
 		t.Fatal("expected password reset email to be sent")
 	}
@@ -629,6 +634,7 @@ func TestForgotPassword_EmailContainsFrontendURL(t *testing.T) {
 		}), app.ForgotPassword)
 	assertStatus(t, w, http.StatusOK)
 
+	time.Sleep(100 * time.Millisecond)
 	if len(mock.Sent) < 1 {
 		t.Fatal("expected password reset email to be sent")
 	}
@@ -668,6 +674,9 @@ func TestVerificationEmail_UsesBackendURL(t *testing.T) {
 			"agreed_to_terms": true,
 		}), app.Signup)
 	assertStatus(t, w, http.StatusCreated)
+
+	// sendVerificationEmail fires the mailer in a goroutine; give it time to complete.
+	time.Sleep(100 * time.Millisecond)
 
 	if len(mock.Sent) < 1 {
 		t.Fatal("expected verification email to be sent")
