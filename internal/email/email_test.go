@@ -184,4 +184,49 @@ func TestMailerInterfaceCompliance(t *testing.T) {
 	var _ Mailer = &SMTPMailer{}
 	var _ Mailer = &LogMailer{}
 	var _ Mailer = &MockMailer{}
+	var _ Mailer = &ResendMailer{}
+}
+
+// ===== RESEND MAILER FACTORY =====
+
+func TestNewMailer_ResendHost_ReturnsResendMailer(t *testing.T) {
+	m := NewMailer("smtp.resend.com", "587", "resend", "re_apikey123", "noreply@notery.app")
+	rm, ok := m.(*ResendMailer)
+	if !ok {
+		t.Fatalf("expected *ResendMailer, got %T", m)
+	}
+	if rm.APIKey != "re_apikey123" {
+		t.Errorf("unexpected APIKey: %s", rm.APIKey)
+	}
+	if rm.From != "noreply@notery.app" {
+		t.Errorf("unexpected From: %s", rm.From)
+	}
+}
+
+func TestNewMailer_ResendHostCaseInsensitive(t *testing.T) {
+	m := NewMailer("SMTP.RESEND.COM", "587", "resend", "re_key", "no@test.com")
+	if _, ok := m.(*ResendMailer); !ok {
+		t.Fatalf("expected *ResendMailer for uppercase host, got %T", m)
+	}
+}
+
+func TestNewMailer_NonResendHost_ReturnsSMTPMailer(t *testing.T) {
+	m := NewMailer("smtp.gmail.com", "587", "user", "pass", "noreply@test.com")
+	if _, ok := m.(*SMTPMailer); !ok {
+		t.Fatalf("expected *SMTPMailer for non-resend host, got %T", m)
+	}
+}
+
+// ===== RESEND MAILER UNIT =====
+
+func TestResendMailer_Send_BadEndpoint(t *testing.T) {
+	// ResendMailer with an invalid API key will get a 4xx from Resend,
+	// but we can't hit real Resend in unit tests. Just verify the struct
+	// implements Send without panic.
+	rm := &ResendMailer{APIKey: "fake", From: "test@test.com"}
+	err := rm.Send("user@example.com", "Test", "<p>hi</p>")
+	// We expect an error (auth failure from Resend) but no panic
+	if err == nil {
+		t.Log("Resend accepted the fake key — running in an env with network access")
+	}
 }

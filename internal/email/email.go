@@ -11,10 +11,14 @@
 package email
 
 import (
+	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/smtp"
 	"strings"
 	"time"
@@ -67,8 +71,8 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 }
 
 // Send delivers an email via SMTP with connection timeouts to prevent blocking.
-// Uses LOGIN auth for providers that don't support PLAIN (e.g. Outlook/Office365),
-// falling back to PLAIN auth for providers that support it.
+// Tries PLAIN auth first (works with most providers including Resend SMTP),
+// falling back to LOGIN auth for providers that require it (e.g. Outlook/Office365).
 func (m *SMTPMailer) Send(to, subject, body string) error {
 	addr := m.Host + ":" + m.Port
 
@@ -82,15 +86,15 @@ func (m *SMTPMailer) Send(to, subject, body string) error {
 		body,
 	}, "\r\n")
 
-	// Try LOGIN auth first (required by Outlook/Office365), then fall back to PLAIN.
-	auth := &loginAuth{username: m.User, password: m.Pass}
-	err := m.sendWithTimeout(addr, auth, to, []byte(msg))
+	// Try PLAIN auth first (most providers), fall back to LOGIN (Outlook/Office365).
+	plainAuth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
+	err := m.sendWithTimeout(addr, plainAuth, to, []byte(msg))
 	if err != nil {
-		// Fall back to PLAIN auth if LOGIN was rejected (error messages vary by provider).
 		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "auth") || strings.Contains(errLower, "unrecognized") || strings.Contains(errLower, "login") {
-			plainAuth := smtp.PlainAuth("", m.User, m.Pass, m.Host)
-			return m.sendWithTimeout(addr, plainAuth, to, []byte(msg))
+		if strings.Contains(errLower, "auth") || strings.Contains(errLower, "unrecognized") || strings.Contains(errLower, "plain") {
+			log.Printf("[EMAIL] PLAIN auth failed, trying LOGIN: %v", err)
+			loginA := &loginAuth{username: m.User, password: m.Pass}
+			return m.sendWithTimeout(addr, loginA, to, []byte(msg))
 		}
 	}
 	return err
@@ -165,13 +169,91 @@ func (m *LogMailer) Send(to, subject, body string) error {
 	return nil
 }
 
+// ResendMailer sends emails via the Resend HTTP API (https://api.resend.com/emails).
+// This bypasses SMTP port blocking on platforms like Railway that block outbound port 587.
+type ResendMailer struct {
+	APIKey string // Resend API key (same value as SMTP_PASS)
+	From   string // Sender address (e.g. "noreply@yourdomain.com")
+}
+
+// resendRequest is the JSON payload for the Resend API.
+type resendRequest struct {
+	From    string   `json:"from"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	HTML    string   `json:"html"`
+}
+
+// resendErrorResponse captures Resend API error details.
+type resendErrorResponse struct {
+	StatusCode int    `json:"statusCode"`
+	Message    string `json:"message"`
+	Name       string `json:"name"`
+}
+
+// Send delivers an email via the Resend HTTP API.
+func (m *ResendMailer) Send(to, subject, body string) error {
+	log.Printf("[EMAIL] Sending via Resend API to %s | Subject: %s", to, subject)
+
+	payload := resendRequest{
+		From:    m.From,
+		To:      []string{to},
+		Subject: subject,
+		HTML:    body,
+	}
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("resend marshal: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("resend request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+m.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("resend send: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Printf("[EMAIL] Resend API success (%d) for %s", resp.StatusCode, to)
+		return nil
+	}
+
+	// Read error body for diagnostics
+	errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	var resendErr resendErrorResponse
+	if json.Unmarshal(errBody, &resendErr) == nil && resendErr.Message != "" {
+		log.Printf("[EMAIL] Resend API error (%d): %s — %s", resp.StatusCode, resendErr.Name, resendErr.Message)
+		return fmt.Errorf("resend API error %d: %s", resp.StatusCode, resendErr.Message)
+	}
+	log.Printf("[EMAIL] Resend API error (%d): %s", resp.StatusCode, string(errBody))
+	return fmt.Errorf("resend API error %d: %s", resp.StatusCode, string(errBody))
+}
+
 // NewMailer creates a Mailer based on configuration.
-// Returns an SMTPMailer if SMTP is configured, or a LogMailer for development.
+// If SMTP host is smtp.resend.com, returns a ResendMailer (HTTP API) to bypass port blocking.
+// Otherwise returns an SMTPMailer or a LogMailer for development.
 func NewMailer(host, port, user, pass, from string) Mailer {
 	if host == "" || user == "" {
 		log.Println("SMTP not configured — emails will be logged to stdout (development mode)")
 		return &LogMailer{}
 	}
+
+	// Resend HTTP API: bypasses SMTP port blocking on Railway/Render/etc.
+	if strings.EqualFold(host, "smtp.resend.com") {
+		log.Printf("Resend HTTP mailer configured (from %s)", from)
+		return &ResendMailer{
+			APIKey: pass, // Resend uses the SMTP password as the API key
+			From:  from,
+		}
+	}
+
 	log.Printf("SMTP mailer configured: %s:%s from %s", host, port, from)
 	return &SMTPMailer{
 		Host: host,
