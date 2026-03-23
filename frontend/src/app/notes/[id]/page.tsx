@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { formatDate, formatFileSize, formatPrice, thumbnailUrl, timeAgo } from "@/lib/format";
 import { approveNote, getNoteById, rejectNote } from "@/services/notes";
-import { addToCart, checkPurchaseStatus, purchaseNote } from "@/services/purchases";
+import { addToCart, checkPurchaseStatus, confirmOrder, getOrderStatus, purchaseNote } from "@/services/purchases";
 import { getSubnotery } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -492,7 +492,24 @@ export default function NoteDetailPage() {
                 clientSecret={stripeClientSecret}
                 totalCents={stripeTotalCents}
                 orderId={stripeOrderId}
-                onPaymentSuccess={() => {
+                onPaymentSuccess={async (orderId) => {
+                    // Trigger backend reconciliation
+                    try {
+                        await confirmOrder(orderId);
+                    } catch {
+                        // Webhook may have already fulfilled — poll below
+                    }
+                    // Poll until fulfilled (max 10 attempts, 1.5s apart)
+                    for (let i = 0; i < 10; i++) {
+                        try {
+                            const status = await getOrderStatus(orderId);
+                            if (status.status === "fulfilled") break;
+                        } catch {
+                            // ignore poll errors
+                        }
+                        await new Promise((r) => setTimeout(r, 1500));
+                    }
+                    // Refresh data and close dialog
                     setStripeOpen(false);
                     setStripeClientSecret("");
                     setStripeOrderId(0);

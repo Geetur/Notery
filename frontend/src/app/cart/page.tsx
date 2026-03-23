@@ -13,7 +13,9 @@ import { getNoteById } from "@/services/notes";
 import {
     checkoutCart,
     checkoutSelected,
+    confirmOrder,
     getCart,
+    getOrderStatus,
     removeFromCart,
 } from "@/services/purchases";
 import { useAuthStore } from "@/stores/auth-store";
@@ -401,7 +403,23 @@ export default function CartPage() {
                     clientSecret={stripeClientSecret}
                     totalCents={stripeTotalCents}
                     orderId={stripeOrderId}
-                    onPaymentSuccess={async () => {
+                    onPaymentSuccess={async (orderId) => {
+                        // Trigger backend reconciliation
+                        try {
+                            await confirmOrder(orderId);
+                        } catch {
+                            // Webhook may have already fulfilled — poll below
+                        }
+                        // Poll until fulfilled (max 10 attempts, 1.5s apart)
+                        for (let i = 0; i < 10; i++) {
+                            try {
+                                const status = await getOrderStatus(orderId);
+                                if (status.status === "fulfilled") break;
+                            } catch {
+                                // ignore poll errors
+                            }
+                            await new Promise((r) => setTimeout(r, 1500));
+                        }
                         toast({
                             title: "Payment successful!",
                             description: "Your notes are now available.",

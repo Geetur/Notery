@@ -35,8 +35,8 @@ interface StripeCheckoutProps {
     clientSecret: string;
     totalCents: number;
     orderId: number;
-    /** Called after payment confirmation succeeds so the parent can poll or refetch. */
-    onPaymentSuccess: (orderId: number) => void;
+    /** Called after payment confirmation succeeds. May be async (confirm + poll order fulfillment). */
+    onPaymentSuccess: (orderId: number) => void | Promise<void>;
 }
 
 // ─── Inner form (must be inside Elements provider) ────────────────────────────
@@ -46,11 +46,13 @@ function CheckoutForm({
     orderId,
     onPaymentSuccess,
     onClose,
+    confirming,
 }: {
     totalCents: number;
     orderId: number;
-    onPaymentSuccess: (orderId: number) => void;
+    onPaymentSuccess: (orderId: number) => void | Promise<void>;
     onClose: () => void;
+    confirming: boolean;
 }) {
     const stripe = useStripe();
     const elements = useElements();
@@ -84,6 +86,7 @@ function CheckoutForm({
                 result.paymentIntent?.status === "succeeded" ||
                 result.paymentIntent?.status === "processing"
             ) {
+                // Parent handles confirmation + polling; loading stays true
                 onPaymentSuccess(orderId);
             } else {
                 setError("Unexpected payment status. Please check your order.");
@@ -127,29 +130,38 @@ function CheckoutForm({
                 </div>
             )}
 
-            <div className="flex items-center justify-between pt-2">
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={onClose}
-                    disabled={loading}
-                >
-                    Cancel
-                </Button>
-                <Button type="submit" disabled={!stripe || !elements || !elementReady || loading} size="sm">
-                    {loading ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-                    ) : (
-                        <Lock className="h-4 w-4 mr-1.5" />
-                    )}
-                    Pay {formatPrice(totalCents)}
-                </Button>
-            </div>
+            {confirming ? (
+                <div className="flex flex-col items-center gap-3 py-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">Confirming your purchase…</p>
+                </div>
+            ) : (
+                <>
+                    <div className="flex items-center justify-between pt-2">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={onClose}
+                            disabled={loading}
+                        >
+                            Cancel
+                        </Button>
+                        <Button type="submit" disabled={!stripe || !elements || !elementReady || loading} size="sm">
+                            {loading ? (
+                                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                            ) : (
+                                <Lock className="h-4 w-4 mr-1.5" />
+                            )}
+                            Pay {formatPrice(totalCents)}
+                        </Button>
+                    </div>
 
-            <p className="text-[11px] text-muted-foreground text-center">
-                Payments are securely processed by Stripe.
-            </p>
+                    <p className="text-[11px] text-muted-foreground text-center">
+                        Payments are securely processed by Stripe.
+                    </p>
+                </>
+            )}
         </form>
     );
 }
@@ -165,18 +177,27 @@ export function StripeCheckout({
     onPaymentSuccess,
 }: StripeCheckoutProps) {
     const [paymentComplete, setPaymentComplete] = useState(false);
+    const [confirming, setConfirming] = useState(false);
 
     const handleSuccess = useCallback(
-        (id: number) => {
+        async (id: number) => {
+            setConfirming(true);
+            try {
+                await onPaymentSuccess(id);
+            } finally {
+                setConfirming(false);
+            }
             setPaymentComplete(true);
-            onPaymentSuccess(id);
         },
         [onPaymentSuccess]
     );
 
-    // Reset paymentComplete when the dialog reopens with a new clientSecret
+    // Reset state when the dialog reopens with a new clientSecret
     useEffect(() => {
-        if (open) setPaymentComplete(false);
+        if (open) {
+            setPaymentComplete(false);
+            setConfirming(false);
+        }
     }, [open, clientSecret]);
 
     const handleClose = useCallback(() => {
@@ -221,12 +242,16 @@ export function StripeCheckout({
                     <DialogTitle>
                         {paymentComplete
                             ? "Payment Successful!"
-                            : "Complete Payment"}
+                            : confirming
+                                ? "Confirming Purchase…"
+                                : "Complete Payment"}
                     </DialogTitle>
                     <DialogDescription>
                         {paymentComplete
                             ? "Your purchase has been confirmed."
-                            : `Total: ${formatPrice(totalCents)}`}
+                            : confirming
+                                ? "Please wait while we confirm your order."
+                                : `Total: ${formatPrice(totalCents)}`}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -261,6 +286,7 @@ export function StripeCheckout({
                             orderId={orderId}
                             onPaymentSuccess={handleSuccess}
                             onClose={handleClose}
+                            confirming={confirming}
                         />
                     </Elements>
                 ) : (
