@@ -277,6 +277,9 @@ func main() {
 	write.POST("/bookmarks/:note_id", app.AddBookmark)
 	write.DELETE("/bookmarks/:note_id", app.RemoveBookmark)
 
+	// Bug reports
+	write.POST("/reports/bug", app.SubmitBugReport)
+
 	// Notifications (actions)
 	write.PATCH("/notifications/:id/read", app.MarkNotificationRead)
 	write.POST("/notifications/read-all", app.MarkAllNotificationsRead)

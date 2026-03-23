@@ -296,9 +296,9 @@ func (app *App) GetNotePDFContent(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 	contentLog.Log("VIEW", "processing", "user_id", userID, "note_id", noteID)
 
-	// Fetch the note
+	// Fetch the note (including soft-deleted for purchasers)
 	var note models.Note
-	if err := app.DB.First(&note, noteID).Error; err != nil {
+	if err := app.DB.Unscoped().First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			contentLog.Log("VIEW", "note not found", "note_id", noteID)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
@@ -307,6 +307,16 @@ func (app *App) GetNotePDFContent(c *gin.Context) {
 		contentLog.Log("VIEW", "database error", "note_id", noteID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
 		return
+	}
+
+	// If soft-deleted, only purchasers/creator/admins can access
+	if note.DeletedAt.Valid {
+		access := app.CheckNoteAccess(userID, &note)
+		if access == AccessNone {
+			contentLog.Log("VIEW", "denied - soft-deleted note, no access", "user_id", userID, "note_id", noteID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+			return
+		}
 	}
 
 	// Check if note has a PDF
@@ -467,15 +477,25 @@ func (app *App) GetNotePreview(c *gin.Context) {
 		return
 	}
 
-	// Fetch the note
+	// Fetch the note (including soft-deleted for purchasers)
 	var note models.Note
-	if err := app.DB.First(&note, noteID).Error; err != nil {
+	if err := app.DB.Unscoped().First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch note"})
 		return
+	}
+
+	// If soft-deleted, only purchasers/creator/admins can access
+	if note.DeletedAt.Valid {
+		userID := helpers.GetUserID(c)
+		access := app.CheckNoteAccess(userID, &note)
+		if access == AccessNone {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+			return
+		}
 	}
 
 	// Only approved notes can be previewed publicly; admins can preview any note.
