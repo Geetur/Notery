@@ -116,7 +116,7 @@ function CheckoutForm({
                     onLoadError={(e) =>
                         setElementError(
                             e.error?.message ??
-                                "Failed to load payment form. Please check your connection and try again."
+                            "Failed to load payment form. Please check your connection and try again."
                         )
                     }
                 />
