@@ -56,6 +56,8 @@ function CheckoutForm({
     const elements = useElements();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [elementReady, setElementReady] = useState(false);
+    const [elementError, setElementError] = useState<string | null>(null);
 
     const handleSubmit = useCallback(
         async (e: React.FormEvent) => {
@@ -93,7 +95,32 @@ function CheckoutForm({
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
-            <PaymentElement options={{ layout: "tabs" }} />
+            {!elementReady && !elementError && (
+                <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <span className="ml-2 text-sm text-muted-foreground">Loading payment form…</span>
+                </div>
+            )}
+
+            {elementError && (
+                <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{elementError}</span>
+                </div>
+            )}
+
+            <div className={elementReady ? undefined : "sr-only"}>
+                <PaymentElement
+                    options={{ layout: "tabs" }}
+                    onReady={() => setElementReady(true)}
+                    onLoadError={(e) =>
+                        setElementError(
+                            e.error?.message ??
+                                "Failed to load payment form. Please check your connection and try again."
+                        )
+                    }
+                />
+            </div>
 
             {error && (
                 <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
@@ -112,7 +139,7 @@ function CheckoutForm({
                 >
                     Cancel
                 </Button>
-                <Button type="submit" disabled={!stripe || loading} size="sm">
+                <Button type="submit" disabled={!stripe || !elements || !elementReady || loading} size="sm">
                     {loading ? (
                         <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
                     ) : (
