@@ -61,7 +61,10 @@ func connect() (*gorm.DB, error) {
 		getenv("DB_TIMEZONE", "UTC"),
 	)
 
-	db, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		DSN:                  DSN,
+		PreferSimpleProtocol: true, // disables implicit prepared statement usage to avoid "cached plan must not change result type" after schema migrations
+	}), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
