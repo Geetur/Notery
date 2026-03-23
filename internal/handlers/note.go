@@ -63,7 +63,9 @@ func (app *App) deletePDFFromR2(ctx context.Context, noteID uint) {
 // status and must be approved by an admin before it appears in search or the feed.
 //
 // DB: SELECT subnotery by name, INSERT subnotery (if new), INSERT user_admins + user_memberships
-//     (if new), INSERT note. All in a single GORM transaction.
+//
+//	(if new), INSERT note. All in a single GORM transaction.
+//
 // Technologies: PostgreSQL (GORM transaction).
 // Helpers: helpers.BindJSON, helpers.GetUserID.
 //
@@ -233,7 +235,9 @@ func (app *App) CreateNote(c *gin.Context) {
 //
 // DB: SELECT note by ID, DELETE note. Conditional: re-index on rollback.
 // Technologies: PostgreSQL (GORM), Meilisearch (document delete), Redis ZREM (feed removal),
-//     Cloudflare R2 (PDF cleanup).
+//
+//	Cloudflare R2 (PDF cleanup).
+//
 // Helpers: helpers.MustFetchNote.
 //
 // Route: DELETE /api/v1/notes/:id
@@ -330,7 +334,9 @@ func (app *App) UnlockNote(c *gin.Context) {
 //
 // DB: SELECT note by ID, UPDATE status to Rejected, DELETE note. Conditional rollback on failure.
 // Technologies: PostgreSQL (GORM), Meilisearch (document delete), Redis ZREM (feed removal),
-//     Cloudflare R2 (PDF cleanup if exists).
+//
+//	Cloudflare R2 (PDF cleanup if exists).
+//
 // Helpers: helpers.MustFetchNote.
 //
 // Route: PATCH /api/v1/notes/:id/reject
