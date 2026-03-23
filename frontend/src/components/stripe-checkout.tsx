@@ -94,7 +94,7 @@ function CheckoutForm({
     );
 
     return (
-        <form onSubmit={handleSubmit} className="relative space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
             {!elementReady && !elementError && (
                 <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -109,18 +109,16 @@ function CheckoutForm({
                 </div>
             )}
 
-            <div className={elementReady ? undefined : "opacity-0 absolute -z-10 left-0 right-0"}>
-                <PaymentElement
-                    options={{ layout: "tabs" }}
-                    onReady={() => setElementReady(true)}
-                    onLoadError={(e) =>
-                        setElementError(
-                            e.error?.message ??
-                            "Failed to load payment form. Please check your connection and try again."
-                        )
-                    }
-                />
-            </div>
+            <PaymentElement
+                options={{ layout: "tabs" }}
+                onReady={() => setElementReady(true)}
+                onLoadError={(e) =>
+                    setElementError(
+                        e.error?.message ??
+                        "Failed to load payment form. Please check your connection and try again."
+                    )
+                }
+            />
 
             {error && (
                 <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
@@ -256,7 +254,7 @@ export function StripeCheckout({
                             Done
                         </Button>
                     </div>
-                ) : (
+                ) : clientSecret ? (
                     <Elements stripe={stripePromise} options={elementsOptions}>
                         <CheckoutForm
                             totalCents={totalCents}
@@ -265,6 +263,11 @@ export function StripeCheckout({
                             onClose={handleClose}
                         />
                     </Elements>
+                ) : (
+                    <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        <span className="ml-2 text-sm text-muted-foreground">Preparing checkout…</span>
+                    </div>
                 )}
             </DialogContent>
         </Dialog>
