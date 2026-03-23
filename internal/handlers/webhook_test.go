@@ -292,6 +292,60 @@ func TestWebhook_PaymentFailed_FulfilledWins(t *testing.T) {
 	}
 }
 
+func TestWebhook_PaymentSucceeded_StoresChargeID(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "buyer_charge")
+
+	// Create a pending order with an item so fulfilOrder succeeds
+	sub := models.Subnotery{Name: "charge-sub"}
+	app.DB.Create(&sub)
+	note := models.Note{
+		Title:       "charge-note",
+		SubnoteryID: sub.ID,
+		CreatorID:   uid,
+		Status:      models.StatusApproved,
+		HasPDF:      true,
+		Price:       100,
+	}
+	app.DB.Create(&note)
+
+	order := models.Order{
+		UserID:          uid,
+		Status:          models.OrderPending,
+		TotalCents:      100,
+		Currency:        "usd",
+		PaymentIntentID: "pi_charge_test",
+		IdempotencyKey:  "idem_charge",
+	}
+	app.DB.Create(&order)
+	app.DB.Create(&models.OrderItem{OrderID: order.ID, NoteID: note.ID, PriceCents: 100})
+
+	app.Payment = &payment.MockService{
+		VerifyFn: func(payload []byte, sig string) (*payment.WebhookEvent, error) {
+			return &payment.WebhookEvent{
+				Type:            payment.EventPaymentSucceeded,
+				PaymentIntentID: "pi_charge_test",
+				AmountCents:     100,
+				Currency:        "usd",
+				ChargeID:        "ch_test_abc123",
+			}, nil
+		},
+	}
+
+	w := serveWebhook(app, []byte(`{}`), "sig_test")
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify charge ID was stored on the order
+	var check models.Order
+	app.DB.First(&check, order.ID)
+	if check.ChargeID != "ch_test_abc123" {
+		t.Fatalf("expected charge_id 'ch_test_abc123', got %q", check.ChargeID)
+	}
+	if check.Status != models.OrderFulfilled {
+		t.Fatalf("expected order fulfilled, got %s", check.Status)
+	}
+}
+
 func TestWebhook_PaymentCanceled_HappyPath(t *testing.T) {
 	app := testApp(t)
 	uid := seedUser(t, app.DB, "buyer_cancel")

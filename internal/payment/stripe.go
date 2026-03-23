@@ -81,12 +81,18 @@ func (s *StripeService) RetrievePaymentIntent(ctx context.Context, paymentIntent
 		return nil, fmt.Errorf("stripe: retrieve payment intent: %w", err)
 	}
 
+	chargeID := ""
+	if pi.LatestCharge != nil {
+		chargeID = pi.LatestCharge.ID
+	}
+
 	return &IntentResult{
 		PaymentIntentID: pi.ID,
 		ClientSecret:    pi.ClientSecret,
 		Status:          string(pi.Status),
 		AmountCents:     pi.Amount,
 		Currency:        string(pi.Currency),
+		ChargeID:        chargeID,
 	}, nil
 }
 
@@ -105,11 +111,16 @@ func (s *StripeService) VerifyWebhookSignature(payload []byte, signature string)
 		if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
 			return nil, fmt.Errorf("stripe: unmarshal payment_intent.succeeded: %w", err)
 		}
+		chargeID := ""
+		if pi.LatestCharge != nil {
+			chargeID = pi.LatestCharge.ID
+		}
 		return &WebhookEvent{
 			Type:            EventPaymentSucceeded,
 			PaymentIntentID: pi.ID,
 			AmountCents:     pi.Amount,
 			Currency:        string(pi.Currency),
+			ChargeID:        chargeID,
 		}, nil
 
 	case "payment_intent.payment_failed":
@@ -192,12 +203,17 @@ func (s *StripeService) CreateOnboardingLink(ctx context.Context, accountID, ret
 }
 
 // CreateTransfer sends funds to a creator's Connected Account.
-func (s *StripeService) CreateTransfer(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup string) (string, error) {
+// sourceTransaction is the Charge ID from the buyer's payment; when set,
+// Stripe holds the transfer until the charge's funds are available.
+func (s *StripeService) CreateTransfer(ctx context.Context, amountCents int64, currency, destAccountID, transferGroup, sourceTransaction string) (string, error) {
 	params := &stripe.TransferParams{
 		Amount:        stripe.Int64(amountCents),
 		Currency:      stripe.String(currency),
 		Destination:   stripe.String(destAccountID),
 		TransferGroup: stripe.String(transferGroup),
+	}
+	if sourceTransaction != "" {
+		params.SourceTransaction = stripe.String(sourceTransaction)
 	}
 	params.Context = ctx
 

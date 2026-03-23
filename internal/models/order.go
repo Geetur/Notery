@@ -46,6 +46,11 @@ type Order struct {
 	// PaymentIntentID stores the external payment processor reference (e.g. Stripe pi_xxx).
 	PaymentIntentID string `json:"payment_intent_id,omitempty" gorm:"index"`
 
+	// ChargeID is the Stripe Charge ID from the successful payment.
+	// Used as source_transaction when creating transfers to connected accounts,
+	// ensuring Stripe holds the transfer until the charge's funds are available.
+	ChargeID string `json:"charge_id,omitempty" gorm:"size:255"`
+
 	// PaidAt records when payment was confirmed by the payment provider.
 	PaidAt *time.Time `json:"paid_at,omitempty"`
 
