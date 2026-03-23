@@ -56,7 +56,6 @@ function CheckoutForm({
     const elements = useElements();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [elementReady, setElementReady] = useState(false);
 
     const handleSubmit = useCallback(
         async (e: React.FormEvent) => {
@@ -94,20 +93,7 @@ function CheckoutForm({
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
-            {!elementReady && (
-                <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    <span className="ml-2 text-sm text-muted-foreground">Loading payment form…</span>
-                </div>
-            )}
-            <div className={elementReady ? "" : "hidden"}>
-                <PaymentElement
-                    options={{
-                        layout: "tabs",
-                    }}
-                    onReady={() => setElementReady(true)}
-                />
-            </div>
+            <PaymentElement options={{ layout: "tabs" }} />
 
             {error && (
                 <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
@@ -126,7 +112,7 @@ function CheckoutForm({
                 >
                     Cancel
                 </Button>
-                <Button type="submit" disabled={!stripe || !elementReady || loading} size="sm">
+                <Button type="submit" disabled={!stripe || loading} size="sm">
                     {loading ? (
                         <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
                     ) : (
