@@ -424,3 +424,202 @@ func parseJSONArray(t *testing.T, w *httptest.ResponseRecorder, dest interface{}
 		t.Fatalf("failed to parse json array: %v | body: %s", err, w.Body.String())
 	}
 }
+
+// ===== ANONYMOUS ACCESS TESTS =====
+
+func TestGetNoteByID_Anonymous_Approved(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "anonview")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// No authMW — anonymous request
+	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID)
+	assertStatus(t, w, http.StatusOK)
+
+	r := respJSON(t, w)
+	if r["has_full_access"] != false {
+		t.Fatal("anonymous user should not have full access")
+	}
+	if r["user_vote"] != "" {
+		t.Fatalf("anonymous user should have empty user_vote, got %v", r["user_vote"])
+	}
+}
+
+func TestGetNoteByID_Anonymous_Pending(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "anonpend")
+	noteID := seedPendingNote(t, app.DB, uid)
+
+	// No authMW — anonymous request
+	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID)
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestGetNoteByID_Anonymous_SoftDeleted(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "anonsoft")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	// Soft-delete the note
+	app.DB.Delete(&models.Note{}, noteID)
+
+	// No authMW — anonymous request
+	w := serve("GET", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.GetNoteByID)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestGetApprovedNotes_Anonymous(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "anonlist")
+	seedApprovedNote(t, app.DB, uid)
+	seedApprovedNote(t, app.DB, uid)
+	seedPendingNote(t, app.DB, uid) // should not appear
+
+	// No authMW — anonymous request
+	w := serve("GET", "/notes/approved", "/notes/approved",
+		nil, app.GetApprovedNotes)
+	assertStatus(t, w, http.StatusOK)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	notes, _ := resp["notes"].([]interface{})
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 approved notes, got %d", len(notes))
+	}
+}
+
+// ===== SORT CORRECTNESS TESTS =====
+
+func TestGetApprovedNotes_SortTop(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "sorttop")
+	n1 := seedApprovedNote(t, app.DB, uid)
+	n2 := seedApprovedNote(t, app.DB, uid)
+	n3 := seedApprovedNote(t, app.DB, uid)
+
+	// Give different vote counts
+	app.DB.Model(&models.Note{}).Where("id = ?", n1).Updates(map[string]interface{}{"upvotes": 10, "downvotes": 2})
+	app.DB.Model(&models.Note{}).Where("id = ?", n2).Updates(map[string]interface{}{"upvotes": 5, "downvotes": 0})
+	app.DB.Model(&models.Note{}).Where("id = ?", n3).Updates(map[string]interface{}{"upvotes": 20, "downvotes": 1})
+
+	w := serve("GET", "/notes/approved", "/notes/approved?sort=top&time=all",
+		nil, app.GetApprovedNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	notes, _ := resp["notes"].([]interface{})
+	if len(notes) != 3 {
+		t.Fatalf("expected 3 notes, got %d", len(notes))
+	}
+
+	// n3 (net 19) should be first, n1 (net 8) second, n2 (net 5) third
+	first := notes[0].(map[string]interface{})
+	if uint(first["id"].(float64)) != n3 {
+		t.Fatalf("expected note %d first (highest net votes), got %v", n3, first["id"])
+	}
+}
+
+func TestGetApprovedNotes_SortControversial(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "sortcont")
+	n1 := seedApprovedNote(t, app.DB, uid)
+	n2 := seedApprovedNote(t, app.DB, uid)
+	n3 := seedApprovedNote(t, app.DB, uid)
+
+	// n1: 10 up, 9 down → total=19, net=1, controversy=19/1=19
+	// n2: 5 up, 0 down → total=5, net=5, controversy=5/5=1
+	// n3: 8 up, 7 down → total=15, net=1, controversy=15/1=15
+	app.DB.Model(&models.Note{}).Where("id = ?", n1).Updates(map[string]interface{}{"upvotes": 10, "downvotes": 9})
+	app.DB.Model(&models.Note{}).Where("id = ?", n2).Updates(map[string]interface{}{"upvotes": 5, "downvotes": 0})
+	app.DB.Model(&models.Note{}).Where("id = ?", n3).Updates(map[string]interface{}{"upvotes": 8, "downvotes": 7})
+
+	w := serve("GET", "/notes/approved", "/notes/approved?sort=controversial&time=all",
+		nil, app.GetApprovedNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	notes, _ := resp["notes"].([]interface{})
+	if len(notes) != 3 {
+		t.Fatalf("expected 3 notes, got %d", len(notes))
+	}
+
+	// n1 (controversy 19) should be first
+	first := notes[0].(map[string]interface{})
+	if uint(first["id"].(float64)) != n1 {
+		t.Fatalf("expected note %d first (most controversial), got %v", n1, first["id"])
+	}
+}
+
+func TestGetApprovedNotes_SortTop_TimeFilterAll(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "sorttimeall")
+
+	// Create notes — SQLite test DB uses created_at from insert time (now),
+	// but this verifies time=all doesn't exclude anything
+	seedApprovedNote(t, app.DB, uid)
+	seedApprovedNote(t, app.DB, uid)
+
+	w := serve("GET", "/notes/approved", "/notes/approved?sort=top&time=all",
+		nil, app.GetApprovedNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	notes, _ := resp["notes"].([]interface{})
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 notes with time=all, got %d", len(notes))
+	}
+}
+
+func TestGetApprovedNotes_SortControversial_ZeroVotes(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "sortczero")
+
+	// Notes with zero votes should still be returned (not crash the query)
+	seedApprovedNote(t, app.DB, uid)
+	seedApprovedNote(t, app.DB, uid)
+
+	w := serve("GET", "/notes/approved", "/notes/approved?sort=controversial&time=all",
+		nil, app.GetApprovedNotes, authMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	notes, _ := resp["notes"].([]interface{})
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 notes, got %d", len(notes))
+	}
+}
+
+func TestGetApprovedNotes_Anonymous_SortTop(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "anonsort")
+	n1 := seedApprovedNote(t, app.DB, uid)
+	n2 := seedApprovedNote(t, app.DB, uid)
+
+	app.DB.Model(&models.Note{}).Where("id = ?", n1).Updates(map[string]interface{}{"upvotes": 3, "downvotes": 0})
+	app.DB.Model(&models.Note{}).Where("id = ?", n2).Updates(map[string]interface{}{"upvotes": 10, "downvotes": 1})
+
+	// No authMW — anonymous
+	w := serve("GET", "/notes/approved", "/notes/approved?sort=top&time=all",
+		nil, app.GetApprovedNotes)
+	assertStatus(t, w, http.StatusOK)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	notes, _ := resp["notes"].([]interface{})
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 notes, got %d", len(notes))
+	}
+
+	// n2 (net 9) should be first
+	first := notes[0].(map[string]interface{})
+	if uint(first["id"].(float64)) != n2 {
+		t.Fatalf("expected note %d first, got %v", n2, first["id"])
+	}
+}

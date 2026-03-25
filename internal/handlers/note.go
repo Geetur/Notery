@@ -506,7 +506,7 @@ func (app *App) ApproveNote(c *gin.Context) {
 //
 // DB: SELECT note by ID via GORM; optional admin check via user + user_admins.
 // Technologies: PostgreSQL (GORM).
-// Helpers: helpers.MustFetchNote, helpers.GetUserID.
+// Helpers: helpers.MustParseNoteID, helpers.TryGetUserID.
 //
 // Route: GET /api/v1/notes/:id
 func (app *App) GetNoteByID(c *gin.Context) {
@@ -529,10 +529,14 @@ func (app *App) GetNoteByID(c *gin.Context) {
 		return
 	}
 
-	userID := helpers.GetUserID(c)
+	userID, authenticated := helpers.TryGetUserID(c)
 
 	// If the note is soft-deleted, only purchasers (or creator/admins) can view it
 	if note.DeletedAt.Valid {
+		if !authenticated {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Note not found"})
+			return
+		}
 		access := app.CheckNoteAccess(userID, &note)
 		if access == AccessNone {
 			noteLog.Log("GET", "Soft-deleted note, no access", "noteID", note.ID, "userID", userID)
@@ -542,9 +546,13 @@ func (app *App) GetNoteByID(c *gin.Context) {
 		noteLog.Log("GET", "Viewing soft-deleted note", "noteID", note.ID, "userID", userID, "access", access)
 	}
 
-	// Approved notes are visible to all authenticated users.
+	// Approved notes are visible to everyone (including anonymous users).
 	// Non-approved notes are only visible to admins (global or scoped to the note's subnotery).
 	if note.Status != models.StatusApproved && !note.DeletedAt.Valid {
+		if !authenticated {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Note is not approved"})
+			return
+		}
 		// Check global admin
 		var user models.User
 		if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {
@@ -579,14 +587,18 @@ func (app *App) GetNoteByID(c *gin.Context) {
 
 	// Populate user vote and comment count
 	noteSlice := []models.Note{note}
-	app.populateUserVotes(userID, noteSlice)
+	if authenticated {
+		app.populateUserVotes(userID, noteSlice)
+	}
 	app.populateCommentCounts(noteSlice)
 	note.UserVote = noteSlice[0].UserVote
 	note.CommentCount = noteSlice[0].CommentCount
 
 	// Determine if the requesting user has full PDF access (creator, admin, or purchased/free).
-	access := app.CheckNoteAccess(userID, &note)
-	note.HasFullAccess = (access != AccessNone)
+	if authenticated {
+		access := app.CheckNoteAccess(userID, &note)
+		note.HasFullAccess = (access != AccessNone)
+	}
 
 	c.JSON(http.StatusOK, note)
 }
@@ -733,9 +745,10 @@ func (app *App) GetApprovedNotes(c *gin.Context) {
 	// Populate comment counts
 	app.populateCommentCounts(notes)
 
-	// Populate user votes for the current user
-	userID := helpers.GetUserID(c)
-	app.populateUserVotes(userID, notes)
+	// Populate user votes for the current user (only when authenticated)
+	if userID, authenticated := helpers.TryGetUserID(c); authenticated {
+		app.populateUserVotes(userID, notes)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"notes": notes,

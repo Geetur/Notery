@@ -5,7 +5,7 @@ describe("useFeedStore", () => {
     beforeEach(() => {
         useFeedStore.setState({
             sort: "hot",
-            timeFilter: "day",
+            timeFilter: "all",
             viewMode: "card",
         });
     });
@@ -13,7 +13,7 @@ describe("useFeedStore", () => {
     it("has correct initial state", () => {
         const state = useFeedStore.getState();
         expect(state.sort).toBe("hot");
-        expect(state.timeFilter).toBe("day");
+        expect(state.timeFilter).toBe("all");
         expect(state.viewMode).toBe("card");
     });
 

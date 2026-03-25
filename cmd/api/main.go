@@ -190,6 +190,10 @@ func main() {
 	readPublic.GET("/users/:id/comments", app.GetUserComments)
 	readPublic.GET("/notes/:id/thumbnail", app.GetThumbnail)
 
+	// Approved notes browsing (public, supports all sort modes)
+	readPublic.GET("/notes/approved", app.GetApprovedNotes)
+	readPublic.GET("/notes/:id", app.GetNoteByID)
+
 	// Subnotery browsing (public, rate-limited)
 	readPublic.GET("/subnoteries", app.ListSubnoteries)
 	readPublic.GET("/subnoteries/:subnotery_id", app.GetSubnoteryDetail)
@@ -203,8 +207,6 @@ func main() {
 	if redisClient != nil {
 		readOnly.Use(middleware.RateLimit(redisClient, middleware.DefaultReadRateLimit, "read:"))
 	}
-	readOnly.GET("/notes/:id", app.GetNoteByID)
-	readOnly.GET("/notes/approved", app.GetApprovedNotes)
 	readOnly.GET("/notes/:id/content", app.GetNotePDFContent)
 	readOnly.GET("/notes/:id/preview", app.GetNotePreview)
 	readOnly.GET("/cart", app.GetCart)

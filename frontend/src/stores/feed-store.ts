@@ -13,7 +13,7 @@ interface FeedState {
 
 export const useFeedStore = create<FeedState>((set) => ({
     sort: "hot",
-    timeFilter: "day",
+    timeFilter: "all",
     viewMode: "card",
     setSort: (sort) => set({ sort }),
     setTimeFilter: (filter) => set({ timeFilter: filter }),

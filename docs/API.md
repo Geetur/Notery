@@ -23,11 +23,13 @@ Full endpoint reference for the Notery REST API. All routes are prefixed with `/
 | `GET` | `/api/v1/auth/oauth/github/callback` | GitHub OAuth callback |
 | `POST` | `/api/v1/webhooks/stripe` | Stripe webhook (signature-verified) |
 
-## Public with Optional Auth (11 routes)
+## Public with Optional Auth (13 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/v1/feed/hot` | Hot feed (personalised votes if authenticated) |
+| `GET` | `/api/v1/notes/approved` | Approved notes feed (paginated, sortable: hot/new/top/controversial) |
+| `GET` | `/api/v1/notes/:id` | Get note by ID (metadata, votes, comments visible to all) |
 | `GET` | `/api/v1/notes/:id/comments` | Threaded comments tree |
 | `GET` | `/api/v1/comments/:comment_id` | Single comment subtree |
 | `GET` | `/api/v1/users/:id/profile` | Public user profile (includes notoriety) |
@@ -39,16 +41,14 @@ Full endpoint reference for the Notery REST API. All routes are prefixed with `/
 | `GET` | `/api/v1/notes/:id/thumbnail` | Note thumbnail image (24h cache) |
 | `GET` | `/api/v1/subnoteries/:id/banner` | Subnotery banner image (24h cache) |
 
-## Auth-Only (14 routes)
+## Auth-Only (12 routes)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/v1/auth/logout-all` | Revoke all refresh tokens |
 | `POST` | `/api/v1/auth/resend-verification` | Resend verification email |
-| `GET` | `/api/v1/notes/:id` | Get note by ID |
-| `GET` | `/api/v1/notes/approved` | List approved notes (paginated) |
 | `GET` | `/api/v1/notes/:id/content` | View/stream full PDF |
-| `GET` | `/api/v1/notes/:id/preview` | Preview PDF (truncated: 1 page per 5 total) |
+| `GET` | `/api/v1/notes/:id/preview` | Preview PDF (requires auth; frontend page-limits control preview) |
 | `GET` | `/api/v1/cart` | View cart |
 | `GET` | `/api/v1/notes/:id/purchased` | Check purchase status |
 | `GET` | `/api/v1/me/purchases` | My purchased notes |
