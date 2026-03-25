@@ -792,20 +792,23 @@ func (app *App) GetPurchaseHistory(c *gin.Context) {
 
 	// Fetch purchases with note details
 	type PurchaseWithNote struct {
-		PurchaseID  uint      `json:"purchase_id"`
-		NoteID      uint      `json:"note_id"`
-		NoteTitle   string    `json:"note_title"`
-		NoteAuthor  string    `json:"note_author"`
-		PricePaid   int64     `json:"price_paid"`
-		PurchasedAt time.Time `json:"purchased_at"`
-		HasPDF      bool      `json:"has_pdf"`
+		PurchaseID    uint      `json:"purchase_id"`
+		NoteID        uint      `json:"note_id"`
+		NoteTitle     string    `json:"note_title"`
+		NoteAuthor    string    `json:"note_author"`
+		PricePaid     int64     `json:"price_paid"`
+		PurchasedAt   time.Time `json:"purchased_at"`
+		HasPDF        bool      `json:"has_pdf"`
+		SubnoteryID   uint      `json:"subnotery_id"`
+		SubnoteryName string    `json:"subnotery_name"`
 	}
 
 	var purchases []PurchaseWithNote
 
 	err := app.DB.Table("purchases").
-		Select("purchases.id as purchase_id, purchases.note_id, notes.title as note_title, notes.author as note_author, purchases.price_paid, purchases.purchased_at, notes.has_pdf").
+		Select("purchases.id as purchase_id, purchases.note_id, notes.title as note_title, notes.author as note_author, purchases.price_paid, purchases.purchased_at, notes.has_pdf, notes.subnotery_id, subnoteries.name as subnotery_name").
 		Joins("JOIN notes ON notes.id = purchases.note_id").
+		Joins("LEFT JOIN subnoteries ON subnoteries.id = notes.subnotery_id").
 		Where("purchases.user_id = ?", userID).
 		Order("purchases.purchased_at DESC").
 		Offset(pag.Offset).
@@ -1201,6 +1204,19 @@ func (app *App) GetMyPurchases(c *gin.Context) {
 	}
 
 	purchaseLog.Log("MY_PURCHASES", "success", "user_id", userID, "count", len(purchasedNotes))
+
+	// Populate subnotery names manually — gorm:"-" on Note.SubnoteryName
+	// prevents Scan from mapping the LEFT JOIN column.
+	if len(purchasedNotes) > 0 {
+		notes := make([]models.Note, len(purchasedNotes))
+		for i := range purchasedNotes {
+			notes[i] = purchasedNotes[i].Note
+		}
+		app.populateSubnoteryNames(notes)
+		for i := range purchasedNotes {
+			purchasedNotes[i].Note = notes[i]
+		}
+	}
 
 	// Ensure JSON [] (not null) for empty results.
 	if purchasedNotes == nil {

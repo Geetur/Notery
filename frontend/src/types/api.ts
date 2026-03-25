@@ -329,6 +329,8 @@ export interface PurchaseWithNote {
     price_paid: number;
     purchased_at: string;
     has_pdf: boolean;
+    subnotery_id: number;
+    subnotery_name: string;
 }
 
 export interface PurchaseHistoryResponse {

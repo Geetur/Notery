@@ -19,11 +19,11 @@ import {
     BookOpen,
     ChevronLeft,
     ChevronRight,
-    Compass,
+    Clock,
     FileText,
+    Flame,
     Home,
     ShoppingCart,
-    TrendingUp,
     User,
     Users,
 } from "lucide-react";
@@ -115,14 +115,14 @@ export function LeftSidebar({ mobile }: LeftSidebarProps) {
                         />
                         <SidebarLink
                             href="/hot"
-                            icon={<TrendingUp className={iconSize} />}
+                            icon={<Flame className={iconSize} />}
                             label="Hot"
                             active={pathname === "/hot"}
                             collapsed={isCollapsed}
                         />
                         <SidebarLink
                             href="/new"
-                            icon={<Compass className={iconSize} />}
+                            icon={<Clock className={iconSize} />}
                             label="New"
                             active={pathname === "/new"}
                             collapsed={isCollapsed}

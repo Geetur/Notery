@@ -602,6 +602,9 @@ export default function ProfilePage() {
                                                         {p.note_title}
                                                     </Link>
                                                     <p className="text-xs text-muted-foreground">
+                                                        {p.subnotery_name && (
+                                                            <><Link href={`/communities/${p.subnotery_id}`} className="hover:text-primary">n/{p.subnotery_name}</Link> &bull; </>
+                                                        )}
                                                         by {p.note_author} &bull; {timeAgo(p.purchased_at)}
                                                     </p>
                                                 </div>
