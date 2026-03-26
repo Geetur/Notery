@@ -70,6 +70,7 @@ const (
 	DefaultPage  = 1
 	DefaultLimit = 25
 	MaxLimit     = 100
+	MaxPage      = 10000
 )
 
 // ParsePagination extracts and validates pagination params from query string.
@@ -85,6 +86,9 @@ func ParsePaginationWithDefaults(c *gin.Context, defaultLimit int) Pagination {
 
 	if page < 1 {
 		page = 1
+	}
+	if page > MaxPage {
+		page = MaxPage
 	}
 	if limit < 1 || limit > MaxLimit {
 		limit = defaultLimit

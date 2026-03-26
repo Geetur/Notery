@@ -1056,7 +1056,7 @@ func (app *App) GetOrderStatus(c *gin.Context) {
 	}
 	if order.FailedAt != nil {
 		response["failed_at"] = order.FailedAt
-		response["failure_reason"] = order.FailureReason
+		response["failure_reason"] = "Payment failed"
 	}
 
 	purchaseLog.Log("ORDER_STATUS", "fetched", "user_id", userID, "order_id", order.ID, "status", order.Status)

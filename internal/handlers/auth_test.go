@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,18 @@ func testAppWithMailer(t *testing.T) (*App, *email.MockMailer) {
 	mock := &email.MockMailer{}
 	app.Mailer = mock
 	return app, mock
+}
+
+// extractRefreshCookie extracts the refresh token from the Set-Cookie header.
+func extractRefreshCookie(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	for _, c := range w.Result().Cookies() {
+		if c.Name == refreshTokenCookieName {
+			return c.Value
+		}
+	}
+	t.Fatal("expected refresh token cookie in response")
+	return ""
 }
 
 // ===== SIGNUP TESTS =====
@@ -43,9 +56,7 @@ func TestSignup_HappyPath(t *testing.T) {
 	if r["access_token"] == nil {
 		t.Fatal("expected access_token in response")
 	}
-	if r["refresh_token"] == nil {
-		t.Fatal("expected refresh_token in response")
-	}
+	extractRefreshCookie(t, w) // verify cookie is set
 
 	// Check verification email was sent (async goroutine — brief sleep needed)
 	time.Sleep(100 * time.Millisecond)
@@ -185,9 +196,7 @@ func TestLogin_HappyPath(t *testing.T) {
 	if r["access_token"] == nil {
 		t.Fatal("expected access_token in response")
 	}
-	if r["refresh_token"] == nil {
-		t.Fatal("expected refresh_token in response")
-	}
+	extractRefreshCookie(t, w) // verify cookie is set
 	accessToken, ok := r["access_token"].(string)
 	if !ok || accessToken == "" {
 		t.Fatal("access_token should be a non-empty string")
@@ -328,8 +337,7 @@ func TestRefresh_HappyPath(t *testing.T) {
 			"password": "test123",
 		}), app.Login)
 	assertStatus(t, w, http.StatusOK)
-	r := respJSON(t, w)
-	refreshToken := r["refresh_token"].(string)
+	refreshToken := extractRefreshCookie(t, w)
 
 	// Use the refresh token to get new tokens
 	w = serve("POST", "/refresh", "/refresh",
@@ -337,11 +345,11 @@ func TestRefresh_HappyPath(t *testing.T) {
 			"refresh_token": refreshToken,
 		}), app.RefreshAccessToken)
 	assertStatus(t, w, http.StatusOK)
-	r = respJSON(t, w)
+	r := respJSON(t, w)
 	if r["access_token"] == nil {
 		t.Fatal("expected new access_token")
 	}
-	newRefresh := r["refresh_token"].(string)
+	newRefresh := extractRefreshCookie(t, w)
 	if newRefresh == refreshToken {
 		t.Fatal("new refresh token should differ from old one (rotation)")
 	}
@@ -368,8 +376,7 @@ func TestRefresh_RevokedTokenTriggersTheftDetection(t *testing.T) {
 			"email":    "theftuser@test.com",
 			"password": "test123",
 		}), app.Login)
-	r := respJSON(t, w)
-	originalRefresh := r["refresh_token"].(string)
+	originalRefresh := extractRefreshCookie(t, w)
 
 	// Rotate the token (use it once)
 	w = serve("POST", "/refresh", "/refresh",
@@ -377,8 +384,7 @@ func TestRefresh_RevokedTokenTriggersTheftDetection(t *testing.T) {
 			"refresh_token": originalRefresh,
 		}), app.RefreshAccessToken)
 	assertStatus(t, w, http.StatusOK)
-	r = respJSON(t, w)
-	newRefresh := r["refresh_token"].(string)
+	newRefresh := extractRefreshCookie(t, w)
 
 	// Reuse the original (now revoked) token → theft detection
 	w = serve("POST", "/refresh", "/refresh",
@@ -386,7 +392,7 @@ func TestRefresh_RevokedTokenTriggersTheftDetection(t *testing.T) {
 			"refresh_token": originalRefresh,
 		}), app.RefreshAccessToken)
 	assertStatus(t, w, http.StatusUnauthorized)
-	r = respJSON(t, w)
+	r := respJSON(t, w)
 	if r["error"] == nil {
 		t.Fatal("expected error about token reuse")
 	}
@@ -403,7 +409,7 @@ func TestRefresh_MissingField(t *testing.T) {
 	app := testApp(t)
 	w := serve("POST", "/refresh", "/refresh",
 		jsonBody(map[string]string{}), app.RefreshAccessToken)
-	assertStatus(t, w, http.StatusBadRequest)
+	assertStatus(t, w, http.StatusUnauthorized)
 }
 
 // ===== LOGOUT TESTS =====
@@ -418,8 +424,7 @@ func TestLogout_HappyPath(t *testing.T) {
 			"email":    "logoutuser@test.com",
 			"password": "test123",
 		}), app.Login)
-	r := respJSON(t, w)
-	refreshToken := r["refresh_token"].(string)
+	refreshToken := extractRefreshCookie(t, w)
 
 	// Logout
 	w = serve("POST", "/logout", "/logout",
@@ -457,16 +462,14 @@ func TestLogoutAll_RevokesAllSessions(t *testing.T) {
 			"email":    "logoutalluser@test.com",
 			"password": "test123",
 		}), app.Login)
-	r := respJSON(t, w)
-	refresh1 := r["refresh_token"].(string)
+	refresh1 := extractRefreshCookie(t, w)
 
 	w = serve("POST", "/login", "/login",
 		jsonBody(map[string]string{
 			"email":    "logoutalluser@test.com",
 			"password": "test123",
 		}), app.Login)
-	r = respJSON(t, w)
-	refresh2 := r["refresh_token"].(string)
+	refresh2 := extractRefreshCookie(t, w)
 
 	// Logout all (requires auth)
 	w = serve("POST", "/logout-all", "/logout-all",
@@ -791,8 +794,7 @@ func TestResetPassword_RevokesAllSessions(t *testing.T) {
 			"email":    "resetrevoke@test.com",
 			"password": "test123",
 		}), app.Login)
-	r := respJSON(t, w)
-	refreshToken := r["refresh_token"].(string)
+	refreshToken := extractRefreshCookie(t, w)
 
 	// Create reset token and reset password
 	rawToken, _ := models.GenerateSecureToken(models.PasswordResetTokenBytes)
@@ -884,8 +886,7 @@ func TestChangePassword_RevokesAllSessions(t *testing.T) {
 			"email":    "changerevoke@test.com",
 			"password": "test123",
 		}), app.Login)
-	r := respJSON(t, w)
-	refreshToken := r["refresh_token"].(string)
+	refreshToken := extractRefreshCookie(t, w)
 
 	// Change password
 	serve("POST", "/change", "/change",

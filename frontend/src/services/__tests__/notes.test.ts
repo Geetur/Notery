@@ -10,7 +10,6 @@ jest.mock("@/lib/api-client", () => ({
 jest.mock("@/lib/config", () => ({
     API_V1: "http://localhost:8080/api/v1",
     TOKEN_KEY: "notery_access_token",
-    REFRESH_TOKEN_KEY: "notery_refresh_token",
 }));
 
 import { apiDelete, apiGet, apiPost } from "@/lib/api-client";

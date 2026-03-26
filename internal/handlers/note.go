@@ -96,6 +96,10 @@ func (app *App) CreateNote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Title, SubnoteryName, and Price are required"})
 		return
 	}
+	if req.Price > models.MaxNotePrice {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Price exceeds maximum", "max": models.MaxNotePrice})
+		return
+	}
 	if utf8.RuneCountInString(req.Title) > models.MaxNoteTitleLength {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Title too long", "max": models.MaxNoteTitleLength})
 		return
@@ -431,6 +435,14 @@ func (app *App) ApproveNote(c *gin.Context) {
 		return
 	}
 	noteLog.Log("APPROVE", "Note fetched", "noteID", note.ID, "hasPDF", note.HasPDF)
+
+	// Prevent self-approval: creators who are also admins cannot approve their own notes
+	//userID := helpers.GetUserID(c)
+	//if note.CreatorID == userID {
+	//noteLog.Log("APPROVE", "Creator cannot approve own notes", "noteID", note.ID, "userID", userID)
+	//c.JSON(http.StatusForbidden, gin.H{"error": "Cannot approve your own notes"})
+	//return
+	//}
 
 	// Validate note has PDF content before approval
 	if !note.HasPDF {

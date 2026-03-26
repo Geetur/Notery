@@ -28,6 +28,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,6 +47,11 @@ import (
 
 // oauthLog is the domain-specific logger for OAuth operations.
 var oauthLog = helpers.NewLogger("OAUTH")
+
+// errOAuthEmailConflict is returned when an OAuth login matches an email
+// that already has a password-based account. Auto-linking is not allowed
+// because it would enable silent account takeover.
+var errOAuthEmailConflict = errors.New("an account with this email already exists")
 
 // Google OAuth2 endpoints (not in the x/oauth2 package directly).
 var googleOAuthEndpoint = oauth2.Endpoint{
@@ -122,16 +128,13 @@ func (app *App) oauthFindOrCreateUser(provider, oauthID, email, displayName stri
 		return &user, nil
 	}
 
-	// Next, try to find by email (link existing account to OAuth)
-	err = app.DB.Where("email = ?", email).First(&user).Error
-	if err == nil {
-		// Link this OAuth provider to the existing account
-		app.DB.Model(&user).Updates(map[string]interface{}{
-			"oauth_provider": provider,
-			"oauth_id":       oauthID,
-			"email_verified": true,
-		})
-		return &user, nil
+	// Reject if email is already taken by another account.
+	// Do NOT auto-link — that would allow silent account takeover.
+	var emailCount int64
+	app.DB.Model(&models.User{}).Where("email = ?", email).Count(&emailCount)
+	if emailCount > 0 {
+		oauthLog.Log("CREATE", "OAuth email conflict — account exists with this email", "provider", provider, "email", email)
+		return nil, errOAuthEmailConflict
 	}
 
 	// Create new user — resolve duplicate usernames AND display names by
@@ -219,6 +222,8 @@ func sanitizeUsername(name string) string {
 }
 
 // issueTokensAndRedirect creates tokens and redirects the user to the frontend.
+// The refresh token is set as an httpOnly cookie (never in the URL).
+// The access token is passed via URL fragment (fragments are never sent to servers/logs).
 func (app *App) issueTokensAndRedirect(c *gin.Context, user *models.User) {
 	accessToken, err := app.issueAccessToken(user.ID)
 	if err != nil {
@@ -234,10 +239,13 @@ func (app *App) issueTokensAndRedirect(c *gin.Context, user *models.User) {
 		return
 	}
 
-	redirectURL := fmt.Sprintf("%s/auth/callback?access_token=%s&refresh_token=%s",
+	// Set refresh token as httpOnly cookie (never exposed in URL or JS)
+	setRefreshTokenCookie(c, refreshToken)
+
+	// Pass only access token via URL fragment (fragments are never sent to servers)
+	redirectURL := fmt.Sprintf("%s/auth/callback#access_token=%s",
 		app.FrontendURL,
 		url.QueryEscape(accessToken),
-		url.QueryEscape(refreshToken),
 	)
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }
@@ -326,6 +334,11 @@ func (app *App) OAuthGoogleCallback(c *gin.Context) {
 
 	user, err := app.oauthFindOrCreateUser("google", info.ID, info.Email, info.Name)
 	if err != nil {
+		if errors.Is(err, errOAuthEmailConflict) {
+			oauthLog.Log("GOOGLE", "Email conflict — account exists", "email", info.Email)
+			c.Redirect(http.StatusTemporaryRedirect, app.FrontendURL+"/login?error=email_exists")
+			return
+		}
 		oauthLog.Log("GOOGLE", "Failed to find/create user", "error", err)
 		c.Redirect(http.StatusTemporaryRedirect, app.FrontendURL+"/login?error=create_failed")
 		return
@@ -428,6 +441,11 @@ func (app *App) OAuthGitHubCallback(c *gin.Context) {
 	oauthID := fmt.Sprintf("%d", info.ID)
 	user, err := app.oauthFindOrCreateUser("github", oauthID, userEmail, displayName)
 	if err != nil {
+		if errors.Is(err, errOAuthEmailConflict) {
+			oauthLog.Log("GITHUB", "Email conflict — account exists", "email", userEmail)
+			c.Redirect(http.StatusTemporaryRedirect, app.FrontendURL+"/login?error=email_exists")
+			return
+		}
 		oauthLog.Log("GITHUB", "Failed to find/create user", "error", err)
 		c.Redirect(http.StatusTemporaryRedirect, app.FrontendURL+"/login?error=create_failed")
 		return

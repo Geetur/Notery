@@ -44,12 +44,12 @@ type Order struct {
 	IdempotencyKey string `json:"idempotency_key" gorm:"uniqueIndex:idx_order_user_idempotency;size:64"`
 
 	// PaymentIntentID stores the external payment processor reference (e.g. Stripe pi_xxx).
-	PaymentIntentID string `json:"payment_intent_id,omitempty" gorm:"index"`
+	PaymentIntentID string `json:"-" gorm:"index"`
 
 	// ChargeID is the Stripe Charge ID from the successful payment.
 	// Used as source_transaction when creating transfers to connected accounts,
 	// ensuring Stripe holds the transfer until the charge's funds are available.
-	ChargeID string `json:"charge_id,omitempty" gorm:"size:255"`
+	ChargeID string `json:"-" gorm:"size:255"`
 
 	// PaidAt records when payment was confirmed by the payment provider.
 	PaidAt *time.Time `json:"paid_at,omitempty"`
@@ -58,7 +58,7 @@ type Order struct {
 	FailedAt *time.Time `json:"failed_at,omitempty"`
 
 	// FailureReason describes why payment failed (from payment provider or internal error).
-	FailureReason string `json:"failure_reason,omitempty" gorm:"size:512"`
+	FailureReason string `json:"-" gorm:"size:512"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

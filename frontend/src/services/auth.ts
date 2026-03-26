@@ -1,5 +1,5 @@
 // auth.ts — Auth API service. Wraps all /auth/* endpoints.
-import { apiGet, apiPost, clearTokens, getRefreshToken, setTokens } from "@/lib/api-client";
+import { apiGet, apiPost, clearTokens, setTokens } from "@/lib/api-client";
 import { API_V1 } from "@/lib/config";
 import type {
     AuthRequest,
@@ -21,7 +21,7 @@ export async function signup(
         username,
         agreed_to_terms: true,
     } satisfies AuthRequest);
-    setTokens(data.access_token, data.refresh_token);
+    setTokens(data.access_token);
     return data;
 }
 
@@ -34,28 +34,14 @@ export async function login(
         email,
         password,
     } satisfies AuthRequest);
-    setTokens(data.access_token, data.refresh_token);
-    return data;
-}
-
-/** POST /auth/refresh — Rotate refresh token. Called automatically by api-client. */
-export async function refreshTokens(): Promise<AuthResponse> {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) throw new Error("No refresh token available");
-    const data = await apiPost<AuthResponse>("/auth/refresh", {
-        refresh_token: refreshToken,
-    });
-    setTokens(data.access_token, data.refresh_token);
+    setTokens(data.access_token);
     return data;
 }
 
 /** POST /auth/logout — Revoke current refresh token. */
 export async function logout(): Promise<void> {
-    const refreshToken = getRefreshToken();
     try {
-        if (refreshToken) {
-            await apiPost("/auth/logout", { refresh_token: refreshToken });
-        }
+        await apiPost("/auth/logout");
     } finally {
         clearTokens();
     }

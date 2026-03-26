@@ -22,7 +22,6 @@ import {
     ApiRequestError,
     clearTokens,
     getAccessToken,
-    getRefreshToken,
     setTokens,
 } from "@/lib/api-client";
 
@@ -34,23 +33,18 @@ beforeEach(() => {
 describe("Token management", () => {
     it("returns null when no token is stored", () => {
         expect(getAccessToken()).toBeNull();
-        expect(getRefreshToken()).toBeNull();
     });
 
-    it("stores and retrieves tokens", () => {
-        setTokens("access123", "refresh456");
+    it("stores and retrieves access token", () => {
+        setTokens("access123");
         expect(localStorageMock.setItem).toHaveBeenCalledWith(
             "notery_access_token",
             "access123"
         );
-        expect(localStorageMock.setItem).toHaveBeenCalledWith(
-            "notery_refresh_token",
-            "refresh456"
-        );
     });
 
-    it("clears tokens", () => {
-        setTokens("a", "r");
+    it("clears access token and legacy refresh token", () => {
+        setTokens("a");
         clearTokens();
         expect(localStorageMock.removeItem).toHaveBeenCalledWith(
             "notery_access_token"

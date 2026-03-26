@@ -12,7 +12,7 @@ import (
 // User represents an authenticated user with optional admin privileges.
 type User struct {
 	ID            uint        `json:"id" gorm:"primaryKey"`
-	Email         string      `json:"email" gorm:"unique; not null"` // NOTE: Exclude from public-facing responses
+	Email         string      `json:"-" gorm:"unique; not null"` // Hidden from JSON; exposed explicitly in SelfProfile()
 	Username      string      `json:"username" gorm:"default:''"`
 	Password      string      `json:"-" gorm:"-"`                    // input-only field, never persisted or serialized
 	Hash          string      `json:"-" gorm:"not null"`             // bcrypt hash, never exposed
