@@ -26,6 +26,7 @@ export interface Note {
     price: number; // cents
     has_pdf: boolean;
     pdf_size: number;
+    pdf_pages: number;
     pdf_uploaded_at: string | null;
     has_thumbnail: boolean;
     thumbnail_url: string;
@@ -148,13 +149,12 @@ export interface AuthRequest {
 
 export interface AuthResponse {
     access_token: string;
-    refresh_token: string;
     message?: string;
     user_id?: number;
 }
 
 export interface RefreshRequest {
-    refresh_token: string;
+    refresh_token?: string;
 }
 
 export interface ForgotPasswordRequest {

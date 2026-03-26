@@ -230,3 +230,35 @@ func TestResendMailer_Send_BadEndpoint(t *testing.T) {
 		t.Log("Resend accepted the fake key — running in an env with network access")
 	}
 }
+
+// ===== CRLF INJECTION PREVENTION =====
+
+func TestSMTPMailer_Send_CRLFInRecipient(t *testing.T) {
+	m := &SMTPMailer{Host: "localhost", Port: "25", User: "u", Pass: "p", From: "test@test.com"}
+	err := m.Send("evil@test.com\r\nBcc: spy@evil.com", "Hello", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected error for CRLF in recipient")
+	}
+	if !strings.Contains(err.Error(), "invalid characters") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestSMTPMailer_Send_CRLFInSubject(t *testing.T) {
+	m := &SMTPMailer{Host: "localhost", Port: "25", User: "u", Pass: "p", From: "test@test.com"}
+	err := m.Send("user@test.com", "Hello\r\nBcc: spy@evil.com", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected error for CRLF in subject")
+	}
+	if !strings.Contains(err.Error(), "invalid characters") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestSMTPMailer_Send_NewlineInRecipient(t *testing.T) {
+	m := &SMTPMailer{Host: "localhost", Port: "25", User: "u", Pass: "p", From: "test@test.com"}
+	err := m.Send("evil@test.com\nBcc: spy@evil.com", "Hello", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected error for newline in recipient")
+	}
+}

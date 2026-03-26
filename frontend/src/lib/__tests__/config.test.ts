@@ -1,5 +1,5 @@
 // config.test.ts — Tests for configuration module.
-import { API_BASE_URL, API_V1, DEFAULT_PAGE_SIZE, REFRESH_TOKEN_KEY, TOKEN_KEY } from "@/lib/config";
+import { API_BASE_URL, API_V1, DEFAULT_PAGE_SIZE, TOKEN_KEY } from "@/lib/config";
 
 describe("config", () => {
     it("has a default API base URL", () => {
@@ -11,9 +11,8 @@ describe("config", () => {
         expect(API_V1).toBe(`${API_BASE_URL}/api/v1`);
     });
 
-    it("has token storage keys", () => {
+    it("has token storage key", () => {
         expect(TOKEN_KEY).toBe("notery_access_token");
-        expect(REFRESH_TOKEN_KEY).toBe("notery_refresh_token");
     });
 
     it("has sensible pagination defaults", () => {

@@ -11,8 +11,8 @@ import "github.com/gin-gonic/gin"
 //   - Referrer-Policy: strict-origin-when-cross-origin — limits referrer leakage
 //   - X-XSS-Protection: 0 — disables legacy XSS auditor (modern CSP preferred)
 //   - Permissions-Policy: restrictive defaults for browser features
-//
-// HSTS is omitted because it should be set by the reverse proxy (nginx/Cloudflare).
+//   - Content-Security-Policy: default-src 'none' — blocks all content loading for API responses
+//   - Strict-Transport-Security: HSTS safety net (also set by reverse proxy)
 func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
@@ -20,6 +20,8 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("X-XSS-Protection", "0")
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+		c.Header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		c.Header("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		c.Next()
 	}
 }

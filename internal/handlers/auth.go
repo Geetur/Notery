@@ -63,6 +63,8 @@ func (app *App) issueAccessToken(userID uint) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": fmt.Sprint(userID),
 		"exp":     time.Now().Add(models.AccessTokenTTL).Unix(),
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 	return token.SignedString(secretKey)
 }
@@ -94,6 +96,24 @@ func (app *App) issueRefreshToken(userID uint64, familyID string) (string, error
 }
 
 // ----- SIGNUP -----
+
+// refreshTokenCookieName is the httpOnly cookie name used for refresh tokens.
+// Refresh tokens are never exposed in JSON responses or URLs.
+const refreshTokenCookieName = "notery_refresh"
+
+// setRefreshTokenCookie sets an httpOnly cookie containing the refresh token.
+// The cookie is Secure (HTTPS-only; localhost is exempt) and SameSite=None
+// for cross-origin compatibility. Path is restricted to auth endpoints.
+func setRefreshTokenCookie(c *gin.Context, token string) {
+	c.SetSameSite(http.SameSiteNoneMode)
+	c.SetCookie(refreshTokenCookieName, token, int(models.RefreshTokenTTL.Seconds()), "/api/v1/auth", "", true, true)
+}
+
+// clearRefreshTokenCookie removes the refresh token cookie.
+func clearRefreshTokenCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteNoneMode)
+	c.SetCookie(refreshTokenCookieName, "", -1, "/api/v1/auth", "", true, true)
+}
 
 // Signup handles user registration and account creation.
 //
@@ -148,7 +168,7 @@ func (app *App) Signup(c *gin.Context) {
 
 	if result := app.DB.Create(user); result.Error != nil {
 		authLog.Log("SIGNUP", "Failed to create user in database", "error", result.Error)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user (email already exists?)"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 		return
 	}
 
@@ -177,11 +197,11 @@ func (app *App) Signup(c *gin.Context) {
 		app.sendVerificationEmail(uint64(user.ID), user.Email)
 	}
 
+	setRefreshTokenCookie(c, refreshToken)
 	c.JSON(http.StatusCreated, gin.H{
-		"message":       "User created successfully",
-		"user_id":       user.ID,
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
+		"message":      "User created successfully",
+		"user_id":      user.ID,
+		"access_token": accessToken,
 	})
 }
 
@@ -229,21 +249,23 @@ func (app *App) Login(c *gin.Context) {
 	}
 
 	authLog.Log("LOGIN", "Login successful", "userID", user.ID, "email", authReq.Email)
+	setRefreshTokenCookie(c, refreshToken)
 	c.JSON(http.StatusOK, gin.H{
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
+		"access_token": accessToken,
 	})
 }
 
 // ----- REFRESH TOKEN ROTATION -----
 
 // RefreshRequest represents the JSON body for a token refresh or logout request.
+// Used as a fallback when the httpOnly cookie is not present (backward compatibility).
 type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 // RefreshAccessToken validates a refresh token, rotates it (revokes old, issues new),
-// and returns a new access + refresh token pair.
+// and returns a new access token. The refresh token is read from the httpOnly cookie
+// (preferred) or from the JSON body (backward compatibility / tests).
 //
 // Theft detection: if a revoked token is reused, the entire token family is
 // invalidated. This forces the legitimate user to re-authenticate but prevents
@@ -251,12 +273,18 @@ type RefreshRequest struct {
 //
 // Route: POST /api/v1/auth/refresh
 func (app *App) RefreshAccessToken(c *gin.Context) {
-	var req RefreshRequest
-	if !helpers.BindJSON(c, &req) {
-		return
+	// Prefer refresh token from httpOnly cookie; fall back to JSON body.
+	refreshTokenStr, _ := c.Cookie(refreshTokenCookieName)
+	if refreshTokenStr == "" {
+		var req RefreshRequest
+		if err := c.ShouldBindJSON(&req); err != nil || req.RefreshToken == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token required"})
+			return
+		}
+		refreshTokenStr = req.RefreshToken
 	}
 
-	hash := models.HashToken(req.RefreshToken)
+	hash := models.HashToken(refreshTokenStr)
 
 	var rt models.RefreshToken
 	if err := app.DB.Where("token_hash = ?", hash).First(&rt).Error; err != nil {
@@ -298,26 +326,33 @@ func (app *App) RefreshAccessToken(c *gin.Context) {
 	}
 
 	authLog.Log("REFRESH", "token rotated", "user", rt.UserID)
+	setRefreshTokenCookie(c, newRefresh)
 	c.JSON(http.StatusOK, gin.H{
-		"access_token":  accessToken,
-		"refresh_token": newRefresh,
+		"access_token": accessToken,
 	})
 }
 
 // ----- LOGOUT -----
 
 // Logout revokes a single refresh token.
+// Reads from httpOnly cookie (preferred) or JSON body (fallback).
 // Always returns 200 to prevent token enumeration.
 //
 // Route: POST /api/v1/auth/logout
 func (app *App) Logout(c *gin.Context) {
-	var req RefreshRequest
-	if !helpers.BindJSON(c, &req) {
-		return
+	refreshTokenStr, _ := c.Cookie(refreshTokenCookieName)
+	if refreshTokenStr == "" {
+		var req RefreshRequest
+		if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
+			refreshTokenStr = req.RefreshToken
+		}
 	}
 
-	hash := models.HashToken(req.RefreshToken)
-	app.DB.Model(&models.RefreshToken{}).Where("token_hash = ?", hash).Update("revoked", true)
+	if refreshTokenStr != "" {
+		hash := models.HashToken(refreshTokenStr)
+		app.DB.Model(&models.RefreshToken{}).Where("token_hash = ?", hash).Update("revoked", true)
+	}
+	clearRefreshTokenCookie(c)
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out"})
 }
 
@@ -327,6 +362,7 @@ func (app *App) Logout(c *gin.Context) {
 func (app *App) LogoutAll(c *gin.Context) {
 	userID := helpers.GetUserID(c)
 	app.DB.Model(&models.RefreshToken{}).Where("user_id = ?", userID).Update("revoked", true)
+	clearRefreshTokenCookie(c)
 	authLog.Log("LOGOUT_ALL", "all sessions revoked", "user", userID)
 	c.JSON(http.StatusOK, gin.H{"message": "All sessions revoked"})
 }

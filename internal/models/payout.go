@@ -82,7 +82,7 @@ type PayoutRecord struct {
 	FlatFeeCents        int64        `json:"flat_fee_cents" gorm:"not null"`
 	MarketplaceFeeCents int64        `json:"marketplace_fee_cents" gorm:"not null"`
 	CreatorPayoutCents  int64        `json:"creator_payout_cents" gorm:"not null"`
-	StripeTransferID    string       `json:"stripe_transfer_id" gorm:"type:varchar(255);default:''"`
+	StripeTransferID    string       `json:"-" gorm:"type:varchar(255);default:''"`
 	Status              PayoutStatus `json:"status" gorm:"type:varchar(20);not null;default:'pending';index"`
 	CreatedAt           time.Time    `json:"created_at"`
 }

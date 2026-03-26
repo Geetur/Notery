@@ -19,12 +19,12 @@
 // | Subnotery Admin      | Yes (their sub)   | Yes (their sub)     |
 // | Global Admin         | Yes (all)         | Yes (all)           |
 //
-// FRONTEND INTEGRATION:
-// ---------------------
-// The frontend should use a PDF viewer library (e.g., PDF.js, react-pdf) that:
-// 1. Fetches the PDF from our proxy endpoint (GET /api/v1/notes/:id/content)
-// 2. Renders it in a canvas/iframe - no download option exposed
-// 3. The API returns the PDF with headers that ensure in-browser viewing, not downloading
+// PREVIEW SECURITY:
+// -----------------
+// The preview endpoint uses server-side page extraction via pdfcpu to serve
+// only the requested number of pages. The full PDF is never sent to clients
+// who don't have purchase/creator/admin access. Extracted previews are cached
+// in R2 to avoid repeated CPU work.
 //
 // WHY PROXY INSTEAD OF PRESIGNED URLs:
 // ------------------------------------
@@ -36,13 +36,17 @@
 package handlers
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"gorm.io/gorm"
 
 	"github.com/Geetur/Notery/internal/helpers"
@@ -142,6 +146,68 @@ func (app *App) CanViewApprovedNote(userID uint64, note *models.Note) bool {
 	return access != AccessNone
 }
 
+// ----- PDF PAGE EXTRACTION -----
+
+// maxPreviewPDFSize is the maximum PDF size (in bytes) that the preview
+// extraction will process. Larger PDFs are rejected to avoid excessive memory use.
+const maxPreviewPDFSize = 20 * 1024 * 1024 // 20 MB
+
+// extractPreviewPages reads a full PDF from r, extracts pages 1..pages, and
+// returns the resulting valid PDF as bytes along with the total page count.
+//
+// Returns an error if:
+// - The PDF exceeds maxPreviewPDFSize
+// - The PDF cannot be parsed
+// - The requested page count is >= total pages (would serve entire PDF)
+func extractPreviewPages(r io.Reader, pages int) (extracted []byte, totalPages int, err error) {
+	// Buffer everything so pdfcpu can seek. Guard against oversized files.
+	buf, err := io.ReadAll(io.LimitReader(r, maxPreviewPDFSize+1))
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read PDF: %w", err)
+	}
+	if len(buf) > maxPreviewPDFSize {
+		return nil, 0, fmt.Errorf("PDF exceeds %d MB size limit for preview", maxPreviewPDFSize/(1024*1024))
+	}
+
+	// Discover the total page count using the dedicated PageCount API.
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	totalPages, err = api.PageCount(bytes.NewReader(buf), conf)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to parse PDF: %w", err)
+	}
+
+	if pages >= totalPages {
+		return nil, totalPages, fmt.Errorf("requested %d pages but PDF only has %d", pages, totalPages)
+	}
+
+	// Build page selection string "1-N" for pdfcpu Trim.
+	pageSelection := fmt.Sprintf("1-%d", pages)
+
+	in := bytes.NewReader(buf)
+	var out bytes.Buffer
+	if err := api.Trim(in, &out, []string{pageSelection}, conf); err != nil {
+		return nil, totalPages, fmt.Errorf("failed to extract pages: %w", err)
+	}
+
+	return out.Bytes(), totalPages, nil
+}
+
+// extractPageCount returns the total page count of a PDF without extracting pages.
+func extractPageCount(r io.Reader) (int, error) {
+	buf, err := io.ReadAll(io.LimitReader(r, maxPreviewPDFSize+1))
+	if err != nil {
+		return 0, fmt.Errorf("failed to read PDF: %w", err)
+	}
+	if len(buf) > maxPreviewPDFSize {
+		return 0, fmt.Errorf("PDF exceeds size limit")
+	}
+
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	return api.PageCount(bytes.NewReader(buf), conf)
+}
+
 // ----- HTTP HANDLERS -----
 
 // UploadNotePDF handles PDF upload for a note.
@@ -233,13 +299,37 @@ func (app *App) UploadNotePDF(c *gin.Context) {
 
 	contentLog.Log("UPLOAD", "R2 upload successful", "note_id", noteID)
 
-	// Update note metadata
+	// Invalidate any cached preview PDFs (best-effort).
+	go func() {
+		if err := app.R2.DeletePreviewPDFs(c.Request.Context(), uint(noteID)); err != nil {
+			contentLog.Log("UPLOAD", "preview cache invalidation failed (non-fatal)", "note_id", noteID, "error", err)
+		}
+	}()
 
-	if err := app.DB.Model(&note).Updates(map[string]interface{}{
+	// Extract page count from the uploaded PDF for preview calculations.
+	// Seek back to the start of the file (UploadPDF consumed it to EOF).
+	var pdfPages int
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr == nil {
+		if count, countErr := extractPageCount(file); countErr == nil {
+			pdfPages = count
+		} else {
+			contentLog.Log("UPLOAD", "page count extraction failed (non-fatal)", "note_id", noteID, "error", countErr)
+		}
+	} else {
+		contentLog.Log("UPLOAD", "file seek failed (non-fatal)", "note_id", noteID, "error", seekErr)
+	}
+
+	// Update note metadata
+	updateMap := map[string]interface{}{
 		"has_pdf":         true,
 		"pdf_size":        header.Size,
 		"pdf_uploaded_at": time.Now(),
-	}).Error; err != nil {
+	}
+	if pdfPages > 0 {
+		updateMap["pdf_pages"] = pdfPages
+	}
+
+	if err := app.DB.Model(&note).Updates(updateMap).Error; err != nil {
 		contentLog.Log("UPLOAD", "metadata update failed", "note_id", noteID, "error", err)
 		// PDF was uploaded but metadata failed - not ideal but not fatal
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "PDF uploaded but metadata update failed"})
@@ -444,11 +534,19 @@ func (app *App) DeleteNotePDF(c *gin.Context) {
 		return
 	}
 
+	// Invalidate cached preview PDFs (best-effort).
+	go func() {
+		if err := app.R2.DeletePreviewPDFs(ctx, uint(noteID)); err != nil {
+			contentLog.Log("DELETE", "preview cache invalidation failed (non-fatal)", "note_id", noteID, "error", err)
+		}
+	}()
+
 	// Update note metadata
 	if err := app.DB.Model(&note).Updates(map[string]interface{}{
 		"has_pdf":         false,
 		"pdf_size":        0,
 		"pdf_uploaded_at": nil,
+		"pdf_pages":       0,
 	}).Error; err != nil {
 		contentLog.Log("DELETE", "metadata update failed (non-fatal)", "note_id", noteID, "error", err)
 		// PDF deleted but metadata update failed - log but continue
@@ -458,17 +556,17 @@ func (app *App) DeleteNotePDF(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "PDF deleted successfully"})
 }
 
-// GetNotePreview serves a PDF preview for any authenticated user.
+// GetNotePreview serves a page-limited PDF preview for any authenticated user.
 //
-// Only approved notes with a PDF are previewable. The full PDF is served to the
-// client — the frontend enforces page-based preview limits (1 page per 5 total)
-// using react-pdf. This avoids raw byte truncation which produces an invalid PDF
-// that PDF.js cannot parse due to broken xref tables / trailers.
+// The frontend requests a specific number of preview pages via the ?pages=N
+// query parameter. The server extracts only those pages using pdfcpu and
+// returns a valid PDF containing pages 1..N. Extracted previews are cached
+// in R2 so repeated requests skip the extraction step.
 //
-// Admins, creators, and users who purchased the note get the full PDF via
-// GetNotePDFContent instead. This endpoint is specifically for the free preview.
+// Admins viewing non-approved notes bypass preview extraction and receive
+// the full PDF (they have full access through GetNotePDFContent anyway).
 //
-// Route: GET /api/v1/notes/:id/preview
+// Route: GET /api/v1/notes/:id/preview?pages=N
 func (app *App) GetNotePreview(c *gin.Context) {
 	contentLog.Log("PREVIEW", "request received")
 
@@ -477,7 +575,19 @@ func (app *App) GetNotePreview(c *gin.Context) {
 		return
 	}
 
-	// Fetch the note (including soft-deleted for purchasers)
+	// Parse required ?pages=N query parameter.
+	pagesStr := c.Query("pages")
+	if pagesStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pages query parameter is required"})
+		return
+	}
+	pages, err := strconv.Atoi(pagesStr)
+	if err != nil || pages < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pages must be a positive integer"})
+		return
+	}
+
+	// Fetch the note (including soft-deleted for purchasers).
 	var note models.Note
 	if err := app.DB.Unscoped().First(&note, noteID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -488,7 +598,7 @@ func (app *App) GetNotePreview(c *gin.Context) {
 		return
 	}
 
-	// If soft-deleted, only purchasers/creator/admins can access
+	// If soft-deleted, only purchasers/creator/admins can access.
 	if note.DeletedAt.Valid {
 		userID := helpers.GetUserID(c)
 		access := app.CheckNoteAccess(userID, &note)
@@ -499,12 +609,14 @@ func (app *App) GetNotePreview(c *gin.Context) {
 	}
 
 	// Only approved notes can be previewed publicly; admins can preview any note.
+	isAdminPreview := false
 	if note.Status != models.StatusApproved {
 		userID := helpers.GetUserID(c)
 		if userID == 0 || !app.CanViewPendingNote(userID, &note) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Note is not available for preview"})
 			return
 		}
+		isAdminPreview = true
 		contentLog.Log("PREVIEW", "admin viewing non-approved note", "note_id", noteID, "status", note.Status)
 	}
 
@@ -513,32 +625,132 @@ func (app *App) GetNotePreview(c *gin.Context) {
 		return
 	}
 
-	// Fetch PDF from R2
 	ctx := c.Request.Context()
-	pdfContent, contentLength, err := app.R2.GetPDFContent(ctx, uint(noteID))
-	if err != nil {
-		contentLog.Log("PREVIEW", "R2 fetch failed", "note_id", noteID, "error", err)
+
+	// Admin preview of non-approved notes: serve full PDF (no extraction).
+	if isAdminPreview {
+		pdfContent, contentLength, err := app.R2.GetPDFContent(ctx, uint(noteID))
+		if err != nil {
+			contentLog.Log("PREVIEW", "R2 fetch failed", "note_id", noteID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve PDF"})
+			return
+		}
+		defer pdfContent.Close()
+
+		c.Header("Content-Type", "application/pdf")
+		c.Header("Content-Disposition", "inline")
+		c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
+		c.Header("Cache-Control", "no-store, private")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
+		c.Header("X-Notery-Access", "admin-preview")
+		c.Status(http.StatusOK)
+		if _, err := io.Copy(c.Writer, pdfContent); err != nil {
+			contentLog.Log("PREVIEW", "admin stream failed", "note_id", noteID, "error", err)
+		}
+		contentLog.Log("PREVIEW", "admin full preview served", "note_id", noteID, "bytes", contentLength)
+		return
+	}
+
+	// --- Approved note preview: serve only the requested pages ---
+
+	// Enforce server-side preview page limit: 1 page per 5 total pages (minimum 1).
+	// This prevents content theft via direct API calls that bypass frontend limits.
+	if note.PDFPages > 0 {
+		maxAllowed := note.PDFPages / 5
+		if maxAllowed < 1 {
+			maxAllowed = 1
+		}
+		if pages > maxAllowed {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":     "Exceeds preview page limit",
+				"max_pages": maxAllowed,
+			})
+			return
+		}
+	}
+
+	// 1) Check R2 cache for a previously extracted preview.
+	cachedContent, cachedLen, cacheErr := app.R2.GetPreviewPDF(ctx, uint(noteID), pages)
+	if cacheErr == nil {
+		defer cachedContent.Close()
+		contentLog.Log("PREVIEW", "serving cached preview", "note_id", noteID, "pages", pages)
+
+		c.Header("Content-Type", "application/pdf")
+		c.Header("Content-Disposition", "inline")
+		c.Header("Content-Length", strconv.FormatInt(cachedLen, 10))
+		c.Header("Cache-Control", "public, max-age=3600")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
+		c.Header("X-Notery-Access", "preview")
+		if note.PDFPages > 0 {
+			c.Header("X-Total-Pages", strconv.Itoa(note.PDFPages))
+		}
+
+		c.Status(http.StatusOK)
+		if _, err := io.Copy(c.Writer, cachedContent); err != nil {
+			contentLog.Log("PREVIEW", "cached stream failed", "note_id", noteID, "error", err)
+		}
+		return
+	}
+
+	// 2) Cache miss — fetch the full PDF and extract the requested pages.
+	pdfContent, _, fetchErr := app.R2.GetPDFContent(ctx, uint(noteID))
+	if fetchErr != nil {
+		contentLog.Log("PREVIEW", "R2 fetch failed", "note_id", noteID, "error", fetchErr)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve PDF"})
 		return
 	}
 	defer pdfContent.Close()
 
-	// Serve the full PDF — the frontend enforces page-based preview limits
-	// (1 page per 5 total). Raw byte truncation produces an invalid PDF
-	// (broken xref/trailer) that PDF.js cannot parse, so we send the
-	// complete file and let the viewer restrict navigation.
+	extracted, totalPages, extractErr := extractPreviewPages(pdfContent, pages)
+
+	// 3) Lazy-backfill pdf_pages if not yet stored (even on extraction error,
+	// since extractPreviewPages still discovers total pages before failing).
+	if note.PDFPages == 0 && totalPages > 0 {
+		if err := app.DB.Model(&note).Update("pdf_pages", totalPages).Error; err != nil {
+			contentLog.Log("PREVIEW", "failed to backfill pdf_pages", "note_id", noteID, "error", err)
+		} else {
+			note.PDFPages = totalPages
+		}
+	}
+
+	if extractErr != nil {
+		contentLog.Log("PREVIEW", "extraction failed", "note_id", noteID, "pages", pages, "total_pages", totalPages, "error", extractErr)
+		// Distinguish "too short for preview" (semantic issue) from parse errors.
+		if totalPages > 0 && pages >= totalPages {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":       "Note too short for preview",
+				"total_pages": totalPages,
+			})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Preview extraction failed"})
+		return
+	}
+
+	// 4) Cache the extracted preview in R2 (best-effort).
+	go func() {
+		if uploadErr := app.R2.UploadPreviewPDF(ctx, uint(noteID), pages, bytes.NewReader(extracted), int64(len(extracted))); uploadErr != nil {
+			contentLog.Log("PREVIEW", "cache upload failed (non-fatal)", "note_id", noteID, "pages", pages, "error", uploadErr)
+		} else {
+			contentLog.Log("PREVIEW", "cached preview in R2", "note_id", noteID, "pages", pages)
+		}
+	}()
+
+	// 5) Serve the extracted preview.
 	c.Header("Content-Type", "application/pdf")
 	c.Header("Content-Disposition", "inline")
-	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
-	c.Header("Cache-Control", "public, max-age=3600") // previews can be cached
+	c.Header("Content-Length", strconv.Itoa(len(extracted)))
+	c.Header("Cache-Control", "public, max-age=3600")
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("X-Frame-Options", "SAMEORIGIN")
 	c.Header("X-Notery-Access", "preview")
+	c.Header("X-Total-Pages", strconv.Itoa(totalPages))
 
 	c.Status(http.StatusOK)
-	if _, err := io.Copy(c.Writer, pdfContent); err != nil {
+	if _, err := io.Copy(c.Writer, bytes.NewReader(extracted)); err != nil {
 		contentLog.Log("PREVIEW", "stream failed", "note_id", noteID, "error", err)
 	}
-
-	contentLog.Log("PREVIEW", "served successfully", "note_id", noteID, "bytes", contentLength)
+	contentLog.Log("PREVIEW", "served extracted preview", "note_id", noteID, "pages", pages, "total_pages", totalPages, "size_bytes", len(extracted))
 }

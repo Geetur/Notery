@@ -74,6 +74,11 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 // Tries PLAIN auth first (works with most providers including Resend SMTP),
 // falling back to LOGIN auth for providers that require it (e.g. Outlook/Office365).
 func (m *SMTPMailer) Send(to, subject, body string) error {
+	// Reject CRLF injection in header-interpolated fields.
+	if strings.ContainsAny(to, "\r\n") || strings.ContainsAny(subject, "\r\n") {
+		return fmt.Errorf("invalid characters in email header fields")
+	}
+
 	addr := m.Host + ":" + m.Port
 
 	msg := strings.Join([]string{

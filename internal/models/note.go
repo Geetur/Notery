@@ -22,6 +22,8 @@ const (
 	MaxNoteTitleLength = 300
 	// MaxNoteDescriptionLength is the maximum allowed length for a note description (in runes).
 	MaxNoteDescriptionLength = 10000
+	// MaxNotePrice is the maximum note price in cents ($9,999.99).
+	MaxNotePrice = 999999
 )
 
 // Note represents a note entity in the system.
@@ -68,6 +70,11 @@ type Note struct {
 
 	// PDFUploadedAt tracks when the PDF was last uploaded/updated
 	PDFUploadedAt *time.Time `json:"pdf_uploaded_at"`
+
+	// PDFPages stores the total page count of the uploaded PDF.
+	// Set at upload time for instant frontend preview calculation.
+	// Zero means the page count hasn't been computed yet (backfill on first preview).
+	PDFPages int `json:"pdf_pages" gorm:"default:0"`
 
 	// ----- Thumbnail Fields -----
 	// HasThumbnail indicates whether a thumbnail image has been uploaded.

@@ -18,7 +18,7 @@ A full-stack Reddit-style note marketplace. Creators publish study notes with PD
 | Category | Highlights |
 |----------|-----------|
 | **Auth** | JWT access/refresh tokens, family-based rotation with theft detection, Google + GitHub OAuth, email verification, password reset |
-| **Notes** | Admin approval lifecycle, in-app PDF viewing (react-pdf), magic-byte validation, preview truncation, thumbnails |
+| **Notes** | Admin approval lifecycle, in-app PDF viewing (react-pdf), magic-byte validation, server-side preview page extraction (pdfcpu), thumbnails |
 | **Communities** | Subnoteries with scoped admin controls, configurable rules, minimum notoriety thresholds, banners |
 | **Commerce** | Stripe PaymentIntents, Redis cart, multi-note checkout, Stripe Connect creator payouts |
 | **Social** | Reddit-style voting, hot feed with time decay, threaded comments (Wilson score), multi-type search |

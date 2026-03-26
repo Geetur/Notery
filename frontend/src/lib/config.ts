@@ -8,9 +8,8 @@ export const API_BASE_URL =
 /** API v1 prefix. All endpoints are under this path. */
 export const API_V1 = `${API_BASE_URL}/api/v1`;
 
-/** LocalStorage keys for auth tokens. */
+/** LocalStorage key for access token. Refresh token is in httpOnly cookie. */
 export const TOKEN_KEY = "notery_access_token";
-export const REFRESH_TOKEN_KEY = "notery_refresh_token";
 
 /** Default pagination limit. */
 export const DEFAULT_PAGE_SIZE = 25;

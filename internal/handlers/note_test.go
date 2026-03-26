@@ -80,6 +80,32 @@ func TestCreateNote_NegativePrice(t *testing.T) {
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
+func TestCreateNote_PriceExceedsMax(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "expensivecreator")
+
+	w := serve("POST", "/notes", "/notes",
+		jsonBody(map[string]interface{}{
+			"subnotery_name": "test-sub",
+			"title":          "Overpriced Note",
+			"price":          models.MaxNotePrice + 1,
+		}), app.CreateNote, authMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestCreateNote_PriceAtMax(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "maxpricecreator")
+
+	w := serve("POST", "/notes", "/notes",
+		jsonBody(map[string]interface{}{
+			"subnotery_name": "max-price-sub",
+			"title":          "Max Price Note",
+			"price":          models.MaxNotePrice,
+		}), app.CreateNote, authMW(uid))
+	assertStatus(t, w, http.StatusCreated)
+}
+
 func TestCreateNote_ZeroPrice(t *testing.T) {
 	app := testApp(t)
 	uid := seedUser(t, app.DB, "freecreator")
@@ -294,11 +320,12 @@ func TestGetPendingNotes_GlobalAdmin(t *testing.T) {
 
 func TestApproveNote_WithoutPDF(t *testing.T) {
 	app := testApp(t)
-	uid := seedUser(t, app.DB, "approver")
-	noteID := seedPendingNote(t, app.DB, uid) // no PDF
+	creator := seedUser(t, app.DB, "nopdfcreator")
+	adminUID := seedUser(t, app.DB, "nopdfadmin")
+	noteID := seedPendingNote(t, app.DB, creator) // no PDF
 
 	w := serve("PATCH", "/notes/:id/approve", fmt.Sprintf("/notes/%d/approve", noteID),
-		nil, app.ApproveNote, adminMW(uid))
+		nil, app.ApproveNote, adminMW(adminUID))
 	assertStatus(t, w, http.StatusBadRequest) // can't approve without PDF
 }
 
