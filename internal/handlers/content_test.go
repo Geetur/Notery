@@ -89,17 +89,38 @@ func TestExtractPreviewPages_HappyPath(t *testing.T) {
 
 func TestExtractPreviewPages_RequestedEqualToTotal(t *testing.T) {
 	pdf := buildTestPDF(t, 5)
-	_, _, err := extractPreviewPages(bytes.NewReader(pdf), 5)
+	_, totalPages, err := extractPreviewPages(bytes.NewReader(pdf), 5)
 	if err == nil {
 		t.Fatal("expected error when requesting all pages")
+	}
+	// totalPages should still be populated even on error (needed for 422 response).
+	if totalPages != 5 {
+		t.Fatalf("expected totalPages=5 on error, got %d", totalPages)
 	}
 }
 
 func TestExtractPreviewPages_RequestedMoreThanTotal(t *testing.T) {
 	pdf := buildTestPDF(t, 3)
-	_, _, err := extractPreviewPages(bytes.NewReader(pdf), 10)
+	_, totalPages, err := extractPreviewPages(bytes.NewReader(pdf), 10)
 	if err == nil {
 		t.Fatal("expected error when requesting more pages than available")
+	}
+	// totalPages should still be populated even on error.
+	if totalPages != 3 {
+		t.Fatalf("expected totalPages=3 on error, got %d", totalPages)
+	}
+}
+
+func TestExtractPreviewPages_TooShortForPreview(t *testing.T) {
+	// Exact scenario: 1-page paid PDF, frontend requests 1 preview page.
+	// Backend must return error WITH totalPages so handler can send 422.
+	pdf := buildTestPDF(t, 1)
+	_, totalPages, err := extractPreviewPages(bytes.NewReader(pdf), 1)
+	if err == nil {
+		t.Fatal("expected error: requesting 1 page from a 1-page PDF should fail")
+	}
+	if totalPages != 1 {
+		t.Fatalf("expected totalPages=1, got %d", totalPages)
 	}
 }
 

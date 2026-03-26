@@ -19,6 +19,7 @@ import {
     Component,
     type ErrorInfo,
     type ReactNode,
+    useEffect,
     useMemo,
     useState,
 } from "react";
@@ -80,6 +81,9 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPag
     const [scale, setScale] = useState(1.0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [previewData, setPreviewData] = useState<Uint8Array | null>(null);
+    const [tooShortForPreview, setTooShortForPreview] = useState(false);
+    const [retryCount, setRetryCount] = useState(0);
 
     // Preview page limit: 1 preview page per 5 total pages.
     // Minimum preview threshold: notes with 4 or fewer pages get NO preview
@@ -123,6 +127,55 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPag
         return `${API_V1}/notes/${noteId}/content?token=${token}`;
     }, [noteId, mode, previewPagesCount]);
 
+    // Memoize the file prop for <Document> to avoid unnecessary reloads.
+    // In preview mode we wait for pre-fetched bytes; in full mode use the URL.
+    const fileProp = useMemo(() => {
+        if (mode === "preview" && previewData) {
+            return { data: previewData };
+        }
+        if (mode === "full") {
+            return fileUrl;
+        }
+        return null; // preview mode, data not ready yet
+    }, [mode, previewData, fileUrl]);
+
+    // Pre-fetch the preview PDF manually so react-pdf never receives a
+    // non-PDF error response (which causes console errors).
+    useEffect(() => {
+        if (mode !== "preview" || previewBlocked) return;
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const res = await fetch(fileUrl);
+                if (cancelled) return;
+
+                if (res.ok) {
+                    const buf = await res.arrayBuffer();
+                    if (!cancelled) setPreviewData(new Uint8Array(buf));
+                } else if (res.status === 422) {
+                    const body = await res.json();
+                    if (!cancelled) setTooShortForPreview(true);
+                    // body.total_pages is available if needed
+                    void body;
+                } else {
+                    let msg = "Failed to load preview";
+                    try {
+                        const body = await res.json();
+                        if (body.error) msg = body.error;
+                    } catch { /* non-JSON response */ }
+                    if (!cancelled) setError(msg);
+                }
+            } catch {
+                if (!cancelled) setError("Network error loading preview");
+            } finally {
+                if (!cancelled && !tooShortForPreview) setLoading(false);
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [fileUrl, mode, previewBlocked, retryCount]);
+
     const onDocumentLoadSuccess = ({ numPages: total }: { numPages: number }) => {
         setNumPages(total);
         setCurrentPage(1);
@@ -152,6 +205,9 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPag
                     onClick={() => {
                         setError(null);
                         setLoading(true);
+                        setPreviewData(null);
+                        setTooShortForPreview(false);
+                        setRetryCount((c) => c + 1);
                     }}
                 >
                     Retry
@@ -162,7 +218,7 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPag
 
     // If the note is too short for preview, load the doc silently to detect numPages,
     // then show a "no preview" message instead of the actual pages.
-    if (previewBlocked) {
+    if (previewBlocked || tooShortForPreview) {
         return (
             <PDFErrorBoundary
                 fallback={
@@ -173,10 +229,6 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPag
                     </div>
                 }
             >
-                {/* Hidden document mount to detect numPages */}
-                <div style={{ display: "none" }}>
-                    <Document file={fileUrl} onLoadSuccess={onDocumentLoadSuccess} onLoadError={onDocumentLoadError} />
-                </div>
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                     <FileText className="h-10 w-10 text-muted-foreground mb-3" />
                     <p className="text-sm font-medium mb-1">Preview not available</p>
@@ -269,28 +321,30 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPag
                             </p>
                         </div>
                     )}
-                    <Document
-                        file={fileUrl}
-                        onLoadSuccess={onDocumentLoadSuccess}
-                        onLoadError={onDocumentLoadError}
-                        loading={
-                            <div className="flex items-center justify-center py-12">
-                                <Skeleton className="h-[400px] w-[300px]" />
-                            </div>
-                        }
-                    >
-                        <div className="flex justify-center p-4">
-                            <Page
-                                pageNumber={currentPage}
-                                scale={scale}
-                                renderTextLayer={true}
-                                renderAnnotationLayer={true}
-                                loading={
+                    {fileProp && (
+                        <Document
+                            file={fileProp}
+                            onLoadSuccess={onDocumentLoadSuccess}
+                            onLoadError={onDocumentLoadError}
+                            loading={
+                                <div className="flex items-center justify-center py-12">
                                     <Skeleton className="h-[400px] w-[300px]" />
-                                }
-                            />
-                        </div>
-                    </Document>
+                                </div>
+                            }
+                        >
+                            <div className="flex justify-center p-4">
+                                <Page
+                                    pageNumber={currentPage}
+                                    scale={scale}
+                                    renderTextLayer={true}
+                                    renderAnnotationLayer={true}
+                                    loading={
+                                        <Skeleton className="h-[400px] w-[300px]" />
+                                    }
+                                />
+                            </div>
+                        </Document>
+                    )}
                 </div>
 
                 {/* Preview watermark */}

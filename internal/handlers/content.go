@@ -307,15 +307,16 @@ func (app *App) UploadNotePDF(c *gin.Context) {
 	}()
 
 	// Extract page count from the uploaded PDF for preview calculations.
-	// Re-open the file to read it again (FormFile was already consumed by UploadPDF).
+	// Seek back to the start of the file (UploadPDF consumed it to EOF).
 	var pdfPages int
-	if reopened, _, reopenErr := c.Request.FormFile("pdf"); reopenErr == nil {
-		defer reopened.Close()
-		if count, countErr := extractPageCount(reopened); countErr == nil {
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr == nil {
+		if count, countErr := extractPageCount(file); countErr == nil {
 			pdfPages = count
 		} else {
 			contentLog.Log("UPLOAD", "page count extraction failed (non-fatal)", "note_id", noteID, "error", countErr)
 		}
+	} else {
+		contentLog.Log("UPLOAD", "file seek failed (non-fatal)", "note_id", noteID, "error", seekErr)
 	}
 
 	// Update note metadata
@@ -687,19 +688,29 @@ func (app *App) GetNotePreview(c *gin.Context) {
 	defer pdfContent.Close()
 
 	extracted, totalPages, extractErr := extractPreviewPages(pdfContent, pages)
-	if extractErr != nil {
-		contentLog.Log("PREVIEW", "extraction failed", "note_id", noteID, "pages", pages, "error", extractErr)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Preview extraction failed: " + extractErr.Error()})
-		return
-	}
 
-	// 3) Lazy-backfill pdf_pages if not yet stored.
+	// 3) Lazy-backfill pdf_pages if not yet stored (even on extraction error,
+	// since extractPreviewPages still discovers total pages before failing).
 	if note.PDFPages == 0 && totalPages > 0 {
 		if err := app.DB.Model(&note).Update("pdf_pages", totalPages).Error; err != nil {
 			contentLog.Log("PREVIEW", "failed to backfill pdf_pages", "note_id", noteID, "error", err)
 		} else {
 			note.PDFPages = totalPages
 		}
+	}
+
+	if extractErr != nil {
+		contentLog.Log("PREVIEW", "extraction failed", "note_id", noteID, "pages", pages, "total_pages", totalPages, "error", extractErr)
+		// Distinguish "too short for preview" (semantic issue) from parse errors.
+		if totalPages > 0 && pages >= totalPages {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":       "Note too short for preview",
+				"total_pages": totalPages,
+			})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Preview extraction failed: " + extractErr.Error()})
+		return
 	}
 
 	// 4) Cache the extracted preview in R2 (best-effort).
