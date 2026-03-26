@@ -65,7 +65,9 @@ func main() {
 	if tp := os.Getenv("TRUSTED_PROXIES"); tp != "" {
 		trustedProxies = strings.Split(tp, ",")
 	}
-	_ = router.SetTrustedProxies(trustedProxies)
+	if err := router.SetTrustedProxies(trustedProxies); err != nil {
+		log.Printf("[WARN] Failed to set trusted proxies: %v", err)
+	}
 	router.Use(middleware.SecurityHeaders())
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,

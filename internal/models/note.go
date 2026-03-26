@@ -22,6 +22,8 @@ const (
 	MaxNoteTitleLength = 300
 	// MaxNoteDescriptionLength is the maximum allowed length for a note description (in runes).
 	MaxNoteDescriptionLength = 10000
+	// MaxNotePrice is the maximum note price in cents ($9,999.99).
+	MaxNotePrice = 999999
 )
 
 // Note represents a note entity in the system.

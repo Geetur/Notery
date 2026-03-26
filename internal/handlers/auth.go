@@ -168,7 +168,7 @@ func (app *App) Signup(c *gin.Context) {
 
 	if result := app.DB.Create(user); result.Error != nil {
 		authLog.Log("SIGNUP", "Failed to create user in database", "error", result.Error)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user (email already exists?)"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 		return
 	}
 

@@ -725,7 +725,7 @@ func (app *App) GetNotePreview(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Preview extraction failed: " + extractErr.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Preview extraction failed"})
 		return
 	}
 

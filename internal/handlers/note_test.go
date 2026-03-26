@@ -80,6 +80,32 @@ func TestCreateNote_NegativePrice(t *testing.T) {
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
+func TestCreateNote_PriceExceedsMax(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "expensivecreator")
+
+	w := serve("POST", "/notes", "/notes",
+		jsonBody(map[string]interface{}{
+			"subnotery_name": "test-sub",
+			"title":          "Overpriced Note",
+			"price":          models.MaxNotePrice + 1,
+		}), app.CreateNote, authMW(uid))
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestCreateNote_PriceAtMax(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "maxpricecreator")
+
+	w := serve("POST", "/notes", "/notes",
+		jsonBody(map[string]interface{}{
+			"subnotery_name": "max-price-sub",
+			"title":          "Max Price Note",
+			"price":          models.MaxNotePrice,
+		}), app.CreateNote, authMW(uid))
+	assertStatus(t, w, http.StatusCreated)
+}
+
 func TestCreateNote_ZeroPrice(t *testing.T) {
 	app := testApp(t)
 	uid := seedUser(t, app.DB, "freecreator")
