@@ -26,6 +26,7 @@ export interface Note {
     price: number; // cents
     has_pdf: boolean;
     pdf_size: number;
+    pdf_pages: number;
     pdf_uploaded_at: string | null;
     has_thumbnail: boolean;
     thumbnail_url: string;

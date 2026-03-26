@@ -451,6 +451,7 @@ export default function NoteDetailPage() {
                                         noteId={note.id}
                                         mode="preview"
                                         maxHeight={500}
+                                        totalPages={note.pdf_pages}
                                     />
                                 </div>
                             )

@@ -798,12 +798,12 @@ Note Status?
 
 | # | Method | Path | Handler | File | Middleware |
 |---|--------|------|---------|------|------------|
-| 34 | `GET` | `/api/v1/notes/:id/preview` | `GetNotePreview` | `content.go` | RequireAuth |
+| 34 | `GET` | `/api/v1/notes/:id/preview?pages=N` | `GetNotePreview` | `content.go` | RequireAuth |
 
-**Flow:** Only approved notes (admins can preview non-approved). Serves **full PDF** — the **frontend** enforces the page-limit preview (1 page per 5 total pages).
+**Flow:** Only approved notes (admins can preview non-approved). Requires `?pages=N` query parameter. Server extracts the first N pages using pdfcpu and returns a valid truncated PDF. Extracted previews are cached in R2. Returns `X-Total-Pages` header with the full page count. Admins reviewing non-approved notes receive the full PDF (no extraction).
 
 **Response:** PDF binary  
-**Headers:** `Content-Disposition: inline`, `X-Notery-Access: preview`, `Cache-Control: public, max-age=3600`  
+**Headers:** `Content-Disposition: inline`, `X-Notery-Access: preview`, `X-Total-Pages: <count>`, `Cache-Control: public, max-age=3600`  
 **External:** Cloudflare R2
 
 ---

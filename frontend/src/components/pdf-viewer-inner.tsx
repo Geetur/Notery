@@ -38,6 +38,8 @@ export interface PDFViewerProps {
     mode: "preview" | "full";
     /** Max height of the viewer container (default: 600px) */
     maxHeight?: number;
+    /** Total pages in the full PDF (from note.pdf_pages). Used in preview mode to compute how many pages to request from the server. */
+    totalPages?: number;
 }
 
 /** React error boundary to catch react-pdf rendering crashes gracefully. */
@@ -69,10 +71,10 @@ class PDFErrorBoundary extends Component<EBProps, EBState> {
  * In-app PDF viewer. Fetches the PDF from the API (with auth) and renders pages
  * using react-pdf. Supports navigation between pages and zoom.
  *
- * - preview mode: GET /notes/:id/preview (truncated, first ~5 pages)
+ * - preview mode: GET /notes/:id/preview?pages=N (server extracts first N pages)
  * - full mode:    GET /notes/:id/content?token=... (full PDF, requires purchase)
  */
-export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFViewerProps) {
+export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPages: totalPagesProp }: PDFViewerProps) {
     const [numPages, setNumPages] = useState<number>(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [scale, setScale] = useState(1.0);
@@ -82,25 +84,44 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
     // Preview page limit: 1 preview page per 5 total pages.
     // Minimum preview threshold: notes with 4 or fewer pages get NO preview
     // (the entire document would be visible, defeating the purpose).
-    const MIN_PREVIEW_PAGES = 5; // notes must have at least this many pages for preview
-    const previewBlocked = mode === "preview" && numPages > 0 && numPages < MIN_PREVIEW_PAGES;
-    const maxPreviewPages =
-        mode === "preview" && numPages > 0
-            ? Math.max(1, Math.floor(numPages / 5))
-            : numPages;
-    const displayPages = mode === "preview" ? maxPreviewPages : numPages;
+    const MIN_PREVIEW_PAGES = 5;
+
+    // Block preview for notes with too few pages (when we know the total).
+    const previewBlocked =
+        mode === "preview" &&
+        totalPagesProp !== undefined &&
+        totalPagesProp > 0 &&
+        totalPagesProp < MIN_PREVIEW_PAGES;
+
+    // How many pages to request from the server in preview mode.
+    const previewPagesCount = useMemo(() => {
+        if (mode !== "preview") return 0;
+        if (totalPagesProp && totalPagesProp >= MIN_PREVIEW_PAGES) {
+            return Math.max(1, Math.floor(totalPagesProp / 5));
+        }
+        // Legacy notes (pdf_pages=0/unknown): request 1 page as safe fallback.
+        // The backend will backfill pdf_pages for subsequent requests.
+        if (!totalPagesProp || totalPagesProp === 0) return 1;
+        return 0; // totalPages < MIN_PREVIEW_PAGES → blocked, no request needed
+    }, [mode, totalPagesProp]);
+
+    // In preview mode numPages IS the preview count (server already trimmed).
+    // In full mode numPages is the full document length.
+    const displayPages = numPages;
 
     // Memoize the file URL so react-pdf's Document doesn't treat it as a new
     // document on every render (which causes infinite reload loops).
     const fileUrl = useMemo(() => {
         const token = getAccessToken();
         if (mode === "preview") {
-            return token
-                ? `${API_V1}/notes/${noteId}/preview?token=${token}`
-                : `${API_V1}/notes/${noteId}/preview`;
+            const pages = previewPagesCount || 1;
+            const params = new URLSearchParams();
+            if (token) params.set("token", token);
+            params.set("pages", String(pages));
+            return `${API_V1}/notes/${noteId}/preview?${params}`;
         }
         return `${API_V1}/notes/${noteId}/content?token=${token}`;
-    }, [noteId, mode]);
+    }, [noteId, mode, previewPagesCount]);
 
     const onDocumentLoadSuccess = ({ numPages: total }: { numPages: number }) => {
         setNumPages(total);
@@ -275,7 +296,7 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = 600 }: PDFVie
                 {/* Preview watermark */}
                 {mode === "preview" && !loading && numPages > 0 && (
                     <p className="text-xs text-muted-foreground mt-2 text-center">
-                        Preview: showing {displayPages} of {numPages} page{numPages !== 1 ? "s" : ""}.
+                        Preview: showing {numPages} of {totalPagesProp && totalPagesProp > 0 ? totalPagesProp : "?"} page{(totalPagesProp || 0) !== 1 ? "s" : ""}.
                         Purchase to view the full document.
                     </p>
                 )}

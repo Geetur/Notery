@@ -329,3 +329,78 @@ func (r *R2Client) GenerateUploadURL(ctx context.Context, noteID uint, duration 
 
 	return presignResult.URL, nil
 }
+
+// ----- PREVIEW PDF CACHE OPERATIONS -----
+// These methods manage cached preview PDFs (page-extracted subsets) in R2.
+
+// GetPreviewObjectKey generates the R2 object key for a cached preview PDF.
+// Format: "notes/{noteID}/preview-{pages}pages.pdf"
+func (r *R2Client) GetPreviewObjectKey(noteID uint, pages int) string {
+	return fmt.Sprintf("notes/%d/preview-%dpages.pdf", noteID, pages)
+}
+
+// GetPreviewPDF retrieves a cached preview PDF from R2.
+// Returns the preview content stream, content length, and any error.
+// If the cached preview doesn't exist, returns an error.
+func (r *R2Client) GetPreviewPDF(ctx context.Context, noteID uint, pages int) (io.ReadCloser, int64, error) {
+	objectKey := r.GetPreviewObjectKey(noteID, pages)
+
+	result, err := r.S3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(r.BucketName),
+		Key:    aws.String(objectKey),
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	contentLength := int64(0)
+	if result.ContentLength != nil {
+		contentLength = *result.ContentLength
+	}
+
+	return result.Body, contentLength, nil
+}
+
+// UploadPreviewPDF stores an extracted preview PDF in R2 cache.
+func (r *R2Client) UploadPreviewPDF(ctx context.Context, noteID uint, pages int, content io.Reader, contentLength int64) error {
+	objectKey := r.GetPreviewObjectKey(noteID, pages)
+
+	_, err := r.S3Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:             aws.String(r.BucketName),
+		Key:                aws.String(objectKey),
+		Body:               content,
+		ContentLength:      aws.Int64(contentLength),
+		ContentType:        aws.String("application/pdf"),
+		ContentDisposition: aws.String("inline"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to upload preview PDF: %w", err)
+	}
+
+	return nil
+}
+
+// DeletePreviewPDFs removes all cached preview PDFs for a note.
+// Called when the source PDF is re-uploaded or deleted to invalidate the cache.
+func (r *R2Client) DeletePreviewPDFs(ctx context.Context, noteID uint) error {
+	prefix := fmt.Sprintf("notes/%d/preview-", noteID)
+
+	listOutput, err := r.S3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(r.BucketName),
+		Prefix: aws.String(prefix),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list preview PDFs: %w", err)
+	}
+
+	for _, obj := range listOutput.Contents {
+		if _, err := r.S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(r.BucketName),
+			Key:    obj.Key,
+		}); err != nil {
+			log.Printf("Failed to delete cached preview %s: %v", *obj.Key, err)
+		}
+	}
+
+	return nil
+}

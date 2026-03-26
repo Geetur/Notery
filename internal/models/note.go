@@ -69,6 +69,11 @@ type Note struct {
 	// PDFUploadedAt tracks when the PDF was last uploaded/updated
 	PDFUploadedAt *time.Time `json:"pdf_uploaded_at"`
 
+	// PDFPages stores the total page count of the uploaded PDF.
+	// Set at upload time for instant frontend preview calculation.
+	// Zero means the page count hasn't been computed yet (backfill on first preview).
+	PDFPages int `json:"pdf_pages" gorm:"default:0"`
+
 	// ----- Thumbnail Fields -----
 	// HasThumbnail indicates whether a thumbnail image has been uploaded.
 	HasThumbnail bool `json:"has_thumbnail" gorm:"default:false"`
