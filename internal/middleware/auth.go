@@ -56,7 +56,7 @@ func parseJWTUserID(tokenString string, secretKey []byte) (uint64, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return secretKey, nil
-	})
+	}, jwt.WithIssuer("notery-api"), jwt.WithAudience("notery-web"))
 	if err != nil || !token.Valid {
 		return 0, fmt.Errorf("invalid token: %w", err)
 	}

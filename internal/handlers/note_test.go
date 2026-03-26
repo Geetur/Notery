@@ -294,11 +294,12 @@ func TestGetPendingNotes_GlobalAdmin(t *testing.T) {
 
 func TestApproveNote_WithoutPDF(t *testing.T) {
 	app := testApp(t)
-	uid := seedUser(t, app.DB, "approver")
-	noteID := seedPendingNote(t, app.DB, uid) // no PDF
+	creator := seedUser(t, app.DB, "nopdfcreator")
+	adminUID := seedUser(t, app.DB, "nopdfadmin")
+	noteID := seedPendingNote(t, app.DB, creator) // no PDF
 
 	w := serve("PATCH", "/notes/:id/approve", fmt.Sprintf("/notes/%d/approve", noteID),
-		nil, app.ApproveNote, adminMW(uid))
+		nil, app.ApproveNote, adminMW(adminUID))
 	assertStatus(t, w, http.StatusBadRequest) // can't approve without PDF
 }
 

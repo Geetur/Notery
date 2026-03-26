@@ -1,4 +1,5 @@
-// page.tsx — OAuth callback handler. Receives tokens from the OAuth redirect.
+// page.tsx — OAuth callback handler. Receives access token from URL fragment.
+// The refresh token is set as an httpOnly cookie by the backend (never in URL).
 "use client";
 
 import { setTokens } from "@/lib/api-client";
@@ -18,22 +19,28 @@ function CallbackHandler() {
         if (handled.current) return;
         handled.current = true;
 
-        const accessToken = searchParams.get("access_token");
-        const refreshToken = searchParams.get("refresh_token");
+        // Check for error in query params (backend redirects errors to /login?error=...)
         const error = searchParams.get("error");
-
         if (error) {
             router.replace(`/login?error=${encodeURIComponent(error)}`);
             return;
         }
 
-        if (!accessToken || !refreshToken) {
+        // Read access token from URL fragment (not query params — prevents server log leakage)
+        const hash = window.location.hash.substring(1);
+        const hashParams = new URLSearchParams(hash);
+        const accessToken = hashParams.get("access_token");
+
+        if (!accessToken) {
             router.replace("/login?error=missing_tokens");
             return;
         }
 
-        // Store tokens and fetch profile
-        setTokens(accessToken, refreshToken);
+        // Store access token (refresh token is in httpOnly cookie set by backend)
+        setTokens(accessToken);
+        // Clear the fragment from the URL to prevent token leakage in history
+        window.history.replaceState(null, "", window.location.pathname);
+
         getMyProfile()
             .then((profile) => {
                 setUser(profile);

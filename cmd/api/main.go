@@ -170,8 +170,15 @@ func main() {
 	authProtected.POST("/logout-all", app.LogoutAll)
 	authProtected.POST("/resend-verification", app.ResendVerification)
 
-	// Stripe webhook (secured via Stripe signature, not JWT)
-	api.POST("/webhooks/stripe", app.HandleStripeWebhook)
+	// Stripe webhook (secured via Stripe signature, not JWT; rate-limited by IP)
+	webhook := api.Group("")
+	if redisClient != nil {
+		webhook.Use(middleware.RateLimit(redisClient, middleware.RateLimitConfig{
+			MaxRequests: 100,
+			Window:      1 * time.Minute,
+		}, "webhook:"))
+	}
+	webhook.POST("/webhooks/stripe", app.HandleStripeWebhook)
 
 	// ── Public Endpoints (optional auth, rate-limited reads) ──────────────
 	optAuth := middleware.OptionalAuth(cfg.JWTSecret)

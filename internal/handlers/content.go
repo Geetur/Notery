@@ -654,6 +654,22 @@ func (app *App) GetNotePreview(c *gin.Context) {
 
 	// --- Approved note preview: serve only the requested pages ---
 
+	// Enforce server-side preview page limit: 1 page per 5 total pages (minimum 1).
+	// This prevents content theft via direct API calls that bypass frontend limits.
+	if note.PDFPages > 0 {
+		maxAllowed := note.PDFPages / 5
+		if maxAllowed < 1 {
+			maxAllowed = 1
+		}
+		if pages > maxAllowed {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":     "Exceeds preview page limit",
+				"max_pages": maxAllowed,
+			})
+			return
+		}
+	}
+
 	// 1) Check R2 cache for a previously extracted preview.
 	cachedContent, cachedLen, cacheErr := app.R2.GetPreviewPDF(ctx, uint(noteID), pages)
 	if cacheErr == nil {

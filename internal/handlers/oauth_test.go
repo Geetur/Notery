@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestOAuthFindOrCreate_ExistingOAuthUser(t *testing.T) {
 	}
 }
 
-func TestOAuthFindOrCreate_LinkExistingEmailUser(t *testing.T) {
+func TestOAuthFindOrCreate_EmailConflictRejectsLink(t *testing.T) {
 	app := testApp(t)
 
 	// Create a regular (non-OAuth) user
@@ -115,23 +116,13 @@ func TestOAuthFindOrCreate_LinkExistingEmailUser(t *testing.T) {
 	}
 	app.DB.Create(&user)
 
-	// OAuth login with same email should link to existing account
-	linked, err := app.oauthFindOrCreateUser("google", "goog-789", "existing@test.com", "Existing User")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// OAuth login with same email should be rejected (no auto-linking)
+	_, err := app.oauthFindOrCreateUser("google", "goog-789", "existing@test.com", "Existing User")
+	if err == nil {
+		t.Fatal("expected error for email conflict, got nil")
 	}
-	if linked.ID != user.ID {
-		t.Fatalf("expected linked to existing user ID %d, got %d", user.ID, linked.ID)
-	}
-
-	// Verify the OAuth fields were updated
-	var updated models.User
-	app.DB.First(&updated, user.ID)
-	if updated.OAuthProvider != "google" {
-		t.Fatalf("expected oauth_provider=google on linked user, got %s", updated.OAuthProvider)
-	}
-	if !updated.EmailVerified {
-		t.Fatal("expected email_verified=true after OAuth link")
+	if !errors.Is(err, errOAuthEmailConflict) {
+		t.Fatalf("expected errOAuthEmailConflict, got: %v", err)
 	}
 }
 

@@ -2,8 +2,8 @@
 // Handles auth token injection, automatic refresh on 401, and error normalisation.
 // All API calls go through this module.
 
-import type { ApiError, AuthResponse } from "@/types";
-import { API_V1, REFRESH_TOKEN_KEY, TOKEN_KEY } from "./config";
+import type { ApiError } from "@/types";
+import { API_V1, TOKEN_KEY } from "./config";
 
 // ─── Token Management ─────────────────────────────────────────────────────────
 
@@ -13,24 +13,18 @@ export function getAccessToken(): string | null {
     return localStorage.getItem(TOKEN_KEY);
 }
 
-/** Get the current refresh token from localStorage. */
-export function getRefreshToken(): string | null {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
-}
-
-/** Store both tokens after login/signup/refresh. */
-export function setTokens(accessToken: string, refreshToken: string): void {
+/** Store access token after login/signup/refresh. Refresh token is in httpOnly cookie. */
+export function setTokens(accessToken: string): void {
     if (typeof window === "undefined") return;
     localStorage.setItem(TOKEN_KEY, accessToken);
-    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
 }
 
-/** Clear all tokens (logout). */
+/** Clear access token (logout). Refresh token cookie is cleared by the backend. */
 export function clearTokens(): void {
     if (typeof window === "undefined") return;
     localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    // Clean up legacy refresh token from localStorage (migrated to httpOnly cookie)
+    localStorage.removeItem("notery_refresh_token");
 }
 
 // ─── Error Handling ───────────────────────────────────────────────────────────
@@ -53,7 +47,7 @@ export class ApiRequestError extends Error {
 let refreshPromise: Promise<boolean> | null = null;
 
 /**
- * Attempt to refresh the access token using the stored refresh token.
+ * Attempt to refresh the access token using the httpOnly refresh cookie.
  * Uses a singleton promise to prevent concurrent refresh attempts.
  * Returns true if refresh succeeded, false otherwise.
  */
@@ -62,14 +56,10 @@ async function attemptTokenRefresh(): Promise<boolean> {
     if (refreshPromise) return refreshPromise;
 
     refreshPromise = (async () => {
-        const refreshToken = getRefreshToken();
-        if (!refreshToken) return false;
-
         try {
             const res = await fetch(`${API_V1}/auth/refresh`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ refresh_token: refreshToken }),
+                credentials: "include",
             });
 
             if (!res.ok) {
@@ -77,8 +67,8 @@ async function attemptTokenRefresh(): Promise<boolean> {
                 return false;
             }
 
-            const data: AuthResponse = await res.json();
-            setTokens(data.access_token, data.refresh_token);
+            const data: { access_token: string } = await res.json();
+            setTokens(data.access_token);
             return true;
         } catch {
             clearTokens();
@@ -126,13 +116,13 @@ export async function apiFetch<T>(
             headers["Content-Type"] = "application/json";
         }
 
-        return fetch(url, { ...options, headers });
+        return fetch(url, { ...options, headers, credentials: "include" });
     };
 
     let response = await makeRequest();
 
-    // Auto-refresh on 401
-    if (response.status === 401 && getRefreshToken()) {
+    // Auto-refresh on 401 (refresh token is in httpOnly cookie)
+    if (response.status === 401) {
         const refreshed = await attemptTokenRefresh();
         if (refreshed) {
             response = await makeRequest();

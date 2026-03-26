@@ -40,6 +40,8 @@ func TestRequireAuth_ValidToken(t *testing.T) {
 	token := makeToken(secret, jwt.MapClaims{
 		"user_id": "42",
 		"exp":     time.Now().Add(time.Hour).Unix(),
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 
 	w, _ := callMiddleware(RequireAuth(secret), "Bearer "+token)
@@ -67,6 +69,8 @@ func TestRequireAuth_ExpiredToken(t *testing.T) {
 	token := makeToken(secret, jwt.MapClaims{
 		"user_id": "42",
 		"exp":     time.Now().Add(-time.Hour).Unix(), // expired
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 
 	w, _ := callMiddleware(RequireAuth(secret), "Bearer "+token)
@@ -79,6 +83,8 @@ func TestRequireAuth_WrongSecret(t *testing.T) {
 	token := makeToken("correct-secret", jwt.MapClaims{
 		"user_id": "42",
 		"exp":     time.Now().Add(time.Hour).Unix(),
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 
 	w, _ := callMiddleware(RequireAuth("wrong-secret"), "Bearer "+token)
@@ -91,6 +97,8 @@ func TestRequireAuth_MissingUserIDClaim(t *testing.T) {
 	secret := "test-secret"
 	token := makeToken(secret, jwt.MapClaims{
 		"exp": time.Now().Add(time.Hour).Unix(),
+		"iss": "notery-api",
+		"aud": "notery-web",
 		// no user_id
 	})
 
@@ -105,6 +113,8 @@ func TestRequireAuth_NonNumericUserID(t *testing.T) {
 	token := makeToken(secret, jwt.MapClaims{
 		"user_id": "not-a-number",
 		"exp":     time.Now().Add(time.Hour).Unix(),
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 
 	w, _ := callMiddleware(RequireAuth(secret), "Bearer "+token)
@@ -118,6 +128,8 @@ func TestRequireAuth_AlgorithmNone(t *testing.T) {
 	token := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{
 		"user_id": "42",
 		"exp":     time.Now().Add(time.Hour).Unix(),
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 	s, _ := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
 
@@ -141,6 +153,8 @@ func TestOptionalAuth_ValidToken(t *testing.T) {
 	token := makeToken(secret, jwt.MapClaims{
 		"user_id": "42",
 		"exp":     time.Now().Add(time.Hour).Unix(),
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 
 	w, _ := callMiddleware(OptionalAuth(secret), "Bearer "+token)
@@ -161,6 +175,8 @@ func TestOptionalAuth_ExpiredToken(t *testing.T) {
 	token := makeToken(secret, jwt.MapClaims{
 		"user_id": "42",
 		"exp":     time.Now().Add(-time.Hour).Unix(),
+		"iss":     "notery-api",
+		"aud":     "notery-web",
 	})
 
 	w, _ := callMiddleware(OptionalAuth(secret), "Bearer "+token)

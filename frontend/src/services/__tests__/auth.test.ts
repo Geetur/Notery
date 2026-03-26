@@ -6,7 +6,6 @@ jest.mock("@/lib/api-client", () => ({
     apiGet: jest.fn(),
     setTokens: jest.fn(),
     clearTokens: jest.fn(),
-    getRefreshToken: jest.fn(),
 }));
 
 import { apiPost } from "@/lib/api-client";
@@ -27,7 +26,6 @@ describe("login", () => {
     it("calls POST /auth/login with credentials", async () => {
         const mockResponse = {
             access_token: "access123",
-            refresh_token: "refresh456",
         };
         mockApiPost.mockResolvedValue(mockResponse);
 
@@ -44,7 +42,6 @@ describe("signup", () => {
     it("calls POST /auth/signup with user data", async () => {
         const mockResponse = {
             access_token: "access123",
-            refresh_token: "refresh456",
         };
         mockApiPost.mockResolvedValue(mockResponse);
 

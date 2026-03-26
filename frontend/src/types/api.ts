@@ -149,13 +149,12 @@ export interface AuthRequest {
 
 export interface AuthResponse {
     access_token: string;
-    refresh_token: string;
     message?: string;
     user_id?: number;
 }
 
 export interface RefreshRequest {
-    refresh_token: string;
+    refresh_token?: string;
 }
 
 export interface ForgotPasswordRequest {

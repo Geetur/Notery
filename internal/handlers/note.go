@@ -432,6 +432,14 @@ func (app *App) ApproveNote(c *gin.Context) {
 	}
 	noteLog.Log("APPROVE", "Note fetched", "noteID", note.ID, "hasPDF", note.HasPDF)
 
+	// Prevent self-approval: creators who are also admins cannot approve their own notes
+	userID := helpers.GetUserID(c)
+	if note.CreatorID == userID {
+		noteLog.Log("APPROVE", "Creator cannot approve own notes", "noteID", note.ID, "userID", userID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot approve your own notes"})
+		return
+	}
+
 	// Validate note has PDF content before approval
 	if !note.HasPDF {
 		noteLog.Log("APPROVE", "Cannot approve note without PDF", "noteID", note.ID)

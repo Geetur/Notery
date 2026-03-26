@@ -92,6 +92,11 @@ func Load() *Config {
 			log.Fatal("FATAL: JWT_SECRET is not set — refusing to start in production")
 		}
 		log.Println("WARNING: JWT_SECRET is not set — authentication will fail")
+	} else if len(cfg.JWTSecret) < 32 {
+		if IsProduction() {
+			log.Fatal("FATAL: JWT_SECRET must be at least 32 characters for security")
+		}
+		log.Println("WARNING: JWT_SECRET is shorter than 32 characters — insecure for production")
 	}
 	if cfg.StripeSecretKey == "" {
 		log.Println("INFO: STRIPE_SECRET_KEY is not set — payments will auto-fulfil (development mode)")
