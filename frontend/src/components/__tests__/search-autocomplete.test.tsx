@@ -54,6 +54,7 @@ function makeNote(overrides: Partial<Note> = {}): Note {
         comment_count: 0,
         has_full_access: false,
         is_locked: false,
+        pdf_pages: 0,
         created_at: "2025-01-01T00:00:00Z",
         updated_at: "2025-01-01T00:00:00Z",
         ...overrides,
