@@ -75,6 +75,7 @@ function makeNote(overrides: Partial<Note> = {}): Note {
         status: "Approved",
         subnotery_id: 5,
         subnotery_name: "science",
+        subnotery_profile_picture_url: "",
         price: 0,
         has_pdf: false,
         pdf_size: 0,
