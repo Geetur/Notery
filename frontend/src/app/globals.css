@@ -73,3 +73,368 @@
     @apply hover:border-primary/30 transition-colors cursor-pointer;
   }
 }
+
+/* ============================================================
+   Theme palettes — each has a light and dark variant.
+   Applied via class on <html>: e.g. <html class="theme-retro dark">
+   ============================================================ */
+
+/* --- Retro (warm sepia/cream) --- */
+.theme-retro {
+  --background: 40 30% 94%;
+  --foreground: 30 20% 12%;
+  --card: 40 30% 98%;
+  --card-foreground: 30 20% 12%;
+  --popover: 40 30% 98%;
+  --popover-foreground: 30 20% 12%;
+  --primary: 30 80% 45%;
+  --primary-foreground: 40 30% 98%;
+  --secondary: 35 25% 88%;
+  --secondary-foreground: 30 20% 12%;
+  --muted: 35 25% 88%;
+  --muted-foreground: 30 15% 45%;
+  --accent: 35 25% 88%;
+  --accent-foreground: 30 20% 12%;
+  --destructive: 0 72% 50%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 35 20% 82%;
+  --input: 35 20% 82%;
+  --ring: 30 80% 45%;
+}
+
+.theme-retro.dark {
+  --background: 30 15% 10%;
+  --foreground: 40 20% 88%;
+  --card: 30 15% 14%;
+  --card-foreground: 40 20% 88%;
+  --popover: 30 15% 14%;
+  --popover-foreground: 40 20% 88%;
+  --primary: 30 80% 50%;
+  --primary-foreground: 30 15% 10%;
+  --secondary: 30 12% 20%;
+  --secondary-foreground: 40 20% 88%;
+  --muted: 30 12% 20%;
+  --muted-foreground: 35 15% 55%;
+  --accent: 30 12% 20%;
+  --accent-foreground: 40 20% 88%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 30 12% 22%;
+  --input: 30 12% 22%;
+  --ring: 30 80% 50%;
+}
+
+/* --- Pink (soft rose) --- */
+.theme-pink {
+  --background: 340 30% 96%;
+  --foreground: 340 20% 10%;
+  --card: 340 30% 100%;
+  --card-foreground: 340 20% 10%;
+  --popover: 340 30% 100%;
+  --popover-foreground: 340 20% 10%;
+  --primary: 340 82% 52%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 340 25% 92%;
+  --secondary-foreground: 340 20% 10%;
+  --muted: 340 25% 92%;
+  --muted-foreground: 340 15% 45%;
+  --accent: 340 25% 92%;
+  --accent-foreground: 340 20% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 340 20% 86%;
+  --input: 340 20% 86%;
+  --ring: 340 82% 52%;
+}
+
+.theme-pink.dark {
+  --background: 340 20% 8%;
+  --foreground: 340 20% 90%;
+  --card: 340 20% 12%;
+  --card-foreground: 340 20% 90%;
+  --popover: 340 20% 12%;
+  --popover-foreground: 340 20% 90%;
+  --primary: 340 82% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 340 15% 18%;
+  --secondary-foreground: 340 20% 90%;
+  --muted: 340 15% 18%;
+  --muted-foreground: 340 15% 55%;
+  --accent: 340 15% 18%;
+  --accent-foreground: 340 20% 90%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 340 15% 20%;
+  --input: 340 15% 20%;
+  --ring: 340 82% 58%;
+}
+
+/* --- Gold (luxe amber) --- */
+.theme-gold {
+  --background: 45 30% 95%;
+  --foreground: 40 25% 10%;
+  --card: 45 30% 100%;
+  --card-foreground: 40 25% 10%;
+  --popover: 45 30% 100%;
+  --popover-foreground: 40 25% 10%;
+  --primary: 45 90% 42%;
+  --primary-foreground: 40 25% 10%;
+  --secondary: 42 25% 90%;
+  --secondary-foreground: 40 25% 10%;
+  --muted: 42 25% 90%;
+  --muted-foreground: 40 15% 45%;
+  --accent: 42 25% 90%;
+  --accent-foreground: 40 25% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 42 20% 84%;
+  --input: 42 20% 84%;
+  --ring: 45 90% 42%;
+}
+
+.theme-gold.dark {
+  --background: 40 18% 8%;
+  --foreground: 45 20% 88%;
+  --card: 40 18% 12%;
+  --card-foreground: 45 20% 88%;
+  --popover: 40 18% 12%;
+  --popover-foreground: 45 20% 88%;
+  --primary: 45 90% 48%;
+  --primary-foreground: 40 18% 8%;
+  --secondary: 40 12% 18%;
+  --secondary-foreground: 45 20% 88%;
+  --muted: 40 12% 18%;
+  --muted-foreground: 42 15% 55%;
+  --accent: 40 12% 18%;
+  --accent-foreground: 45 20% 88%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 40 12% 20%;
+  --input: 40 12% 20%;
+  --ring: 45 90% 48%;
+}
+
+/* --- Ocean (deep blue) --- */
+.theme-ocean {
+  --background: 210 30% 96%;
+  --foreground: 210 25% 10%;
+  --card: 210 30% 100%;
+  --card-foreground: 210 25% 10%;
+  --popover: 210 30% 100%;
+  --popover-foreground: 210 25% 10%;
+  --primary: 210 90% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 25% 92%;
+  --secondary-foreground: 210 25% 10%;
+  --muted: 210 25% 92%;
+  --muted-foreground: 210 15% 45%;
+  --accent: 210 25% 92%;
+  --accent-foreground: 210 25% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 210 20% 86%;
+  --input: 210 20% 86%;
+  --ring: 210 90% 50%;
+}
+
+.theme-ocean.dark {
+  --background: 210 25% 8%;
+  --foreground: 210 20% 90%;
+  --card: 210 25% 12%;
+  --card-foreground: 210 20% 90%;
+  --popover: 210 25% 12%;
+  --popover-foreground: 210 20% 90%;
+  --primary: 210 90% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 15% 18%;
+  --secondary-foreground: 210 20% 90%;
+  --muted: 210 15% 18%;
+  --muted-foreground: 210 15% 55%;
+  --accent: 210 15% 18%;
+  --accent-foreground: 210 20% 90%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 210 15% 20%;
+  --input: 210 15% 20%;
+  --ring: 210 90% 55%;
+}
+
+/* --- Forest (earthy green) --- */
+.theme-forest {
+  --background: 140 20% 95%;
+  --foreground: 140 25% 10%;
+  --card: 140 20% 100%;
+  --card-foreground: 140 25% 10%;
+  --popover: 140 20% 100%;
+  --popover-foreground: 140 25% 10%;
+  --primary: 150 60% 36%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 140 18% 90%;
+  --secondary-foreground: 140 25% 10%;
+  --muted: 140 18% 90%;
+  --muted-foreground: 140 12% 45%;
+  --accent: 140 18% 90%;
+  --accent-foreground: 140 25% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 140 15% 84%;
+  --input: 140 15% 84%;
+  --ring: 150 60% 36%;
+}
+
+.theme-forest.dark {
+  --background: 150 20% 7%;
+  --foreground: 140 15% 88%;
+  --card: 150 20% 11%;
+  --card-foreground: 140 15% 88%;
+  --popover: 150 20% 11%;
+  --popover-foreground: 140 15% 88%;
+  --primary: 150 60% 42%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 150 12% 17%;
+  --secondary-foreground: 140 15% 88%;
+  --muted: 150 12% 17%;
+  --muted-foreground: 140 12% 55%;
+  --accent: 150 12% 17%;
+  --accent-foreground: 140 15% 88%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 150 12% 19%;
+  --input: 150 12% 19%;
+  --ring: 150 60% 42%;
+}
+
+/* --- Lavender (soft purple) --- */
+.theme-lavender {
+  --background: 270 25% 96%;
+  --foreground: 270 20% 10%;
+  --card: 270 25% 100%;
+  --card-foreground: 270 20% 10%;
+  --popover: 270 25% 100%;
+  --popover-foreground: 270 20% 10%;
+  --primary: 270 70% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 270 20% 92%;
+  --secondary-foreground: 270 20% 10%;
+  --muted: 270 20% 92%;
+  --muted-foreground: 270 12% 45%;
+  --accent: 270 20% 92%;
+  --accent-foreground: 270 20% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 270 15% 86%;
+  --input: 270 15% 86%;
+  --ring: 270 70% 55%;
+}
+
+.theme-lavender.dark {
+  --background: 270 20% 8%;
+  --foreground: 270 15% 90%;
+  --card: 270 20% 12%;
+  --card-foreground: 270 15% 90%;
+  --popover: 270 20% 12%;
+  --popover-foreground: 270 15% 90%;
+  --primary: 270 70% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 270 12% 18%;
+  --secondary-foreground: 270 15% 90%;
+  --muted: 270 12% 18%;
+  --muted-foreground: 270 12% 55%;
+  --accent: 270 12% 18%;
+  --accent-foreground: 270 15% 90%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 270 12% 20%;
+  --input: 270 12% 20%;
+  --ring: 270 70% 60%;
+}
+
+/* --- Sunset (warm orange/coral) --- */
+.theme-sunset {
+  --background: 15 35% 96%;
+  --foreground: 10 25% 10%;
+  --card: 15 35% 100%;
+  --card-foreground: 10 25% 10%;
+  --popover: 15 35% 100%;
+  --popover-foreground: 10 25% 10%;
+  --primary: 15 85% 52%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 15 25% 91%;
+  --secondary-foreground: 10 25% 10%;
+  --muted: 15 25% 91%;
+  --muted-foreground: 15 15% 45%;
+  --accent: 15 25% 91%;
+  --accent-foreground: 10 25% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 15 20% 86%;
+  --input: 15 20% 86%;
+  --ring: 15 85% 52%;
+}
+
+.theme-sunset.dark {
+  --background: 10 22% 8%;
+  --foreground: 15 20% 90%;
+  --card: 10 22% 12%;
+  --card-foreground: 15 20% 90%;
+  --popover: 10 22% 12%;
+  --popover-foreground: 15 20% 90%;
+  --primary: 15 85% 56%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 10 14% 18%;
+  --secondary-foreground: 15 20% 90%;
+  --muted: 10 14% 18%;
+  --muted-foreground: 15 12% 55%;
+  --accent: 10 14% 18%;
+  --accent-foreground: 15 20% 90%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 10 14% 20%;
+  --input: 10 14% 20%;
+  --ring: 15 85% 56%;
+}
+
+/* --- Neon (electric cyan/magenta) --- */
+.theme-neon {
+  --background: 180 10% 96%;
+  --foreground: 180 15% 8%;
+  --card: 180 10% 100%;
+  --card-foreground: 180 15% 8%;
+  --popover: 180 10% 100%;
+  --popover-foreground: 180 15% 8%;
+  --primary: 175 100% 40%;
+  --primary-foreground: 180 15% 8%;
+  --secondary: 180 12% 92%;
+  --secondary-foreground: 180 15% 8%;
+  --muted: 180 12% 92%;
+  --muted-foreground: 180 10% 45%;
+  --accent: 295 70% 55%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 180 10% 86%;
+  --input: 180 10% 86%;
+  --ring: 175 100% 40%;
+}
+
+.theme-neon.dark {
+  --background: 180 15% 5%;
+  --foreground: 175 15% 92%;
+  --card: 180 15% 9%;
+  --card-foreground: 175 15% 92%;
+  --popover: 180 15% 9%;
+  --popover-foreground: 175 15% 92%;
+  --primary: 175 100% 45%;
+  --primary-foreground: 180 15% 5%;
+  --secondary: 180 12% 15%;
+  --secondary-foreground: 175 15% 92%;
+  --muted: 180 12% 15%;
+  --muted-foreground: 175 12% 55%;
+  --accent: 295 70% 60%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 62% 30%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 180 12% 17%;
+  --input: 180 12% 17%;
+  --ring: 175 100% 45%;
+}

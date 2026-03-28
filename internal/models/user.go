@@ -14,26 +14,26 @@ type User struct {
 	ID            uint        `json:"id" gorm:"primaryKey"`
 	Email         string      `json:"-" gorm:"unique; not null"` // Hidden from JSON; exposed explicitly in SelfProfile()
 	Username      string      `json:"username" gorm:"default:''"`
-	Password      string      `json:"-" gorm:"-"`                    // input-only field, never persisted or serialized
-	Hash          string      `json:"-" gorm:"not null"`             // bcrypt hash, never exposed
+	Password      string      `json:"-" gorm:"-"`        // input-only field, never persisted or serialized
+	Hash          string      `json:"-" gorm:"not null"` // bcrypt hash, never exposed
 	AdminOf       []Subnotery `json:"admin_of" gorm:"many2many:user_admins;"`
 	IsGlobalAdmin bool        `json:"is_global_admin" gorm:"default:false"`
 
 	// ----- Profile Fields -----
-	DisplayNameField string          `json:"display_name" gorm:"column:display_name;default:''"`
-	Bio              string          `json:"bio" gorm:"type:text;default:''"`
-	AvatarURL        string          `json:"avatar_url" gorm:"default:''"`
-	BannerURL        string          `json:"banner_url" gorm:"type:text;default:''"`
+	DisplayNameField  string            `json:"display_name" gorm:"column:display_name;default:''"`
+	Bio               string            `json:"bio" gorm:"type:text;default:''"`
+	AvatarURL         string            `json:"avatar_url" gorm:"default:''"`
+	BannerURL         string            `json:"banner_url" gorm:"type:text;default:''"`
 	ProfileVisibility ProfileVisibility `json:"profile_visibility" gorm:"default:'public'"`
-	ProfileUpdatedAt *time.Time      `json:"profile_updated_at"`
-	EmailVerified    bool            `json:"email_verified" gorm:"default:false"`
-	OAuthProvider    string          `json:"-" gorm:"column:oauth_provider;default:''"` // "google", "github", or "" for email/password
-	OAuthID          string          `json:"-" gorm:"column:oauth_id;default:''"` // Provider's unique user ID
+	ProfileUpdatedAt  *time.Time        `json:"profile_updated_at"`
+	EmailVerified     bool              `json:"email_verified" gorm:"default:false"`
+	OAuthProvider     string            `json:"-" gorm:"column:oauth_provider;default:''"` // "google", "github", or "" for email/password
+	OAuthID           string            `json:"-" gorm:"column:oauth_id;default:''"`       // Provider's unique user ID
 
 	// ----- Stripe Connect (Payout) Fields -----
 	StripeAccountID          string `json:"-" gorm:"type:varchar(255);default:''"` // Stripe Connected Account ID (acct_...)
-	StripeOnboardingComplete bool   `json:"-" gorm:"default:false"`               // Whether onboarding was finished
-	PayoutEnabled            bool   `json:"-" gorm:"default:false"`               // Whether charges_enabled on Stripe
+	StripeOnboardingComplete bool   `json:"-" gorm:"default:false"`                // Whether onboarding was finished
+	PayoutEnabled            bool   `json:"-" gorm:"default:false"`                // Whether charges_enabled on Stripe
 
 	// ----- Notoriety (Karma) Fields -----
 	// Stored as float64 for precision; displayed rounded to the user.
@@ -44,8 +44,8 @@ type User struct {
 	AgreedToTerms   bool       `json:"-" gorm:"default:false"`
 	AgreedToTermsAt *time.Time `json:"-"`
 
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ProfileVisibility controls what data is shown on a user's public profile.

@@ -23,6 +23,7 @@ import {
     FileText,
     Flame,
     Home,
+    Palette,
     ShoppingCart,
     User,
     Users,
@@ -182,6 +183,13 @@ export function LeftSidebar({ mobile }: LeftSidebarProps) {
                                     icon={<User className={iconSize} />}
                                     label="Profile"
                                     active={pathname === "/profile"}
+                                    collapsed={isCollapsed}
+                                />
+                                <SidebarLink
+                                    href="/settings"
+                                    icon={<Palette className={iconSize} />}
+                                    label="Settings"
+                                    active={pathname === "/settings"}
                                     collapsed={isCollapsed}
                                 />
                             </div>

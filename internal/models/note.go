@@ -115,4 +115,8 @@ type Note struct {
 	// HasFullAccess indicates whether the requesting user has full PDF access.
 	// Populated at query time for the single-note endpoint — not stored in the database.
 	HasFullAccess bool `json:"has_full_access" gorm:"-"`
+
+	// SubnoteryProfilePictureURL is the profile picture URL for the note's subnotery.
+	// Populated at query time via batch helper — not stored in the database.
+	SubnoteryProfilePictureURL string `json:"subnotery_profile_picture_url" gorm:"-"`
 }

@@ -252,7 +252,7 @@ func TestCheckoutSelected_HappyPath(t *testing.T) {
 	// The CheckoutSelected handler reads from Redis, which isn't available.
 	// We test that the endpoint responds with an appropriate error when Redis is nil.
 	body := map[string]interface{}{
-		"item_ids":       []string{strconv.Itoa(int(noteID1)), strconv.Itoa(int(noteID2))},
+		"item_ids":        []string{strconv.Itoa(int(noteID1)), strconv.Itoa(int(noteID2))},
 		"idempotency_key": "test-key-123",
 	}
 	w := serve("POST", "/checkout/selected",
@@ -271,7 +271,7 @@ func TestCheckoutSelected_EmptyItems(t *testing.T) {
 	buyer := seedUser(t, app.DB, "csbuyer2")
 
 	body := map[string]interface{}{
-		"item_ids":       []string{},
+		"item_ids":        []string{},
 		"idempotency_key": "test-key-456",
 	}
 	w := serve("POST", "/checkout/selected",

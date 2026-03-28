@@ -873,3 +873,119 @@ func TestGetSubnoteryDetail_IncludesBannerURL(t *testing.T) {
 		t.Fatalf("expected banner_url=banners/1/banner.png, got %v", r["banner_url"])
 	}
 }
+
+// ===== Profile Picture TESTS =====
+
+func TestDeleteSubnoteryProfilePicture_HappyPath(t *testing.T) {
+	app := testApp(t)
+	adminUID := seedUser(t, app.DB, "pfpadmin")
+
+	sub := models.Subnotery{Name: "pfp-sub", ProfilePictureURL: "profile-pictures/1/profile.jpg"}
+	app.DB.Create(&sub)
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", adminUID, sub.ID)
+
+	w := serve("DELETE", "/subnoteries/:subnotery_id/profile-picture",
+		"/subnoteries/"+strconv.Itoa(int(sub.ID))+"/profile-picture",
+		nil, app.DeleteSubnoteryProfilePicture, authMW(adminUID))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify profile_picture_url is cleared
+	var updated models.Subnotery
+	app.DB.First(&updated, sub.ID)
+	if updated.ProfilePictureURL != "" {
+		t.Fatalf("expected profile_picture_url to be empty, got %s", updated.ProfilePictureURL)
+	}
+}
+
+func TestDeleteSubnoteryProfilePicture_NonAdminDenied(t *testing.T) {
+	app := testApp(t)
+	uid := seedUser(t, app.DB, "pfpnonadmin")
+
+	sub := models.Subnotery{Name: "pfp-deny-sub", ProfilePictureURL: "profile-pictures/1/profile.jpg"}
+	app.DB.Create(&sub)
+
+	w := serve("DELETE", "/subnoteries/:subnotery_id/profile-picture",
+		"/subnoteries/"+strconv.Itoa(int(sub.ID))+"/profile-picture",
+		nil, app.DeleteSubnoteryProfilePicture, authMW(uid))
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestUploadSubnoteryProfilePicture_NoR2(t *testing.T) {
+	app := testApp(t)
+	adminUID := seedUser(t, app.DB, "pfpuploader")
+
+	sub := models.Subnotery{Name: "pfp-upload-sub"}
+	app.DB.Create(&sub)
+	app.DB.Exec("INSERT INTO user_admins (user_id, subnotery_id) VALUES (?, ?)", adminUID, sub.ID)
+
+	// With no R2 configured, should return 503
+	w := serve("POST", "/subnoteries/:subnotery_id/profile-picture",
+		"/subnoteries/"+strconv.Itoa(int(sub.ID))+"/profile-picture",
+		nil, app.UploadSubnoteryProfilePicture, authMW(adminUID))
+	assertStatus(t, w, http.StatusServiceUnavailable)
+}
+
+func TestGetSubnoteryProfilePicture_NoPicture(t *testing.T) {
+	app := testApp(t)
+
+	sub := models.Subnotery{Name: "no-pfp-sub"}
+	app.DB.Create(&sub)
+
+	w := serve("GET", "/subnoteries/:subnotery_id/profile-picture",
+		"/subnoteries/"+strconv.Itoa(int(sub.ID))+"/profile-picture",
+		nil, app.GetSubnoteryProfilePicture)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestGetSubnoteryProfilePicture_SubnoteryNotFound(t *testing.T) {
+	app := testApp(t)
+
+	w := serve("GET", "/subnoteries/:subnotery_id/profile-picture",
+		"/subnoteries/99999/profile-picture",
+		nil, app.GetSubnoteryProfilePicture)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestGetSubnoteryDetail_IncludesProfilePictureURL(t *testing.T) {
+	app := testApp(t)
+
+	sub := models.Subnotery{Name: "pfp-detail-sub", ProfilePictureURL: "profile-pictures/1/profile.png"}
+	app.DB.Create(&sub)
+
+	w := serve("GET", "/subnoteries/:subnotery_id", "/subnoteries/"+strconv.Itoa(int(sub.ID)),
+		nil, app.GetSubnoteryDetail)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	if r["profile_picture_url"] != "profile-pictures/1/profile.png" {
+		t.Fatalf("expected profile_picture_url=profile-pictures/1/profile.png, got %v", r["profile_picture_url"])
+	}
+}
+
+func TestListSubnoteries_IncludesProfilePictureURL(t *testing.T) {
+	app := testApp(t)
+
+	sub := models.Subnotery{Name: "pfp-list-sub", ProfilePictureURL: "profile-pictures/2/profile.jpg"}
+	app.DB.Create(&sub)
+
+	w := serve("GET", "/subnoteries", "/subnoteries?page=1&limit=50",
+		nil, app.ListSubnoteries)
+	assertStatus(t, w, http.StatusOK)
+	r := respJSON(t, w)
+	subs, ok := r["subnoteries"].([]interface{})
+	if !ok {
+		t.Fatalf("expected subnoteries array, got %T", r["subnoteries"])
+	}
+	found := false
+	for _, s := range subs {
+		sm := s.(map[string]interface{})
+		if sm["name"] == "pfp-list-sub" {
+			found = true
+			if sm["profile_picture_url"] != "profile-pictures/2/profile.jpg" {
+				t.Fatalf("expected profile_picture_url in list, got %v", sm["profile_picture_url"])
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected pfp-list-sub in subnoteries list")
+	}
+}

@@ -5,6 +5,7 @@
 import { NoteCard } from "@/components/feed";
 import { SortTabs } from "@/components/feed/sort-tabs";
 import { RightSidebar } from "@/components/layout/right-sidebar";
+import { SubnoteryAvatar } from "@/components/subnotery-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,7 +16,7 @@ import { API_BASE_URL } from "@/lib/config";
 import { timeAgo } from "@/lib/format";
 import { approveNote, deleteNote, getPendingNotes, rejectNote } from "@/services/notes";
 import { inviteAdmin } from "@/services/notifications";
-import { banUser, deleteSubnoteryBanner, getSubnotery, getSubnoteryMembers, getSubnoteryNotes, joinSubnotery, leaveSubnotery, listBans, removeAdminFromSubnotery, removeMemberFromSubnotery, unbanUser, updateSubnoterySettings, uploadSubnoteryBanner } from "@/services/subnoteries";
+import { banUser, deleteSubnoteryBanner, deleteSubnoteryProfilePicture, getSubnotery, getSubnoteryMembers, getSubnoteryNotes, joinSubnotery, leaveSubnotery, listBans, removeAdminFromSubnotery, removeMemberFromSubnotery, unbanUser, updateSubnoterySettings, uploadSubnoteryBanner, uploadSubnoteryProfilePicture } from "@/services/subnoteries";
 import { useAuthStore } from "@/stores/auth-store";
 import { useFeedStore } from "@/stores/feed-store";
 import type { Ban, BanDuration, Note, SubnoteryDetail, SubnoteryMember } from "@/types";
@@ -71,8 +72,10 @@ export default function CommunityDetailPage() {
     const [settingsAutoApprove, setSettingsAutoApprove] = useState(false);
     const [savingSettings, setSavingSettings] = useState(false);
     const [uploadingBanner, setUploadingBanner] = useState(false);
+    const [uploadingProfilePic, setUploadingProfilePic] = useState(false);
     const [removingAdmin, setRemovingAdmin] = useState<number | null>(null);
     const bannerInputRef = useRef<HTMLInputElement>(null);
+    const profilePicInputRef = useRef<HTMLInputElement>(null);
 
     // Admin invite state
     const [inviteUsername, setInviteUsername] = useState("");
@@ -298,6 +301,36 @@ export default function CommunityDetailPage() {
         }
     };
 
+    const handleUploadProfilePic = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setUploadingProfilePic(true);
+        try {
+            await uploadSubnoteryProfilePicture(communityId, file);
+            toast({ title: "Profile picture uploaded" });
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to upload profile picture";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        } finally {
+            setUploadingProfilePic(false);
+            if (profilePicInputRef.current) profilePicInputRef.current.value = "";
+        }
+    };
+
+    const handleDeleteProfilePic = async () => {
+        try {
+            await deleteSubnoteryProfilePicture(communityId);
+            toast({ title: "Profile picture removed" });
+            const updated = await getSubnotery(communityId);
+            setCommunity(updated);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to delete profile picture";
+            toast({ title: "Error", description: msg, variant: "destructive" });
+        }
+    };
+
     const handleRemoveAdmin = async (adminId: number) => {
         if (!confirm("Remove this user's admin permissions?")) return;
         setRemovingAdmin(adminId);
@@ -464,17 +497,29 @@ export default function CommunityDetailPage() {
                     {/* Community header */}
                     <Card className="mb-4 overflow-hidden">
                         {/* Community banner */}
-                        {community.banner_url && (
-                            <div className="relative w-full h-32 bg-muted">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                    src={`${API_BASE_URL}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
-                                    alt={`Banner for n/${community.name}`}
-                                    className="w-full h-full object-cover"
-                                />
+                        <div className="relative w-full h-32 bg-muted">
+                            {community.banner_url && (
+                                <>                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                        src={`${API_BASE_URL}/api/v1/subnoteries/${communityId}/banner?v=${Date.now()}`}
+                                        alt={`Banner for n/${community.name}`}
+                                        className="w-full h-full object-cover"
+                                    />
+                                </>
+                            )}
+                            {/* Profile picture overlapping banner */}
+                            <div className="absolute -bottom-8 left-6">
+                                <div className="rounded-full border-4 border-card bg-card">
+                                    <SubnoteryAvatar
+                                        subnoteryId={communityId}
+                                        profilePictureUrl={community.profile_picture_url}
+                                        name={community.name}
+                                        size="lg"
+                                    />
+                                </div>
                             </div>
-                        )}
-                        <div className="p-6">
+                        </div>
+                        <div className="p-6 pt-12">
                             <div className="flex items-start justify-between">
                                 <div>
                                     <h1 className="text-2xl font-bold">n/{community.name}</h1>
@@ -488,15 +533,7 @@ export default function CommunityDetailPage() {
                                             Created {timeAgo(community.created_at)}
                                         </span>
                                     </div>
-                                    <div className="flex items-center gap-2 mt-2">
-                                        <Shield className="h-4 w-4 text-muted-foreground" />
-                                        <span className="text-sm text-muted-foreground">Admins:</span>
-                                        {community.admins.map((admin) => (
-                                            <Badge key={admin.id} variant="secondary">
-                                                {admin.username}
-                                            </Badge>
-                                        ))}
-                                    </div>
+
                                 </div>
                                 <div className="flex gap-2">
                                     {user && (
@@ -1106,6 +1143,65 @@ export default function CommunityDetailPage() {
                                         accept="image/jpeg,image/png,image/webp,image/gif"
                                         className="hidden"
                                         onChange={handleUploadBanner}
+                                    />
+                                    <p className="text-xs text-muted-foreground">Max 5 MB. JPEG, PNG, WebP, or GIF.</p>
+                                </Card>
+
+                                {/* Profile picture management */}
+                                <Card className="p-6 space-y-4 mt-4">
+                                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                                        <Paintbrush className="h-5 w-5" /> Profile Picture
+                                    </h3>
+                                    {community?.profile_picture_url ? (
+                                        <div className="space-y-3">
+                                            <div className="w-16 h-16 rounded-full overflow-hidden border border-border">
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                    src={`${API_BASE_URL}/api/v1/subnoteries/${communityId}/profile-picture?v=${Date.now()}`}
+                                                    alt="Current profile picture"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => profilePicInputRef.current?.click()}
+                                                    disabled={uploadingProfilePic}
+                                                >
+                                                    <Upload className="h-4 w-4 mr-1" />
+                                                    {uploadingProfilePic ? "Uploading..." : "Replace"}
+                                                </Button>
+                                                <Button
+                                                    variant="destructive"
+                                                    size="sm"
+                                                    onClick={handleDeleteProfilePic}
+                                                >
+                                                    <Trash2 className="h-4 w-4 mr-1" />
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            <p className="text-sm text-muted-foreground">No profile picture set.</p>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => profilePicInputRef.current?.click()}
+                                                disabled={uploadingProfilePic}
+                                            >
+                                                <Upload className="h-4 w-4 mr-1" />
+                                                {uploadingProfilePic ? "Uploading..." : "Upload Profile Picture"}
+                                            </Button>
+                                        </div>
+                                    )}
+                                    <input
+                                        ref={profilePicInputRef}
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,image/gif"
+                                        className="hidden"
+                                        onChange={handleUploadProfilePic}
                                     />
                                     <p className="text-xs text-muted-foreground">Max 5 MB. JPEG, PNG, WebP, or GIF.</p>
                                 </Card>

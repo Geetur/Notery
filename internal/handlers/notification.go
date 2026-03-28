@@ -69,18 +69,18 @@ func (app *App) GetNotifications(c *gin.Context) {
 
 	// Populate actor usernames for display
 	type notifResponse struct {
-		ID            uint                     `json:"id"`
-		Type          models.NotificationType  `json:"type"`
-		Title         string                   `json:"title"`
-		Message       string                   `json:"message"`
-		ReferenceID   uint64                   `json:"reference_id"`
-		ReferenceType string                   `json:"reference_type"`
+		ID            uint                      `json:"id"`
+		Type          models.NotificationType   `json:"type"`
+		Title         string                    `json:"title"`
+		Message       string                    `json:"message"`
+		ReferenceID   uint64                    `json:"reference_id"`
+		ReferenceType string                    `json:"reference_type"`
 		ActionStatus  models.NotificationStatus `json:"action_status"`
-		IsRead        bool                     `json:"is_read"`
-		ActorID       uint64                   `json:"actor_id"`
-		ActorUsername string                   `json:"actor_username"`
-		Metadata      string                   `json:"metadata"`
-		CreatedAt     string                   `json:"created_at"`
+		IsRead        bool                      `json:"is_read"`
+		ActorID       uint64                    `json:"actor_id"`
+		ActorUsername string                    `json:"actor_username"`
+		Metadata      string                    `json:"metadata"`
+		CreatedAt     string                    `json:"created_at"`
 	}
 
 	// Collect unique actor IDs for batch lookup

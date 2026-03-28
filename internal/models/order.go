@@ -69,9 +69,9 @@ type Order struct {
 
 // OrderItem is a single line item within an order.
 type OrderItem struct {
-	ID      uint   `json:"id" gorm:"primaryKey"`
-	OrderID uint   `json:"order_id" gorm:"index;not null"`
-	NoteID  uint   `json:"note_id" gorm:"index;not null"`
+	ID      uint `json:"id" gorm:"primaryKey"`
+	OrderID uint `json:"order_id" gorm:"index;not null"`
+	NoteID  uint `json:"note_id" gorm:"index;not null"`
 	// PriceCents records the note price at time of order creation.
 	PriceCents int64 `json:"price_cents"`
 }

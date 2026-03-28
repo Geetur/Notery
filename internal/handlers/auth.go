@@ -46,10 +46,10 @@ var authLog = helpers.AuthLog
 
 // AuthRequest represents the JSON body for signup and login requests.
 type AuthRequest struct {
-	Email          string `json:"email" binding:"required,email"`
-	Password       string `json:"password" binding:"required"`
-	Username       string `json:"username"`         // optional on signup, ignored on login
-	AgreedToTerms  bool   `json:"agreed_to_terms"` // required on signup
+	Email         string `json:"email" binding:"required,email"`
+	Password      string `json:"password" binding:"required"`
+	Username      string `json:"username"`        // optional on signup, ignored on login
+	AgreedToTerms bool   `json:"agreed_to_terms"` // required on signup
 }
 
 // ----- TOKEN ISSUANCE HELPERS -----

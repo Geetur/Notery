@@ -41,6 +41,8 @@ export interface Note {
     has_full_access: boolean;
     /** Whether comments are disabled on this note. */
     is_locked: boolean;
+    /** Profile picture URL of the note's subnotery. */
+    subnotery_profile_picture_url: string;
     created_at: string;
     updated_at: string;
 }
@@ -62,6 +64,7 @@ export interface SubnoteryListItem {
     admin_count: number;
     member_count: number;
     banner_url: string;
+    profile_picture_url: string;
     created_at: string;
 }
 
@@ -72,6 +75,7 @@ export interface SubnoteryDetail {
     content_type: string;
     rules: string;
     banner_url: string;
+    profile_picture_url: string;
     background_color: string;
     min_post_notoriety: number;
     min_comment_notoriety: number;

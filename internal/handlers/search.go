@@ -324,7 +324,9 @@ func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination
 // with resolved usernames, not full threaded trees.
 //
 // DB: COUNT + SELECT from comments JOIN notes WHERE status=Approved AND body ILIKE.
-//     Fetches usernames via fetchCommentUsernames helper. Paginated.
+//
+//	Fetches usernames via fetchCommentUsernames helper. Paginated.
+//
 // Technologies: PostgreSQL (GORM ILIKE + JOIN).
 func (app *App) searchComments(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"

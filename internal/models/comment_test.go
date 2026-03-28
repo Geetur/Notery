@@ -150,9 +150,9 @@ func TestControversyScoreLowControversy(t *testing.T) {
 
 func TestControversyScoreOrdering(t *testing.T) {
 	// More even split with more votes should be more controversial
-	divisive := ControversyScore(500, 490)   // very controversial
-	unanimous := ControversyScore(500, 0)    // not controversial
-	lowVolume := ControversyScore(5, 5)      // controversial but few votes
+	divisive := ControversyScore(500, 490) // very controversial
+	unanimous := ControversyScore(500, 0)  // not controversial
+	lowVolume := ControversyScore(5, 5)    // controversial but few votes
 
 	if divisive <= unanimous {
 		t.Errorf("divisive(%f) should rank above unanimous(%f)", divisive, unanimous)
