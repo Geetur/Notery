@@ -3,6 +3,7 @@
 "use client";
 
 import { RightSidebar } from "@/components/layout/right-sidebar";
+import { SubnoteryAvatar } from "@/components/subnotery-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -81,27 +82,35 @@ export default function CommunitiesPage() {
                                             </div>
                                         )}
                                         <div className="p-4 flex items-center justify-between">
-                                            <div className="flex-1 min-w-0">
-                                                <h3 className="font-semibold text-lg">
-                                                    n/{sub.name}
-                                                </h3>
-                                                <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                                                    <span className="flex items-center gap-1">
-                                                        <Users className="h-3.5 w-3.5" />
-                                                        {sub.member_count}{" "}
-                                                        {sub.member_count === 1
-                                                            ? "member"
-                                                            : "members"}
-                                                    </span>
-                                                    <span>
-                                                        {sub.admin_count}{" "}
-                                                        {sub.admin_count === 1
-                                                            ? "admin"
-                                                            : "admins"}
-                                                    </span>
-                                                    <span>
-                                                        Created {timeAgo(sub.created_at)}
-                                                    </span>
+                                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                                                <SubnoteryAvatar
+                                                    subnoteryId={sub.id}
+                                                    profilePictureUrl={sub.profile_picture_url}
+                                                    name={sub.name}
+                                                    size="md"
+                                                />
+                                                <div className="flex-1 min-w-0">
+                                                    <h3 className="font-semibold text-lg">
+                                                        n/{sub.name}
+                                                    </h3>
+                                                    <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                                                        <span className="flex items-center gap-1">
+                                                            <Users className="h-3.5 w-3.5" />
+                                                            {sub.member_count}{" "}
+                                                            {sub.member_count === 1
+                                                                ? "member"
+                                                                : "members"}
+                                                        </span>
+                                                        <span>
+                                                            {sub.admin_count}{" "}
+                                                            {sub.admin_count === 1
+                                                                ? "admin"
+                                                                : "admins"}
+                                                        </span>
+                                                        <span>
+                                                            Created {timeAgo(sub.created_at)}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
                                             <Badge variant="secondary" className="shrink-0">

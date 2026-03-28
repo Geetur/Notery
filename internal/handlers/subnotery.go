@@ -297,22 +297,24 @@ func (app *App) ListSubnoteries(c *gin.Context) {
 
 	// Build response with counts to avoid exposing full user lists
 	type subnoteryItem struct {
-		ID           uint   `json:"id"`
-		Name         string `json:"name"`
-		BannerURL    string `json:"banner_url"`
-		AdminCount   int    `json:"admin_count"`
-		MemberCount  int    `json:"member_count"`
-		CreatedAt    string `json:"created_at"`
+		ID                uint   `json:"id"`
+		Name              string `json:"name"`
+		BannerURL         string `json:"banner_url"`
+		ProfilePictureURL string `json:"profile_picture_url"`
+		AdminCount        int    `json:"admin_count"`
+		MemberCount       int    `json:"member_count"`
+		CreatedAt         string `json:"created_at"`
 	}
 	items := make([]subnoteryItem, len(subnoteries))
 	for i, s := range subnoteries {
 		items[i] = subnoteryItem{
-			ID:          s.ID,
-			Name:        s.Name,
-			BannerURL:   s.BannerURL,
-			AdminCount:  len(s.Admins),
-			MemberCount: len(s.Members),
-			CreatedAt:   s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			ID:                s.ID,
+			Name:              s.Name,
+			BannerURL:         s.BannerURL,
+			ProfilePictureURL: s.ProfilePictureURL,
+			AdminCount:        len(s.Admins),
+			MemberCount:       len(s.Members),
+			CreatedAt:         s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 	}
 
@@ -397,6 +399,7 @@ func (app *App) GetSubnoteryDetail(c *gin.Context) {
 		"content_type":            subnotery.ContentType,
 		"rules":                   subnotery.Rules,
 		"banner_url":              subnotery.BannerURL,
+		"profile_picture_url":     subnotery.ProfilePictureURL,
 		"background_color":        subnotery.BackgroundColor,
 		"min_post_notoriety":      subnotery.MinPostNotoriety,
 		"min_comment_notoriety":   subnotery.MinCommentNotoriety,
@@ -885,6 +888,170 @@ func (app *App) isSubnoteryAdmin(userID uint64, subnoteryID uint) bool {
 		Where("user_id = ? AND subnotery_id = ?", userID, subnoteryID).
 		Count(&count)
 	return count > 0
+}
+
+// UploadSubnoteryProfilePicture handles profile picture upload for a subnotery.
+//
+// Validates image type (JPEG/PNG/WebP/GIF) and magic bytes, stores in R2 at
+// `profile-pictures/{subnotery_id}/profile.{ext}`, and updates the ProfilePictureURL field.
+//
+// Route: POST /api/v1/subnoteries/:subnotery_id/profile-picture
+func (app *App) UploadSubnoteryProfilePicture(c *gin.Context) {
+	subnoteryLog.Log("PROFILE_PIC_UPLOAD", "Processing profile picture upload request")
+
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+	userID := helpers.GetUserID(c)
+
+	if !app.isSubnoteryAdmin(userID, uint(subnoteryID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can upload profile pictures"})
+		return
+	}
+
+	if app.R2 == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "File storage not configured"})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("profile_picture")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No profile picture file provided"})
+		return
+	}
+	defer file.Close()
+
+	if header.Size > 5*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Profile picture must be under 5 MB"})
+		return
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
+		return
+	}
+
+	ext := detectImageType(data)
+	if ext == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid image type. Allowed: JPEG, PNG, WebP, GIF"})
+		return
+	}
+
+	objectKey := fmt.Sprintf("profile-pictures/%d/profile.%s", subnoteryID, ext)
+	contentType := "image/" + ext
+	if ext == "jpg" {
+		contentType = "image/jpeg"
+	}
+
+	_, err = app.R2.S3Client.PutObject(c.Request.Context(), &s3.PutObjectInput{
+		Bucket:        aws.String(app.R2.BucketName),
+		Key:           aws.String(objectKey),
+		Body:          bytes.NewReader(data),
+		ContentLength: aws.Int64(int64(len(data))),
+		ContentType:   aws.String(contentType),
+	})
+	if err != nil {
+		subnoteryLog.Log("PROFILE_PIC_UPLOAD", "R2 upload failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload profile picture"})
+		return
+	}
+
+	if err := app.DB.Model(&models.Subnotery{}).Where("id = ?", subnoteryID).
+		Update("profile_picture_url", objectKey).Error; err != nil {
+		subnoteryLog.Log("PROFILE_PIC_UPLOAD", "DB update failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile picture"})
+		return
+	}
+
+	subnoteryLog.Log("PROFILE_PIC_UPLOAD", "Profile picture uploaded", "subnoteryID", subnoteryID, "key", objectKey)
+	c.JSON(http.StatusOK, gin.H{"message": "Profile picture uploaded successfully", "profile_picture_url": objectKey})
+}
+
+// DeleteSubnoteryProfilePicture removes the profile picture for a subnotery.
+//
+// Route: DELETE /api/v1/subnoteries/:subnotery_id/profile-picture
+func (app *App) DeleteSubnoteryProfilePicture(c *gin.Context) {
+	subnoteryLog.Log("PROFILE_PIC_DELETE", "Processing profile picture delete request")
+
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+	userID := helpers.GetUserID(c)
+
+	if !app.isSubnoteryAdmin(userID, uint(subnoteryID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can delete profile pictures"})
+		return
+	}
+
+	if err := app.DB.Model(&models.Subnotery{}).Where("id = ?", subnoteryID).
+		Update("profile_picture_url", "").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete profile picture"})
+		return
+	}
+
+	if app.R2 != nil {
+		ctx := c.Request.Context()
+		for _, ext := range []string{"jpg", "png", "webp", "gif"} {
+			_, _ = app.R2.S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(app.R2.BucketName),
+				Key:    aws.String(fmt.Sprintf("profile-pictures/%d/profile.%s", subnoteryID, ext)),
+			})
+		}
+	}
+
+	subnoteryLog.Log("PROFILE_PIC_DELETE", "Profile picture deleted", "subnoteryID", subnoteryID)
+	c.JSON(http.StatusOK, gin.H{"message": "Profile picture deleted successfully"})
+}
+
+// GetSubnoteryProfilePicture proxies the profile picture from R2 with 24h cache headers.
+//
+// Route: GET /api/v1/subnoteries/:subnotery_id/profile-picture
+func (app *App) GetSubnoteryProfilePicture(c *gin.Context) {
+	subnoteryID, ok := helpers.MustParseSubnoteryID(c)
+	if !ok {
+		return
+	}
+
+	var sub models.Subnotery
+	if err := app.DB.Select("id", "profile_picture_url").First(&sub, subnoteryID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subnotery not found"})
+		return
+	}
+
+	if sub.ProfilePictureURL == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No profile picture set"})
+		return
+	}
+
+	if app.R2 == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "File storage not configured"})
+		return
+	}
+
+	result, err := app.R2.S3Client.GetObject(c.Request.Context(), &s3.GetObjectInput{
+		Bucket: aws.String(app.R2.BucketName),
+		Key:    aws.String(sub.ProfilePictureURL),
+	})
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Profile picture not found"})
+		return
+	}
+	defer result.Body.Close()
+
+	contentLength := int64(0)
+	if result.ContentLength != nil {
+		contentLength = *result.ContentLength
+	}
+	contentType := "application/octet-stream"
+	if result.ContentType != nil {
+		contentType = *result.ContentType
+	}
+
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.DataFromReader(http.StatusOK, contentLength, contentType, result.Body, nil)
 }
 
 // detectImageType returns the file extension based on magic bytes, or "" if unknown.

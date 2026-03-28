@@ -1,6 +1,6 @@
 // note-card.test.tsx — Tests for the unified NoteCard component.
 // Validates: unified expanded layout (no compact mode), status badge colours,
-// price badges, PDF info, description rendering, lock icon logic, thumbnail.
+// price badges, PDF info, description rendering, thumbnail.
 
 import type { Note } from "@/types";
 import { render, screen } from "@testing-library/react";
@@ -44,6 +44,13 @@ jest.mock("@/services/bookmarks", () => ({
     removeBookmark: jest.fn(),
 }));
 
+// Mock SubnoteryAvatar component.
+jest.mock("@/components/subnotery-avatar", () => ({
+    SubnoteryAvatar: ({ name }: { name?: string }) => (
+        <div data-testid="subnotery-avatar">{name}</div>
+    ),
+}));
+
 // Mock format helpers.
 jest.mock("@/lib/format", () => ({
     formatPrice: (cents: number) => (cents === 0 ? "Free" : `$${(cents / 100).toFixed(2)}`),
@@ -68,6 +75,7 @@ function makeNote(overrides: Partial<Note> = {}): Note {
         status: "Approved",
         subnotery_id: 5,
         subnotery_name: "science",
+        subnotery_profile_picture_url: "",
         price: 0,
         has_pdf: false,
         pdf_size: 0,
@@ -113,9 +121,9 @@ describe("NoteCard", () => {
         expect(screen.getByTestId("vote-buttons")).toHaveTextContent("10 up / 2 down");
     });
 
-    it("renders author in meta line", () => {
+    it("does not render author in feed card meta line", () => {
         render(<NoteCard note={makeNote({ author: "johndoe" })} />);
-        expect(screen.getByText("u/johndoe")).toBeInTheDocument();
+        expect(screen.queryByText("u/johndoe")).not.toBeInTheDocument();
     });
 
     it("shows Free badge for free notes", () => {
@@ -168,21 +176,15 @@ describe("NoteCard", () => {
         expect(badge.className).toContain("red");
     });
 
-    // Lock icon logic — only for approved paid notes
-    it("shows Locked for approved paid notes when not purchased", () => {
+    // Locked/Owned badges were removed from feed cards
+    it("does not show Locked badge on feed card", () => {
         render(<NoteCard note={makeNote({ price: 500, status: "Approved" })} />);
-        expect(screen.getByText("Locked")).toBeInTheDocument();
-    });
-
-    it("does not show Locked for pending paid notes", () => {
-        render(<NoteCard note={makeNote({ price: 500, status: "Pending" })} />);
         expect(screen.queryByText("Locked")).not.toBeInTheDocument();
     });
 
-    it("shows Owned badge when purchased", () => {
-        render(<NoteCard note={makeNote({ price: 500 })} purchased={true} />);
-        expect(screen.getByText("Owned")).toBeInTheDocument();
-        expect(screen.queryByText("Locked")).not.toBeInTheDocument();
+    it("does not show Owned badge on feed card", () => {
+        render(<NoteCard note={makeNote({ price: 500 })} />);
+        expect(screen.queryByText("Owned")).not.toBeInTheDocument();
     });
 
     // Thumbnail rendering
@@ -211,14 +213,16 @@ describe("NoteCard", () => {
         expect(c2.querySelectorAll("[data-testid='vote-buttons']").length).toBe(1);
     });
 
-    // Action bar
-    it("renders Comments link", () => {
+    // Action bar — icons only, no text labels
+    it("renders comment icon link", () => {
         render(<NoteCard note={makeNote()} />);
-        expect(screen.getByText("Comments")).toBeInTheDocument();
+        // Comments text removed; icon-only action bar
+        expect(screen.queryByText("Comments")).not.toBeInTheDocument();
     });
 
-    it("renders Save bookmark button", () => {
+    it("renders bookmark icon button", () => {
         render(<NoteCard note={makeNote()} />);
-        expect(screen.getByText("Save")).toBeInTheDocument();
+        // Save text removed; icon-only action bar
+        expect(screen.queryByText("Save")).not.toBeInTheDocument();
     });
 });

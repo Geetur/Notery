@@ -1,9 +1,11 @@
 // note-card.tsx — Reddit-style expanded post card for the feed.
 // Unified card layout matching the note detail page style: vote buttons on left,
-// meta line, title, badges (price, PDF, status), description, and large thumbnail.
+// meta line with subnotery avatar, title, badges (price, PDF, status),
+// description, and large thumbnail.
 // Admins see a three-dot menu to delete notes from a subnotery.
 "use client";
 
+import { SubnoteryAvatar } from "@/components/subnotery-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -19,7 +21,7 @@ import { addBookmark, removeBookmark } from "@/services/bookmarks";
 import { lockNote, unlockNote } from "@/services/notes";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Note, ViewMode } from "@/types";
-import { Bookmark, BookmarkCheck, CheckCircle, FileText, Lock, LockOpen, MessageSquare, MoreVertical, Trash2 } from "lucide-react";
+import { Bookmark, BookmarkCheck, FileText, Lock, LockOpen, MessageSquare, MoreVertical, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { VoteButtons } from "./vote-buttons";
@@ -36,7 +38,7 @@ interface NoteCardProps {
     onDelete?: (noteId: number) => void;
 }
 
-export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdmin, onDelete }: NoteCardProps) {
+export function NoteCard({ note, bookmarked: initialBookmarked, isAdmin, onDelete }: NoteCardProps) {
     const { isAuthenticated } = useAuthStore();
     const { toast } = useToast();
     const [bookmarked, setBookmarked] = useState(initialBookmarked ?? false);
@@ -84,19 +86,17 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdm
                     {/* Meta line */}
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
                         <div className="flex-1 flex items-center gap-1.5 min-w-0">
+                            <SubnoteryAvatar
+                                subnoteryId={note.subnotery_id}
+                                profilePictureUrl={note.subnotery_profile_picture_url}
+                                name={note.subnotery_name}
+                                size="sm"
+                            />
                             <Link
                                 href={`/communities/${note.subnotery_id}`}
                                 className="font-semibold text-foreground hover:underline"
                             >
                                 n/{note.subnotery_name || note.subnotery_id}
-                            </Link>
-                            <span>•</span>
-                            <span>Posted by</span>
-                            <Link
-                                href={`/user/${note.creator_id}`}
-                                className="hover:underline"
-                            >
-                                u/{note.author}
                             </Link>
                             <span>•</span>
                             <span>{timeAgo(note.created_at)}</span>
@@ -185,28 +185,6 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdm
                                 {note.status}
                             </Badge>
                         )}
-
-                        {locked && (
-                            <span className="flex items-center gap-1 text-xs text-orange-500">
-                                <Lock className="h-3 w-3" />
-                                Locked
-                            </span>
-                        )}
-
-                        {/* Purchase state */}
-                        {purchased ? (
-                            <span className="flex items-center gap-1 text-xs text-green-500">
-                                <CheckCircle className="h-3 w-3" />
-                                Owned
-                            </span>
-                        ) : (
-                            note.price > 0 && note.status === "Approved" && (
-                                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                                    <Lock className="h-3 w-3" />
-                                    Locked
-                                </span>
-                            )
-                        )}
                     </div>
 
                     {/* Description */}
@@ -235,7 +213,7 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdm
                             className="flex items-center gap-1 hover:text-foreground transition-colors"
                         >
                             <MessageSquare className="h-3.5 w-3.5" />
-                            {note.comment_count > 0 ? `${note.comment_count} Comments` : "Comments"}
+                            {note.comment_count > 0 && note.comment_count}
                         </Link>
 
                         <button
@@ -248,7 +226,6 @@ export function NoteCard({ note, purchased, bookmarked: initialBookmarked, isAdm
                             ) : (
                                 <Bookmark className="h-3.5 w-3.5" />
                             )}
-                            {bookmarked ? "Saved" : "Save"}
                         </button>
                     </div>
                 </div>

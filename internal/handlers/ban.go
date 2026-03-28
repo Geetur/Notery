@@ -139,8 +139,13 @@ func (app *App) BanUser(c *gin.Context) {
 		durationLabel = "permanently"
 	}
 	metadata, _ := json.Marshal(map[string]string{
-		"duration":   req.Duration,
-		"expires_at": func() string { if expiresAt != nil { return expiresAt.Format(time.RFC3339) }; return "" }(),
+		"duration": req.Duration,
+		"expires_at": func() string {
+			if expiresAt != nil {
+				return expiresAt.Format(time.RFC3339)
+			}
+			return ""
+		}(),
 	})
 	notification := models.Notification{
 		UserID:        req.UserID,

@@ -223,8 +223,9 @@ func (app *App) CreateNote(c *gin.Context) {
 
 	// Populate subnotery name for the response
 	var sub models.Subnotery
-	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+	if err := app.DB.Select("id, name, profile_picture_url").First(&sub, note.SubnoteryID).Error; err == nil {
 		note.SubnoteryName = sub.Name
+		note.SubnoteryProfilePictureURL = sub.ProfilePictureURL
 	}
 
 	c.JSON(http.StatusCreated, note)
@@ -591,10 +592,11 @@ func (app *App) GetNoteByID(c *gin.Context) {
 
 	noteLog.Log("GET", "Note retrieved", "noteID", note.ID)
 
-	// Populate subnotery name
+	// Populate subnotery name and profile picture URL
 	var sub models.Subnotery
-	if err := app.DB.Select("id, name").First(&sub, note.SubnoteryID).Error; err == nil {
+	if err := app.DB.Select("id, name, profile_picture_url").First(&sub, note.SubnoteryID).Error; err == nil {
 		note.SubnoteryName = sub.Name
+		note.SubnoteryProfilePictureURL = sub.ProfilePictureURL
 	}
 
 	// Populate user vote and comment count

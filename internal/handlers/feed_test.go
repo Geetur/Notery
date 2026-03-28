@@ -34,8 +34,8 @@ func TestCalculateHotness_NegativeScore(t *testing.T) {
 
 func TestCalculateHotness_TimeBoost(t *testing.T) {
 	// Same votes, newer post should be hotter
-	old := CalculateHotness(5, 0, time.Unix(hotEpoch+3600, 0))   // 1 hour after epoch
-	new := CalculateHotness(5, 0, time.Unix(hotEpoch+86400, 0))  // 1 day after epoch
+	old := CalculateHotness(5, 0, time.Unix(hotEpoch+3600, 0))  // 1 hour after epoch
+	new := CalculateHotness(5, 0, time.Unix(hotEpoch+86400, 0)) // 1 day after epoch
 	if new <= old {
 		t.Fatalf("newer post should be hotter: new=%f, old=%f", new, old)
 	}

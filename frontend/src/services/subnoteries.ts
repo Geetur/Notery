@@ -132,6 +132,33 @@ export function deleteSubnoteryBanner(
     return apiDelete(`/subnoteries/${subnoteryId}/banner`);
 }
 
+/** POST /subnoteries/:id/profile-picture — Upload profile picture (multipart). */
+export async function uploadSubnoteryProfilePicture(
+    subnoteryId: number,
+    file: File
+): Promise<{ message: string; profile_picture_url: string }> {
+    const formData = new FormData();
+    formData.append("profile_picture", file);
+    const token = getAccessToken();
+    const res = await fetch(`${API_V1}/subnoteries/${subnoteryId}/profile-picture`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Profile picture upload failed");
+    }
+    return res.json();
+}
+
+/** DELETE /subnoteries/:id/profile-picture — Delete profile picture. */
+export function deleteSubnoteryProfilePicture(
+    subnoteryId: number
+): Promise<{ message: string }> {
+    return apiDelete(`/subnoteries/${subnoteryId}/profile-picture`);
+}
+
 /** GET /subnoteries/:id/members — List members (paginated, includes admin flag). */
 export function getSubnoteryMembers(
     subnoteryId: number,

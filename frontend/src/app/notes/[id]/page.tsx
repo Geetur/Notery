@@ -8,6 +8,7 @@ import { CommentSection } from "@/components/comments";
 import { VoteButtons } from "@/components/feed/vote-buttons";
 import { PDFViewer } from "@/components/pdf-viewer";
 import { StripeCheckout } from "@/components/stripe-checkout";
+import { SubnoteryAvatar } from "@/components/subnotery-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -220,23 +221,32 @@ export default function NoteDetailPage() {
                     {/* Content */}
                     <div className="flex-1 p-3 pl-2">
                         {/* Meta */}
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                            <Link
-                                href={`/communities/${note.subnotery_id}`}
-                                className="font-semibold text-foreground hover:underline"
-                            >
-                                n/{note.subnotery_name || note.subnotery_id}
-                            </Link>
-                            <span>•</span>
-                            <span>Posted by</span>
-                            <Link
-                                href={`/user/${note.creator_id}`}
-                                className="hover:underline"
-                            >
-                                u/{note.author}
-                            </Link>
-                            <span>•</span>
-                            <span>{timeAgo(note.created_at)}</span>
+                        <div className="mb-2 space-y-0.5">
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <SubnoteryAvatar
+                                    subnoteryId={note.subnotery_id}
+                                    profilePictureUrl={note.subnotery_profile_picture_url}
+                                    name={note.subnotery_name}
+                                    size="sm"
+                                />
+                                <Link
+                                    href={`/communities/${note.subnotery_id}`}
+                                    className="font-semibold text-foreground hover:underline"
+                                >
+                                    n/{note.subnotery_name || note.subnotery_id}
+                                </Link>
+                                <span>•</span>
+                                <span>{timeAgo(note.created_at)}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground pl-[26px]">
+                                <span>Posted by</span>
+                                <Link
+                                    href={`/user/${note.creator_id}`}
+                                    className="hover:underline"
+                                >
+                                    u/{note.author}
+                                </Link>
+                            </div>
                         </div>
 
                         {/* Title */}

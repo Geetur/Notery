@@ -44,13 +44,13 @@ const (
 //   - author_id           — audit trail for a user's karma history
 type KarmaLedger struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
-	AuthorID  uint64    `json:"author_id" gorm:"index;not null"` // user who received the karma
-	VoterID   uint64    `json:"voter_id" gorm:"not null"`        // user who cast the vote
-	VoteType  KarmaType `json:"vote_type" gorm:"not null"`       // "post" or "comment"
-	VoteID    uint      `json:"vote_id" gorm:"index:idx_karma_vote_type_id;not null"` // Vote.ID or CommentVote.ID
-	TargetID  uint64    `json:"target_id" gorm:"not null"`       // Note.ID or Comment.ID
+	AuthorID  uint64    `json:"author_id" gorm:"index;not null"`                         // user who received the karma
+	VoterID   uint64    `json:"voter_id" gorm:"not null"`                                // user who cast the vote
+	VoteType  KarmaType `json:"vote_type" gorm:"not null"`                               // "post" or "comment"
+	VoteID    uint      `json:"vote_id" gorm:"index:idx_karma_vote_type_id;not null"`    // Vote.ID or CommentVote.ID
+	TargetID  uint64    `json:"target_id" gorm:"not null"`                               // Note.ID or Comment.ID
 	KarmaType KarmaType `json:"karma_type" gorm:"index:idx_karma_vote_type_id;not null"` // redundant with vote_type for compound index
-	Delta     float64   `json:"delta" gorm:"not null"`           // the exact karma change applied
+	Delta     float64   `json:"delta" gorm:"not null"`                                   // the exact karma change applied
 	CreatedAt time.Time `json:"created_at"`
 }
 

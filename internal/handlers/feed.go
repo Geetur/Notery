@@ -322,7 +322,8 @@ func (app *App) fetchNotes(noteIDs []string) []models.Note {
 	return ordered
 }
 
-// populateSubnoteryNames batch-fetches subnotery names and populates SubnoteryName on each note.
+// populateSubnoteryNames batch-fetches subnotery names and profile picture URLs,
+// populating SubnoteryName and SubnoteryProfilePictureURL on each note.
 func (app *App) populateSubnoteryNames(notes []models.Note) {
 	if len(notes) == 0 {
 		return
@@ -336,16 +337,22 @@ func (app *App) populateSubnoteryNames(notes []models.Note) {
 	for id := range idSet {
 		ids = append(ids, id)
 	}
-	// Batch fetch names
+	// Batch fetch names and profile picture URLs
 	var subs []models.Subnotery
-	app.DB.Select("id, name").Where("id IN ?", ids).Find(&subs)
-	nameMap := make(map[uint]string, len(subs))
+	app.DB.Select("id, name, profile_picture_url").Where("id IN ?", ids).Find(&subs)
+	type subInfo struct {
+		Name              string
+		ProfilePictureURL string
+	}
+	infoMap := make(map[uint]subInfo, len(subs))
 	for _, s := range subs {
-		nameMap[s.ID] = s.Name
+		infoMap[s.ID] = subInfo{Name: s.Name, ProfilePictureURL: s.ProfilePictureURL}
 	}
 	// Populate
 	for i := range notes {
-		notes[i].SubnoteryName = nameMap[notes[i].SubnoteryID]
+		info := infoMap[notes[i].SubnoteryID]
+		notes[i].SubnoteryName = info.Name
+		notes[i].SubnoteryProfilePictureURL = info.ProfilePictureURL
 	}
 }
 
@@ -433,7 +440,9 @@ func (app *App) Downvote(c *gin.Context) {
 // and stored in both the DB and Redis.
 //
 // DB: SELECT/INSERT/UPDATE/DELETE on votes, UPDATE on notes (counter columns), all in transaction.
-//     Re-SELECT note after transaction for accurate counts.
+//
+//	Re-SELECT note after transaction for accurate counts.
+//
 // Technologies: PostgreSQL (GORM transaction), Redis HSET/HDEL (vote cache), Redis ZADD (hotness).
 // Helpers: helpers.GetUserID.
 //

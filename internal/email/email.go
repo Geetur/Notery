@@ -255,7 +255,7 @@ func NewMailer(host, port, user, pass, from string) Mailer {
 		log.Printf("Resend HTTP mailer configured (from %s)", from)
 		return &ResendMailer{
 			APIKey: pass, // Resend uses the SMTP password as the API key
-			From:  from,
+			From:   from,
 		}
 	}
 

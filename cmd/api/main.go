@@ -208,6 +208,7 @@ func main() {
 	readPublic.GET("/subnoteries/:subnotery_id", app.GetSubnoteryDetail)
 	readPublic.GET("/subnoteries/:subnotery_id/notes", app.GetSubnoteryNotes)
 	readPublic.GET("/subnoteries/:subnotery_id/banner", app.GetSubnoteryBanner)
+	readPublic.GET("/subnoteries/:subnotery_id/profile-picture", app.GetSubnoteryProfilePicture)
 	readPublic.GET("/subnoteries/:subnotery_id/members", app.GetSubnoteryMembers)
 
 	// ── Authenticated Read-Only (login required, no verification) ──────────
@@ -282,6 +283,8 @@ func main() {
 	write.PATCH("/subnoteries/:subnotery_id/settings", app.UpdateSubnoterySettings)
 	write.POST("/subnoteries/:subnotery_id/banner", app.UploadSubnoteryBanner)
 	write.DELETE("/subnoteries/:subnotery_id/banner", app.DeleteSubnoteryBanner)
+	write.POST("/subnoteries/:subnotery_id/profile-picture", app.UploadSubnoteryProfilePicture)
+	write.DELETE("/subnoteries/:subnotery_id/profile-picture", app.DeleteSubnoteryProfilePicture)
 	write.DELETE("/subnoteries/:subnotery_id/admins/:uid", app.RemoveAdminFromSubnotery)
 
 	// Bookmarks

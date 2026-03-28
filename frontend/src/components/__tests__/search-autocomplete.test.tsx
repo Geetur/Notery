@@ -41,6 +41,7 @@ function makeNote(overrides: Partial<Note> = {}): Note {
         status: "Approved",
         subnotery_id: 5,
         subnotery_name: "mathematics",
+        subnotery_profile_picture_url: "",
         price: 0,
         has_pdf: true,
         pdf_size: 1024,
