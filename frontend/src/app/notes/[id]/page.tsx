@@ -267,18 +267,6 @@ export default function NoteDetailPage() {
                                     PDF — {formatFileSize(note.pdf_size)}
                                 </Badge>
                             )}
-                            {note.status !== "Approved" && (
-                                <Badge
-                                    variant="outline"
-                                    className={
-                                        note.status === "Pending"
-                                            ? "border-yellow-500/50 text-yellow-500"
-                                            : "border-red-500/50 text-red-500"
-                                    }
-                                >
-                                    {note.status}
-                                </Badge>
-                            )}
                         </div>
 
                         {/* Description */}
@@ -446,7 +434,7 @@ export default function NoteDetailPage() {
                                     key={`full-${note.id}`}
                                     noteId={note.id}
                                     mode="full"
-                                    maxHeight={700}
+                                    maxHeight="70vh"
                                 />
                             ) : (
                                 <div>
@@ -460,7 +448,7 @@ export default function NoteDetailPage() {
                                         key={`preview-${note.id}`}
                                         noteId={note.id}
                                         mode="preview"
-                                        maxHeight={500}
+                                        maxHeight="50vh"
                                         totalPages={note.pdf_pages}
                                     />
                                 </div>

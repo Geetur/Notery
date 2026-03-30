@@ -157,35 +157,7 @@ export function NoteCard({ note, bookmarked: initialBookmarked, isAdmin, onDelet
                         </h3>
                     </Link>
 
-                    {/* Badges row — price, PDF info, status */}
-                    <div className="flex items-center gap-2 mb-3">
-                        <Badge
-                            variant={note.price === 0 ? "secondary" : "default"}
-                            className="text-xs"
-                        >
-                            {formatPrice(note.price)}
-                        </Badge>
 
-                        {note.has_pdf && (
-                            <Badge variant="outline" className="text-xs">
-                                <FileText className="h-3 w-3 mr-1" />
-                                PDF — {formatFileSize(note.pdf_size)}
-                            </Badge>
-                        )}
-
-                        {note.status && note.status !== "Approved" && (
-                            <Badge
-                                variant="outline"
-                                className={
-                                    note.status === "Pending"
-                                        ? "text-xs border-yellow-500/50 text-yellow-500"
-                                        : "text-xs border-red-500/50 text-red-500"
-                                }
-                            >
-                                {note.status}
-                            </Badge>
-                        )}
-                    </div>
 
                     {/* Description */}
                     {note.description && (
@@ -227,6 +199,21 @@ export function NoteCard({ note, bookmarked: initialBookmarked, isAdmin, onDelet
                                 <Bookmark className="h-3.5 w-3.5" />
                             )}
                         </button>
+
+                        <div className="ml-auto flex items-center gap-2">
+                            <Badge
+                                variant={note.price === 0 ? "secondary" : "default"}
+                                className="text-xs"
+                            >
+                                {formatPrice(note.price)}
+                            </Badge>
+                            {note.has_pdf && (
+                                <Badge variant="outline" className="text-xs">
+                                    <FileText className="h-3 w-3 mr-1" />
+                                    PDF — {formatFileSize(note.pdf_size)}
+                                </Badge>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
