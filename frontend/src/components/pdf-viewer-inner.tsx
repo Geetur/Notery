@@ -37,8 +37,8 @@ export interface PDFViewerProps {
     noteId: number;
     /** "preview" uses the truncated preview endpoint; "full" uses the full content endpoint */
     mode: "preview" | "full";
-    /** Max height of the viewer container (default: 600px) */
-    maxHeight?: number;
+    /** Max height of the viewer container (default: "70vh"). Accepts px number or CSS string. */
+    maxHeight?: number | string;
     /** Total pages in the full PDF (from note.pdf_pages). Used in preview mode to compute how many pages to request from the server. */
     totalPages?: number;
 }
@@ -75,7 +75,7 @@ class PDFErrorBoundary extends Component<EBProps, EBState> {
  * - preview mode: GET /notes/:id/preview?pages=N (server extracts first N pages)
  * - full mode:    GET /notes/:id/content?token=... (full PDF, requires purchase)
  */
-export default function PDFViewerInner({ noteId, mode, maxHeight = 600, totalPages: totalPagesProp }: PDFViewerProps) {
+export default function PDFViewerInner({ noteId, mode, maxHeight = "70vh", totalPages: totalPagesProp }: PDFViewerProps) {
     const [numPages, setNumPages] = useState<number>(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [scale, setScale] = useState(1.0);

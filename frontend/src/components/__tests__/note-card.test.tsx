@@ -162,18 +162,14 @@ describe("NoteCard", () => {
         expect(screen.queryByText("Approved")).not.toBeInTheDocument();
     });
 
-    it("shows yellow Pending status badge", () => {
+    it("does not show Pending status badge", () => {
         render(<NoteCard note={makeNote({ status: "Pending" })} />);
-        const badge = screen.getByText("Pending");
-        expect(badge).toBeInTheDocument();
-        expect(badge.className).toContain("yellow");
+        expect(screen.queryByText("Pending")).not.toBeInTheDocument();
     });
 
-    it("shows red Rejected status badge", () => {
+    it("does not show Rejected status badge", () => {
         render(<NoteCard note={makeNote({ status: "Rejected" })} />);
-        const badge = screen.getByText("Rejected");
-        expect(badge).toBeInTheDocument();
-        expect(badge.className).toContain("red");
+        expect(screen.queryByText("Rejected")).not.toBeInTheDocument();
     });
 
     // Locked/Owned badges were removed from feed cards
