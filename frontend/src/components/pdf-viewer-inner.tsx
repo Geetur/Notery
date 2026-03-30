@@ -19,8 +19,10 @@ import {
     Component,
     type ErrorInfo,
     type ReactNode,
+    useCallback,
     useEffect,
     useMemo,
+    useRef,
     useState,
 } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
@@ -84,6 +86,21 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = "70vh", total
     const [previewData, setPreviewData] = useState<Uint8Array | null>(null);
     const [tooShortForPreview, setTooShortForPreview] = useState(false);
     const [retryCount, setRetryCount] = useState(0);
+    const [containerWidth, setContainerWidth] = useState<number | undefined>(undefined);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Measure the PDF container so pages scale to fit on small screens.
+    const measureContainer = useCallback(() => {
+        if (containerRef.current) {
+            setContainerWidth(containerRef.current.clientWidth - 32);
+        }
+    }, []);
+
+    useEffect(() => {
+        measureContainer();
+        window.addEventListener("resize", measureContainer);
+        return () => window.removeEventListener("resize", measureContainer);
+    }, [measureContainer]);
 
     // Preview page limit: 1 preview page per 5 total pages.
     // Minimum preview threshold: notes with 4 or fewer pages get NO preview
@@ -310,6 +327,7 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = "70vh", total
 
                 {/* PDF Document */}
                 <div
+                    ref={containerRef}
                     className="overflow-auto border rounded-md bg-muted/20 w-full"
                     style={{ maxHeight }}
                 >
@@ -336,6 +354,7 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = "70vh", total
                                 <Page
                                     pageNumber={currentPage}
                                     scale={scale}
+                                    width={containerWidth && containerWidth < 600 ? containerWidth : undefined}
                                     renderTextLayer={true}
                                     renderAnnotationLayer={true}
                                     loading={

@@ -219,7 +219,7 @@ export default function NoteDetailPage() {
                     </div>
 
                     {/* Content */}
-                    <div className="flex-1 p-3 pl-2">
+                    <div className="flex-1 min-w-0 overflow-hidden p-3 pl-2">
                         {/* Meta */}
                         <div className="mb-2 space-y-0.5">
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
