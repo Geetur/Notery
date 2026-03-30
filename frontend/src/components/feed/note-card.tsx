@@ -82,7 +82,7 @@ export function NoteCard({ note, bookmarked: initialBookmarked, isAdmin, onDelet
                 </div>
 
                 {/* Card content */}
-                <div className="flex-1 min-w-0 p-3 pl-2">
+                <div className="flex-1 min-w-0 overflow-hidden p-3 pl-2">
                     {/* Meta line */}
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
                         <div className="flex-1 flex items-center gap-1.5 min-w-0">
