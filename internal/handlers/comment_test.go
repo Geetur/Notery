@@ -114,6 +114,19 @@ func seedPendingNote(t *testing.T, db *gorm.DB, creatorID uint64) uint {
 	return note.ID
 }
 
+func seedPendingNoteWithPDF(t *testing.T, db *gorm.DB, creatorID uint64) uint {
+	t.Helper()
+	sub := models.Subnotery{Name: fmt.Sprintf("ppdf-%d-%d", creatorID, seedCounter)}
+	seedCounter++
+	db.Create(&sub)
+	note := models.Note{
+		Title: "Pending Note With PDF", Status: models.StatusPending,
+		SubnoteryID: sub.ID, CreatorID: creatorID, HasPDF: true,
+	}
+	db.Create(&note)
+	return note.ID
+}
+
 func authMW(userID uint64) gin.HandlerFunc {
 	return func(c *gin.Context) { c.Set("user_id", userID) }
 }

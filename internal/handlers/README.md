@@ -516,6 +516,7 @@ Endpoints accessible without authentication, or with optional auth for personali
 | # | Method | Path | Handler | File | Middleware |
 |---|--------|------|---------|------|------------|
 | 20 | `GET` | `/api/v1/search` | `SearchAll` | `search.go` | OptionalAuth |
+| 20b | `POST` | `/api/v1/admin/resync-search-index` | `ResyncSearchIndex` | `search.go` | RequireAuth + AdminOnly |
 
 **Query params:** `q` (required), `type` (notes/subnoteries/users/comments, default: notes), `page`, `limit`, `sort` (relevance/hot/new/top/comments/controversial)
 
@@ -523,17 +524,21 @@ Endpoints accessible without authentication, or with optional auth for personali
 
 | Type | Search Method | Data Source |
 |---|---|---|
-| `notes` | Full-text search (falls back to DB ILIKE if Meilisearch unavailable) | Meilisearch / PostgreSQL |
-| `subnoteries` | ILIKE on `name` | PostgreSQL |
-| `users` | ILIKE on `username` / `display_name` → returns `PublicProfile` (no email/hash leak) | PostgreSQL |
-| `comments` | ILIKE on `body` (approved notes only, non-deleted) | PostgreSQL |
+| `notes` | Full-text search (Meilisearch default, pg_trgm + ILIKE fallback) | Meilisearch / PostgreSQL |
+| `subnoteries` | ILIKE + pg_trgm similarity on `name` | PostgreSQL |
+| `users` | ILIKE + pg_trgm similarity on `username` / `display_name` → returns `PublicProfile` (no email/hash leak) | PostgreSQL |
+| `comments` | ILIKE + pg_trgm similarity on `body` (approved notes only, non-deleted) | PostgreSQL |
+
+**Fault-tolerance:** Meilisearch is optional. If unavailable at startup or runtime, all search falls back to PostgreSQL with pg_trgm fuzzy matching (similarity threshold 0.2) + ILIKE exact substring matching. DB fallback default sort is by trigram similarity score. Note description is also searchable in DB fallback.
+
+**Resync:** `POST /admin/resync-search-index` reindexes all approved notes into Meilisearch. Background resync runs at startup.
 
 **Response (200):**
 ```json
 {"type": "notes", "results": [...], "total": 42, "page": 1, "limit": 25}
 ```
 
-**External:** Meilisearch (for notes), PostgreSQL (for all types)
+**External:** Meilisearch (for notes, optional), PostgreSQL (for all types, always available)
 
 ---
 
@@ -1676,17 +1681,16 @@ Require full admin middleware chain: `RequireAuth` + `RequireVerified` + `RateLi
 **Flow:**
 1. Validate note has PDF uploaded
 2. Update status to `Approved`
-3. Index note in Meilisearch (for full-text search)
+3. Index note in Meilisearch (best-effort — approval succeeds even if Meilisearch is down)
 4. Add to Redis hot feed (ZADD with hotness score)
 5. Delete admin review comments (cleanup)
-6. **Rollback** status if Meilisearch indexing fails
 
 **Response (200):**
 ```json
 {"message": "Note approved successfully"}
 ```
 
-**External:** Meilisearch (AddDocuments), Redis (ZADD)
+**External:** Meilisearch (AddDocuments, best-effort), Redis (ZADD)
 
 ---
 

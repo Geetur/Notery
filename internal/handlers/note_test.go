@@ -329,6 +329,60 @@ func TestApproveNote_WithoutPDF(t *testing.T) {
 	assertStatus(t, w, http.StatusBadRequest) // can't approve without PDF
 }
 
+// ===== BEST-EFFORT INDEXING (Meilisearch nil) =====
+
+func TestApproveNote_NoMeilisearch(t *testing.T) {
+	app := testApp(t) // app.Search is nil
+	creator := seedUser(t, app.DB, "approvecreator")
+	adminUID := seedUser(t, app.DB, "approveadmin")
+	noteID := seedPendingNoteWithPDF(t, app.DB, creator)
+
+	w := serve("PATCH", "/notes/:id/approve", fmt.Sprintf("/notes/%d/approve", noteID),
+		nil, app.ApproveNote, adminMW(adminUID))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify note is approved in DB even though Meilisearch is nil
+	var note models.Note
+	app.DB.First(&note, noteID)
+	if note.Status != models.StatusApproved {
+		t.Fatalf("expected approved, got %v", note.Status)
+	}
+}
+
+func TestDeleteNote_NoMeilisearch_Approved(t *testing.T) {
+	app := testApp(t) // app.Search is nil
+	uid := seedUser(t, app.DB, "delapproved")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	w := serve("DELETE", "/notes/:id", fmt.Sprintf("/notes/%d", noteID),
+		nil, app.DeleteNote, adminMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify soft-deleted
+	var count int64
+	app.DB.Model(&models.Note{}).Where("id = ?", noteID).Count(&count)
+	if count != 0 {
+		t.Fatal("approved note should be soft-deleted even without Meilisearch")
+	}
+}
+
+func TestRejectNote_NoMeilisearch_PreviouslyApproved(t *testing.T) {
+	app := testApp(t) // app.Search is nil
+	uid := seedUser(t, app.DB, "rejectapproved")
+	noteID := seedApprovedNote(t, app.DB, uid)
+
+	w := serve("PATCH", "/notes/:id/reject", fmt.Sprintf("/notes/%d/reject", noteID),
+		nil, app.RejectNote, adminMW(uid))
+	assertStatus(t, w, http.StatusOK)
+
+	// Verify deleted (reject also deletes)
+	var count int64
+	app.DB.Model(&models.Note{}).Where("id = ?", noteID).Count(&count)
+	if count != 0 {
+		t.Fatal("rejected note should be deleted even without Meilisearch")
+	}
+}
+
 // ===== DELETE NOTE =====
 
 func TestDeleteNote_HappyPath(t *testing.T) {
