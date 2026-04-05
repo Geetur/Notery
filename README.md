@@ -81,7 +81,7 @@ Copy `.env.example` and configure. Key groups:
 |-------|----------|-------|
 | **PostgreSQL** | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE` | `DB_SSLMODE=require` in production |
 | **Redis** | `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB` | `REDIS_TLS_ENABLED=true` for managed Redis |
-| **Meilisearch** | `MEILISEARCH_HOST`, `MEILISEARCH_MASTER_KEY` | |
+| **Meilisearch** | `MEILISEARCH_HOST`, `MEILISEARCH_MASTER_KEY` | Optional — app falls back to pg_trgm fuzzy search |
 | **Object Storage** | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` | R2 in prod, MinIO locally |
 | **JWT** | `JWT_SECRET` | Min 32 chars, random |
 | **CORS** | `CORS_ORIGINS` | Comma-separated origins |

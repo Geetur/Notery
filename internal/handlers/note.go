@@ -234,12 +234,11 @@ func (app *App) CreateNote(c *gin.Context) {
 // DeleteNote permanently removes a note and all associated resources.
 //
 // If the note was approved, it is first removed from the Meilisearch index and
-// the Redis hot feed. Then the note record is deleted from the database. If the
-// note had a PDF, it is cleaned up from Cloudflare R2. On index removal failure,
-// the delete is aborted to maintain search consistency.
+// the Redis hot feed. Then the note record is soft-deleted from the database.
+// Search index removal is best-effort — deletion proceeds even if Meilisearch is unavailable.
 //
-// DB: SELECT note by ID, DELETE note. Conditional: re-index on rollback.
-// Technologies: PostgreSQL (GORM), Meilisearch (document delete), Redis ZREM (feed removal),
+// DB: SELECT note by ID, DELETE note.
+// Technologies: PostgreSQL (GORM), Meilisearch (best-effort document delete), Redis ZREM (feed removal),
 //
 //	Cloudflare R2 (PDF cleanup).
 //
@@ -257,12 +256,10 @@ func (app *App) DeleteNote(c *gin.Context) {
 	}
 	noteLog.Log("DELETE", "Note fetched", "noteID", note.ID, "status", note.Status)
 
-	// Remove from Meilisearch and feed if approved
+	// Remove from Meilisearch and feed if approved (best-effort — delete proceeds even if removal fails)
 	if note.Status == models.StatusApproved {
 		if err := app.removeNoteFromIndex(note.ID); err != nil {
-			noteLog.Log("DELETE", "Failed to remove from search index", "noteID", note.ID, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
-			return
+			noteLog.Log("DELETE", "Failed to remove from search index (will be cleaned on resync)", "noteID", note.ID, "error", err)
 		}
 		if err := app.RemoveNoteFromFeed(c.Request.Context(), note); err != nil {
 			noteLog.Log("DELETE", "Failed to remove from feed", "noteID", note.ID, "error", err)
@@ -273,12 +270,6 @@ func (app *App) DeleteNote(c *gin.Context) {
 	// Soft-delete from database (keeps R2 files so purchasers retain access)
 	if err := app.DB.Delete(note).Error; err != nil {
 		noteLog.Log("DELETE", "Failed to delete from database", "noteID", note.ID, "error", err)
-		// Attempt to re-index if we had removed it
-		if note.Status == models.StatusApproved {
-			if reindexErr := app.indexNote(*note); reindexErr != nil {
-				noteLog.Log("DELETE", "Failed to re-index after delete error", "error", reindexErr)
-			}
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete note"})
 		return
 	}
@@ -334,11 +325,10 @@ func (app *App) UnlockNote(c *gin.Context) {
 // RejectNote rejects a note, removing it from search/feed and deleting it from the DB.
 //
 // If the note was previously approved, it is removed from the Meilisearch index
-// and the Redis hot feed first. The note is then deleted from the database.
-// On index removal failure, the status change is rolled back.
+// and the Redis hot feed (best-effort). The note is then deleted from the database.
 //
-// DB: SELECT note by ID, UPDATE status to Rejected, DELETE note. Conditional rollback on failure.
-// Technologies: PostgreSQL (GORM), Meilisearch (document delete), Redis ZREM (feed removal),
+// DB: SELECT note by ID, UPDATE status to Rejected, DELETE note.
+// Technologies: PostgreSQL (GORM), Meilisearch (best-effort document delete), Redis ZREM (feed removal),
 //
 //	Cloudflare R2 (PDF cleanup if exists).
 //
@@ -365,17 +355,11 @@ func (app *App) RejectNote(c *gin.Context) {
 		return
 	}
 
-	// Handle edge case: if note was approved, remove from search index
+	// Handle edge case: if note was approved, remove from search index (best-effort)
 	if previousStatus == models.StatusApproved {
 		noteLog.Log("REJECT", "Removing previously approved note from search", "noteID", note.ID)
 		if err := app.removeNoteFromIndex(note.ID); err != nil {
-			noteLog.Log("REJECT", "Failed to remove from search index", "error", err)
-			// Rollback status update
-			if rollbackErr := app.DB.Model(note).Update("status", previousStatus).Error; rollbackErr != nil {
-				noteLog.Log("REJECT", "Failed to rollback status", "error", rollbackErr)
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove approved note from search index"})
-			return
+			noteLog.Log("REJECT", "Failed to remove from search index (will be cleaned on resync)", "noteID", note.ID, "error", err)
 		}
 		if err := app.RemoveNoteFromFeed(c.Request.Context(), note); err != nil {
 			noteLog.Log("REJECT", "Failed to remove from feed", "noteID", note.ID, "error", err)
@@ -418,11 +402,11 @@ func (app *App) RejectNote(c *gin.Context) {
 // ApproveNote transitions a note from Pending to Approved status.
 //
 // Validates that the note has a PDF before approval. Updates the status,
-// indexes the note in Meilisearch for full-text search, and adds it to the
-// Redis hot feed. On indexing failure, the status change is rolled back.
+// indexes the note in Meilisearch for full-text search (best-effort), and adds it to the
+// Redis hot feed. Search indexing failures are logged but do not block approval.
 //
-// DB: SELECT note by ID, UPDATE status to Approved. Conditional rollback on index failure.
-// Technologies: PostgreSQL (GORM), Meilisearch (document add/update), Redis ZADD (feed).
+// DB: SELECT note by ID, UPDATE status to Approved.
+// Technologies: PostgreSQL (GORM), Meilisearch (best-effort document add/update), Redis ZADD (feed).
 // Helpers: helpers.MustFetchNote.
 //
 // Route: PATCH /api/v1/notes/:id/approve
@@ -472,19 +456,12 @@ func (app *App) ApproveNote(c *gin.Context) {
 		note.SubnoteryName = sub.Name
 	}
 
-	// Index note in Meilisearch for search
+	// Index note in Meilisearch for search (best-effort — note stays approved even if indexing fails)
 	if err := app.indexNote(*note); err != nil {
-		noteLog.Log("APPROVE", "Failed to index note", "noteID", note.ID, "error", err)
-		// Rollback status if we just changed it
-		if !wasApproved {
-			if rollbackErr := app.DB.Model(note).Update("status", previousStatus).Error; rollbackErr != nil {
-				noteLog.Log("APPROVE", "Failed to rollback status", "error", rollbackErr)
-			}
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to index approved note"})
-		return
+		noteLog.Log("APPROVE", "Failed to index note (will be indexed on resync)", "noteID", note.ID, "error", err)
+	} else {
+		noteLog.Log("APPROVE", "Note indexed in search", "noteID", note.ID)
 	}
-	noteLog.Log("APPROVE", "Note indexed in search", "noteID", note.ID)
 
 	// Add to hot feed
 	if err := app.AddNoteToFeed(c.Request.Context(), note); err != nil {
@@ -838,13 +815,15 @@ func (app *App) GetMyNotes(c *gin.Context) {
 
 // indexNote adds or updates a note in the Meilisearch full-text search index.
 // Called during note approval to make the note discoverable via search.
+// Best-effort: skips silently when Meilisearch is not configured.
 //
 // Technologies: Meilisearch (AddDocuments with primary key "id").
 func (app *App) indexNote(note models.Note) error {
-	noteLog.Log("INDEX", "Indexing note in Meilisearch", "noteID", note.ID)
 	if app.Search == nil || app.SearchIndex == "" {
-		return errors.New("meilisearch is not configured")
+		noteLog.Log("INDEX", "Meilisearch not configured, skipping indexing", "noteID", note.ID)
+		return nil
 	}
+	noteLog.Log("INDEX", "Indexing note in Meilisearch", "noteID", note.ID)
 	index := app.Search.Index(app.SearchIndex)
 	_, err := index.AddDocuments([]models.Note{note}, &meilisearch.DocumentOptions{
 		PrimaryKey: meilisearch.StringPtr("id"),
@@ -858,13 +837,15 @@ func (app *App) indexNote(note models.Note) error {
 
 // removeNoteFromIndex removes a note from the Meilisearch full-text search index.
 // Called during note deletion or rejection to keep search results consistent.
+// Best-effort: skips silently when Meilisearch is not configured.
 //
 // Technologies: Meilisearch (DeleteDocument by ID).
 func (app *App) removeNoteFromIndex(noteID uint) error {
-	noteLog.Log("INDEX", "Removing note from Meilisearch", "noteID", noteID)
 	if app.Search == nil || app.SearchIndex == "" {
-		return errors.New("meilisearch is not configured")
+		noteLog.Log("INDEX", "Meilisearch not configured, skipping removal", "noteID", noteID)
+		return nil
 	}
+	noteLog.Log("INDEX", "Removing note from Meilisearch", "noteID", noteID)
 	index := app.Search.Index(app.SearchIndex)
 	_, err := index.DeleteDocument(strconv.FormatUint(uint64(noteID), 10), nil)
 	if err == nil {

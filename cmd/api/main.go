@@ -41,7 +41,7 @@ func main() {
 
 	meiliClient, meiliIndex, err := database.InitMeilisearch()
 	if err != nil {
-		log.Fatalf("meilisearch init failed: %v", err)
+		log.Printf("Meilisearch not configured — search will use database fallback: %v", err)
 	}
 
 	r2Client, err := database.InitR2()
@@ -331,7 +331,14 @@ func main() {
 	admin.POST("/admin/bans", app.SiteWideBan)
 	admin.DELETE("/admin/bans/:uid", app.RemoveSiteWideBan)
 
+	// Search index admin
+	admin.POST("/admin/resync-search-index", app.ResyncSearchIndex)
+
 	// ── Server Start & Graceful Shutdown ───────────────────────────────────
+	// Background resync: re-index approved notes into Meilisearch to catch
+	// any notes approved while Meilisearch was down.
+	go app.ResyncSearchIndexBackground()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

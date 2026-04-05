@@ -86,6 +86,13 @@ func connect() (*gorm.DB, error) {
 // AutoMigrate creates tables, missing columns, and indexes.
 // It does NOT delete unused columns to protect data.
 func migrate(db *gorm.DB) error {
+	// Enable pg_trgm extension for fuzzy search (trigram similarity).
+	// This is a no-op if already enabled. Required for similarity() function
+	// and GIN trigram indexes used by the search fallback layer.
+	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).Error; err != nil {
+		log.Printf("Warning: Could not enable pg_trgm extension: %v", err)
+	}
+
 	// Setup explicit join table model for user_admins so that GORM auto-populates
 	// CreatedAt on Association Append/Replace, enabling admin seniority checks.
 	if err := db.SetupJoinTable(&models.Subnotery{}, "Admins", &models.UserAdmin{}); err != nil {
@@ -169,6 +176,14 @@ func migrate(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC)`,
 		// Notification listing
 		`CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read, created_at DESC)`,
+		// ── Trigram indexes for fuzzy search fallback ───────────────────────
+		`CREATE INDEX IF NOT EXISTS idx_notes_title_trgm ON notes USING GIN (title gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_notes_author_trgm ON notes USING GIN (author gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_notes_description_trgm ON notes USING GIN (description gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_subnoteries_name_trgm ON subnoteries USING GIN (name gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_username_trgm ON users USING GIN (username gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_display_name_trgm ON users USING GIN (display_name gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_comments_body_trgm ON comments USING GIN (body gin_trgm_ops)`,
 	}
 	for _, sql := range perfIndexes {
 		if err := db.Exec(sql).Error; err != nil {

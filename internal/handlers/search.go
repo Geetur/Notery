@@ -2,7 +2,8 @@
 //
 // ENDPOINTS:
 //
-//	GET /search?q=&type=&page=&limit=   Unified multi-type search
+//	GET /search?q=&type=&page=&limit=      Unified multi-type search
+//	POST /admin/resync-search-index        Admin-only Meilisearch resync
 //
 // DESIGN:
 //
@@ -11,13 +12,15 @@
 //
 //	Search types:
 //	  - notes (default): Meilisearch-backed full-text search on approved notes.
-//	  - subnoteries:     Database ILIKE search on subnotery names.
-//	  - users:           Database ILIKE search on username / display_name.
-//	  - comments:        Database ILIKE search on comment body (approved notes only).
+//	                     Falls back to DB with pg_trgm fuzzy matching.
+//	  - subnoteries:     Database ILIKE + pg_trgm search on subnotery names.
+//	  - users:           Database ILIKE + pg_trgm search on username / display_name.
+//	  - comments:        Database ILIKE + pg_trgm search on comment body (approved notes only).
 //
-//	Note search delegates to Meilisearch for relevance-ranked results. All other
-//	types use PostgreSQL ILIKE for pattern matching on public-facing fields only.
-//	All responses are paginated with {type, results, total, page, limit}.
+//	Note search delegates to Meilisearch for relevance-ranked results when available.
+//	If Meilisearch is down or not configured, all types fall back to PostgreSQL
+//	with combined ILIKE (exact substring) + pg_trgm similarity (typo-tolerant)
+//	matching. All responses are paginated with {type, results, total, page, limit}.
 package handlers
 
 import (
@@ -26,6 +29,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/meilisearch/meilisearch-go"
+	"gorm.io/gorm/clause"
 
 	"github.com/Geetur/Notery/internal/helpers"
 	"github.com/Geetur/Notery/internal/models"
@@ -178,21 +182,36 @@ func (app *App) searchNotes(c *gin.Context, query string, pag helpers.Pagination
 	})
 }
 
-// searchNotesDB searches approved notes via PostgreSQL ILIKE as a fallback
-// when Meilisearch is unavailable or when the sort requires DB computation
-// (e.g., comment count).
+// searchNotesDB searches approved notes via PostgreSQL ILIKE + pg_trgm fuzzy
+// matching as a fallback when Meilisearch is unavailable or when the sort
+// requires DB computation (e.g., comment count).
 //
-// DB: COUNT + SELECT from notes WHERE status=Approved AND title/author ILIKE.
-// Technologies: PostgreSQL (GORM ILIKE + optional subquery for comment count).
+// Uses a hybrid approach: ILIKE catches exact substring matches, and pg_trgm
+// similarity() catches typo-tolerant matches (threshold 0.2). Results are
+// ranked by trigram similarity when no explicit sort is provided.
+//
+// DB: COUNT + SELECT from notes WHERE status=Approved AND fuzzy match.
+// Technologies: PostgreSQL (GORM ILIKE + pg_trgm similarity).
 func (app *App) searchNotesDB(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"
+	const threshold = 0.2
+
+	whereClause := `status = ? AND (
+		title ILIKE ? OR author ILIKE ? OR description ILIKE ? OR
+		similarity(title, ?) > ? OR similarity(author, ?) > ? OR similarity(description, ?) > ?
+	)`
+	whereArgs := []interface{}{
+		models.StatusApproved,
+		pattern, pattern, pattern,
+		query, threshold, query, threshold, query, threshold,
+	}
 
 	var total int64
 	app.DB.Model(&models.Note{}).
-		Where("status = ? AND (title ILIKE ? OR author ILIKE ?)", models.StatusApproved, pattern, pattern).
+		Where(whereClause, whereArgs...).
 		Count(&total)
 
-	q := app.DB.Where("status = ? AND (title ILIKE ? OR author ILIKE ?)", models.StatusApproved, pattern, pattern)
+	q := app.DB.Where(whereClause, whereArgs...)
 
 	switch sort {
 	case SortComments:
@@ -207,7 +226,12 @@ func (app *App) searchNotesDB(c *gin.Context, query string, pag helpers.Paginati
 	case SortControversial:
 		q = q.Order("(upvotes + downvotes) * 1.0 / CASE WHEN ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) < 1 THEN 1 ELSE ABS(CAST(upvotes AS INTEGER) - CAST(downvotes AS INTEGER)) END DESC, created_at DESC")
 	default:
-		q = q.Order("created_at DESC")
+		q = q.Clauses(clause.OrderBy{
+			Expression: clause.Expr{
+				SQL:  "GREATEST(similarity(title, ?), similarity(author, ?), similarity(description, ?)) DESC, created_at DESC",
+				Vars: []interface{}{query, query, query},
+			},
+		})
 	}
 
 	var notes []models.Note
@@ -233,29 +257,38 @@ func (app *App) searchNotesDB(c *gin.Context, query string, pag helpers.Paginati
 	})
 }
 
-// searchSubnoteries queries subnotery names via database ILIKE pattern matching.
+// searchSubnoteries queries subnotery names via database ILIKE + pg_trgm fuzzy matching.
 //
-// DB: COUNT + SELECT from subnoteries WHERE name ILIKE. Paginated with OFFSET/LIMIT.
-// Technologies: PostgreSQL (GORM ILIKE).
+// DB: COUNT + SELECT from subnoteries WHERE name matches. Paginated with OFFSET/LIMIT.
+// Technologies: PostgreSQL (GORM ILIKE + pg_trgm similarity).
 func (app *App) searchSubnoteries(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"
+	const threshold = 0.2
+	whereClause := "name ILIKE ? OR similarity(name, ?) > ?"
+	whereArgs := []interface{}{pattern, query, threshold}
 
 	var total int64
-	app.DB.Model(&models.Subnotery{}).Where("name ILIKE ?", pattern).Count(&total)
+	app.DB.Model(&models.Subnotery{}).Where(whereClause, whereArgs...).Count(&total)
 
-	orderClause := "name ASC"
+	q := app.DB.Where(whereClause, whereArgs...)
+
 	switch sort {
 	case SortNew:
-		orderClause = "created_at DESC"
+		q = q.Order("created_at DESC")
 	case SortHot, SortTop:
 		// Sort by member count as popularity proxy
-		orderClause = "(SELECT COUNT(*) FROM subnotery_members WHERE subnotery_members.subnotery_id = subnoteries.id) DESC"
+		q = q.Order("(SELECT COUNT(*) FROM subnotery_members WHERE subnotery_members.subnotery_id = subnoteries.id) DESC")
+	default:
+		q = q.Clauses(clause.OrderBy{
+			Expression: clause.Expr{
+				SQL:  "similarity(name, ?) DESC, name ASC",
+				Vars: []interface{}{query},
+			},
+		})
 	}
 
 	var results []models.Subnotery
-	if err := app.DB.Where("name ILIKE ?", pattern).
-		Offset(pag.Offset).Limit(pag.Limit).
-		Order(orderClause).
+	if err := q.Offset(pag.Offset).Limit(pag.Limit).
 		Find(&results).Error; err != nil {
 		searchLog.Log("SEARCH", "subnotery db error", "query", query, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
@@ -272,31 +305,40 @@ func (app *App) searchSubnoteries(c *gin.Context, query string, pag helpers.Pagi
 	})
 }
 
-// searchUsers queries users by username or display name via database ILIKE.
+// searchUsers queries users by username or display name via database ILIKE + pg_trgm.
 // Only returns public profile data (via User.PublicProfile()) — never leaks email or hash.
 //
-// DB: COUNT + SELECT from users WHERE username/display_name ILIKE. Paginated.
-// Technologies: PostgreSQL (GORM ILIKE).
+// DB: COUNT + SELECT from users WHERE username/display_name matches. Paginated.
+// Technologies: PostgreSQL (GORM ILIKE + pg_trgm similarity).
 func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"
+	const threshold = 0.2
+	whereClause := "username ILIKE ? OR display_name ILIKE ? OR similarity(username, ?) > ? OR similarity(display_name, ?) > ?"
+	whereArgs := []interface{}{pattern, pattern, query, threshold, query, threshold}
 
 	var total int64
 	app.DB.Model(&models.User{}).
-		Where("username ILIKE ? OR display_name ILIKE ?", pattern, pattern).
+		Where(whereClause, whereArgs...).
 		Count(&total)
 
-	orderClause := "username ASC"
+	q := app.DB.Where(whereClause, whereArgs...)
+
 	switch sort {
 	case SortNew:
-		orderClause = "created_at DESC"
+		q = q.Order("created_at DESC")
 	case SortHot, SortTop:
-		orderClause = "created_at DESC"
+		q = q.Order("created_at DESC")
+	default:
+		q = q.Clauses(clause.OrderBy{
+			Expression: clause.Expr{
+				SQL:  "GREATEST(similarity(username, ?), similarity(display_name, ?)) DESC, username ASC",
+				Vars: []interface{}{query, query},
+			},
+		})
 	}
 
 	var users []models.User
-	if err := app.DB.Where("username ILIKE ? OR display_name ILIKE ?", pattern, pattern).
-		Offset(pag.Offset).Limit(pag.Limit).
-		Order(orderClause).
+	if err := q.Offset(pag.Offset).Limit(pag.Limit).
 		Find(&users).Error; err != nil {
 		searchLog.Log("SEARCH", "user db error", "query", query, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
@@ -319,40 +361,47 @@ func (app *App) searchUsers(c *gin.Context, query string, pag helpers.Pagination
 	})
 }
 
-// searchComments queries comment bodies via database ILIKE.
+// searchComments queries comment bodies via database ILIKE + pg_trgm fuzzy matching.
 // Only searches non-deleted comments on approved notes. Returns comment metadata
 // with resolved usernames, not full threaded trees.
 //
-// DB: COUNT + SELECT from comments JOIN notes WHERE status=Approved AND body ILIKE.
+// DB: COUNT + SELECT from comments JOIN notes WHERE status=Approved AND body matches.
 //
 //	Fetches usernames via fetchCommentUsernames helper. Paginated.
 //
-// Technologies: PostgreSQL (GORM ILIKE + JOIN).
+// Technologies: PostgreSQL (GORM ILIKE + pg_trgm similarity + JOIN).
 func (app *App) searchComments(c *gin.Context, query string, pag helpers.Pagination, sort SearchSort) {
 	pattern := "%" + query + "%"
+	const threshold = 0.2
+	bodyWhere := "notes.status = ? AND comments.is_deleted = ? AND (comments.body ILIKE ? OR similarity(comments.body, ?) > ?)"
+	bodyArgs := []interface{}{models.StatusApproved, false, pattern, query, threshold}
 
 	var total int64
 	app.DB.Model(&models.Comment{}).
 		Joins("JOIN notes ON notes.id = comments.note_id").
-		Where("notes.status = ? AND comments.is_deleted = ? AND comments.body ILIKE ?",
-			models.StatusApproved, false, pattern).
+		Where(bodyWhere, bodyArgs...).
 		Count(&total)
 
-	orderClause := "comments.created_at DESC"
+	q := app.DB.
+		Joins("JOIN notes ON notes.id = comments.note_id").
+		Where(bodyWhere, bodyArgs...)
+
 	switch sort {
 	case SortHot, SortTop:
-		orderClause = "(comments.upvotes - comments.downvotes) DESC"
+		q = q.Order("(comments.upvotes - comments.downvotes) DESC")
 	case SortNew:
-		orderClause = "comments.created_at DESC"
+		q = q.Order("comments.created_at DESC")
+	default:
+		q = q.Clauses(clause.OrderBy{
+			Expression: clause.Expr{
+				SQL:  "similarity(comments.body, ?) DESC, comments.created_at DESC",
+				Vars: []interface{}{query},
+			},
+		})
 	}
 
 	var comments []models.Comment
-	if err := app.DB.
-		Joins("JOIN notes ON notes.id = comments.note_id").
-		Where("notes.status = ? AND comments.is_deleted = ? AND comments.body ILIKE ?",
-			models.StatusApproved, false, pattern).
-		Offset(pag.Offset).Limit(pag.Limit).
-		Order(orderClause).
+	if err := q.Offset(pag.Offset).Limit(pag.Limit).
 		Find(&comments).Error; err != nil {
 		searchLog.Log("SEARCH", "comment db error", "query", query, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
@@ -401,4 +450,87 @@ func (app *App) searchComments(c *gin.Context, query string, pag helpers.Paginat
 		"page":    pag.Page,
 		"limit":   pag.Limit,
 	})
+}
+
+// ResyncSearchIndex re-indexes all approved notes into Meilisearch.
+// This is an admin-only endpoint used to recover from Meilisearch outages
+// or to repair index drift after notes were approved while Meilisearch was down.
+//
+// Loads all approved notes from the database (with SubnoteryName populated),
+// and batch-inserts them into Meilisearch. This is idempotent — existing
+// documents with the same ID are updated in place.
+//
+// DB: SELECT all approved notes + subnotery names.
+// Technologies: PostgreSQL (GORM), Meilisearch (AddDocuments batch).
+//
+// Route: POST /api/v1/admin/resync-search-index
+func (app *App) ResyncSearchIndex(c *gin.Context) {
+	if app.Search == nil || app.SearchIndex == "" {
+		searchLog.Log("RESYNC", "Meilisearch not configured — cannot resync")
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Meilisearch is not configured"})
+		return
+	}
+
+	var notes []models.Note
+	if err := app.DB.Where("status = ?", models.StatusApproved).Find(&notes).Error; err != nil {
+		searchLog.Log("RESYNC", "Failed to load approved notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load notes for resync"})
+		return
+	}
+
+	// Populate SubnoteryName for all notes
+	app.populateSubnoteryNames(notes)
+
+	if len(notes) == 0 {
+		searchLog.Log("RESYNC", "No approved notes to index")
+		c.JSON(http.StatusOK, gin.H{"message": "No approved notes to index", "indexed": 0})
+		return
+	}
+
+	index := app.Search.Index(app.SearchIndex)
+	_, err := index.AddDocuments(notes, &meilisearch.DocumentOptions{
+		PrimaryKey: meilisearch.StringPtr("id"),
+	})
+	if err != nil {
+		searchLog.Log("RESYNC", "Failed to index notes", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to index notes in Meilisearch"})
+		return
+	}
+
+	searchLog.Log("RESYNC", "Search index resync complete", "indexed", len(notes))
+	c.JSON(http.StatusOK, gin.H{"message": "Search index resync complete", "indexed": len(notes)})
+}
+
+// ResyncSearchIndexBackground re-indexes all approved notes into Meilisearch
+// in the background. Called at startup to catch any notes approved while
+// Meilisearch was down. This is a fire-and-forget operation.
+func (app *App) ResyncSearchIndexBackground() {
+	if app.Search == nil || app.SearchIndex == "" {
+		searchLog.Log("RESYNC", "Meilisearch not configured — skipping startup resync")
+		return
+	}
+
+	var notes []models.Note
+	if err := app.DB.Where("status = ?", models.StatusApproved).Find(&notes).Error; err != nil {
+		searchLog.Log("RESYNC", "Background resync failed to load notes", "error", err)
+		return
+	}
+
+	app.populateSubnoteryNames(notes)
+
+	if len(notes) == 0 {
+		searchLog.Log("RESYNC", "No approved notes to resync at startup")
+		return
+	}
+
+	index := app.Search.Index(app.SearchIndex)
+	_, err := index.AddDocuments(notes, &meilisearch.DocumentOptions{
+		PrimaryKey: meilisearch.StringPtr("id"),
+	})
+	if err != nil {
+		searchLog.Log("RESYNC", "Background resync failed to index", "error", err)
+		return
+	}
+
+	searchLog.Log("RESYNC", "Startup resync complete", "indexed", len(notes))
 }
