@@ -175,7 +175,7 @@ func migrate(db *gorm.DB) error {
 		// Order history
 		`CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC)`,
 		// Notification listing
-		`CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, created_at DESC)`,
 		// ── Trigram indexes for fuzzy search fallback ───────────────────────
 		`CREATE INDEX IF NOT EXISTS idx_notes_title_trgm ON notes USING GIN (title gin_trgm_ops)`,
 		`CREATE INDEX IF NOT EXISTS idx_notes_author_trgm ON notes USING GIN (author gin_trgm_ops)`,
