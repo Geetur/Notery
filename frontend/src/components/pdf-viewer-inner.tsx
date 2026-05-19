@@ -141,13 +141,7 @@ export default function PDFViewerInner({ noteId, mode, maxHeight = "70vh", total
             params.set("pages", String(pages));
             return `${API_V1}/notes/${noteId}/preview?${params}`;
         }
-        const params = new URLSearchParams();
-        if (token) params.set("token", token);
-        const query = params.toString();
-        if (query) {
-            return `${API_V1}/notes/${noteId}/content?${query}`;
-        }
-        return `${API_V1}/notes/${noteId}/content`;
+        return `${API_V1}/notes/${noteId}/content?token=${token}`;
     }, [noteId, mode, previewPagesCount]);
 
     // Memoize the file prop for <Document> to avoid unnecessary reloads.

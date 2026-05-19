@@ -124,19 +124,11 @@ func RequireAuth(jwtSecret string) gin.HandlerFunc {
 // OptionalAuth returns middleware that extracts user info from JWT if present,
 // but allows the request to proceed even without authentication.
 // Use this for endpoints that personalize responses for logged-in users.
-// Supports a ?token= query fallback for browser-native PDF requests.
 func OptionalAuth(jwtSecret string) gin.HandlerFunc {
 	secretKey := []byte(jwtSecret)
 
 	return func(c *gin.Context) {
 		tokenString, err := extractBearerToken(c.GetHeader("Authorization"))
-		if err != nil {
-			// Fallback: query token for browser-native fetches (e.g., PDF viewer).
-			if qToken := c.Query("token"); qToken != "" {
-				tokenString = qToken
-				err = nil
-			}
-		}
 		if err != nil {
 			c.Next()
 			return

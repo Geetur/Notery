@@ -86,16 +86,6 @@ func (app *App) CheckNoteAccess(userID uint64, note *models.Note) AccessLevel {
 		return AccessCreator
 	}
 
-	// Unauthenticated users can view free approved notes without logging in.
-	if userID == 0 {
-		if note.Status == models.StatusApproved && note.Price == 0 {
-			contentLog.Log("ACCESS_GRANTED", "unauthenticated free note", "note_id", note.ID)
-			return AccessPurchased
-		}
-		contentLog.Log("ACCESS_DENIED", "unauthenticated non-free note", "note_id", note.ID)
-		return AccessNone
-	}
-
 	// Check if user is global admin
 	var user models.User
 	if err := app.DB.Select("id", "is_global_admin").First(&user, userID).Error; err != nil {

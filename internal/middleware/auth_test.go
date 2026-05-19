@@ -19,17 +19,13 @@ func makeToken(secret string, claims jwt.MapClaims) string {
 }
 
 func callMiddleware(mw gin.HandlerFunc, authHeader string) (*httptest.ResponseRecorder, *gin.Context) {
-	return callMiddlewareWithPath(mw, authHeader, "/test")
-}
-
-func callMiddlewareWithPath(mw gin.HandlerFunc, authHeader, path string) (*httptest.ResponseRecorder, *gin.Context) {
 	w := httptest.NewRecorder()
 	c, r := gin.CreateTestContext(w)
 	r.Use(mw)
 	r.GET("/test", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
-	req := httptest.NewRequest("GET", path, nil)
+	req := httptest.NewRequest("GET", "/test", nil)
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
 	}
@@ -193,27 +189,5 @@ func TestOptionalAuth_InvalidFormat(t *testing.T) {
 	w, _ := callMiddleware(OptionalAuth("secret"), "Token xyz")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for bad format (proceeds as anonymous), got %d", w.Code)
-	}
-}
-
-func TestOptionalAuth_QueryTokenValid(t *testing.T) {
-	secret := "test-secret"
-	token := makeToken(secret, jwt.MapClaims{
-		"user_id": "42",
-		"exp":     time.Now().Add(time.Hour).Unix(),
-		"iss":     "notery-api",
-		"aud":     "notery-web",
-	})
-
-	w, _ := callMiddlewareWithPath(OptionalAuth(secret), "", "/test?token="+token)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 for valid query token, got %d", w.Code)
-	}
-}
-
-func TestOptionalAuth_QueryTokenInvalid(t *testing.T) {
-	w, _ := callMiddlewareWithPath(OptionalAuth("secret"), "", "/test?token=invalid-token")
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 for invalid query token (proceeds as anonymous), got %d", w.Code)
 	}
 }
