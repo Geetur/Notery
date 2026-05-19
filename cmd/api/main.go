@@ -156,6 +156,7 @@ func main() {
 	auth.POST("/reset-password", app.ResetPassword)
 	auth.GET("/verify-email", app.VerifyEmail)
 
+
 	// OAuth routes (public, separate rate limit — each flow uses 2 requests)
 	oauth := api.Group("/auth")
 	if redisClient != nil {
@@ -188,6 +189,8 @@ func main() {
 	if redisClient != nil {
 		readPublic.Use(middleware.RateLimit(redisClient, middleware.DefaultReadRateLimit, "read:"))
 	}
+	readPublic.GET("/notes/:id/content", app.GetNotePDFContent)
+	readPublic.GET("/notes/:id/preview", app.GetNotePreview)
 	readPublic.GET("/feed/hot", app.GetHotFeed)
 	readPublic.GET("/notes/:id/comments", app.GetNoteComments)
 	readPublic.GET("/comments/:comment_id", app.GetComment)
@@ -217,8 +220,6 @@ func main() {
 	if redisClient != nil {
 		readOnly.Use(middleware.RateLimit(redisClient, middleware.DefaultReadRateLimit, "read:"))
 	}
-	readOnly.GET("/notes/:id/content", app.GetNotePDFContent)
-	readOnly.GET("/notes/:id/preview", app.GetNotePreview)
 	readOnly.GET("/cart", app.GetCart)
 	readOnly.GET("/notes/:id/purchased", app.CheckPurchaseStatus)
 	readOnly.GET("/me/purchases", app.GetMyPurchases)
