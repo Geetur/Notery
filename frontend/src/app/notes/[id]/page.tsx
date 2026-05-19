@@ -62,7 +62,7 @@ export default function NoteDetailPage() {
     } = useQuery({
         queryKey: ["note", noteId],
         queryFn: () => getNoteById(noteId),
-        enabled: !!noteId && isAuthenticated,
+        enabled: !!noteId,
     });
 
     const { data: purchaseStatus } = useQuery({
@@ -86,7 +86,7 @@ export default function NoteDetailPage() {
     const isPending = note?.status === "Pending";
     // Use the backend-computed has_full_access (covers creator, admin, purchased, free).
     // Fallback to client-side checks for immediate UI display.
-    const hasFullAccess = note?.has_full_access || isPending || isOwned || isFree;
+    const hasFullAccess = isAuthenticated && (note?.has_full_access || isPending || isOwned || isFree);
     // Purchase UI is only shown for approved, non-free, non-owned notes that user doesn't have full access to.
     const isApproved = note?.status === "Approved";
 
@@ -156,19 +156,6 @@ export default function NoteDetailPage() {
             setAddingToCart(false);
         }
     };
-
-    if (!isAuthenticated) {
-        return (
-            <div className="max-w-3xl mx-auto px-4 py-8 text-center">
-                <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h2 className="text-xl font-bold mb-2">Login Required</h2>
-                <p className="text-muted-foreground mb-4">
-                    You need to be logged in to view note details.
-                </p>
-                <Button onClick={() => router.push("/login")}>Log In</Button>
-            </div>
-        );
-    }
 
     if (isLoading) {
         return (
@@ -291,7 +278,21 @@ export default function NoteDetailPage() {
                         {/* Purchase / ownership widget — integrated into the note card */}
                         {isApproved && (
                             <div className="mb-4">
-                                {isOwned ? (
+                                {!isAuthenticated ? (
+                                    <div className="border border-border rounded-md p-4">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                                <Lock className="h-4 w-4" />
+                                                {isFree
+                                                    ? "Free note — log in to access"
+                                                    : `${formatPrice(note.price)} — log in to purchase`}
+                                            </div>
+                                            <Button size="sm" onClick={() => router.push("/login")}>
+                                                Log In
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : isOwned ? (
                                     <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3">
                                         <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
                                             <CheckCircle className="h-4 w-4" />
