@@ -86,7 +86,7 @@ export default function NoteDetailPage() {
     const isPending = note?.status === "Pending";
     // Use the backend-computed has_full_access (covers creator, admin, purchased, free).
     // Fallback to client-side checks for immediate UI display.
-    const hasFullAccess = isAuthenticated && (note?.has_full_access || isPending || isOwned || isFree);
+    const hasFullAccess = (note?.has_full_access || isPending || isOwned || isFree);
     // Purchase UI is only shown for approved, non-free, non-owned notes that user doesn't have full access to.
     const isApproved = note?.status === "Approved";
 
