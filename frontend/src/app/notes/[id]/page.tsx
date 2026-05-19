@@ -278,14 +278,19 @@ export default function NoteDetailPage() {
                         {/* Purchase / ownership widget — integrated into the note card */}
                         {isApproved && (
                             <div className="mb-4">
-                                {!isAuthenticated ? (
+                                {isFree ? (
+                                    <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3">
+                                        <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
+                                            <CheckCircle className="h-4 w-4" />
+                                            This note is free — full access
+                                        </div>
+                                    </div>
+                                ) : !isAuthenticated ? (
                                     <div className="border border-border rounded-md p-4">
                                         <div className="flex items-center justify-between gap-4">
                                             <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                                 <Lock className="h-4 w-4" />
-                                                {isFree
-                                                    ? "Free note — log in to access"
-                                                    : `${formatPrice(note.price)} — log in to purchase`}
+                                                {`${formatPrice(note.price)} — log in to purchase`}
                                             </div>
                                             <Button size="sm" onClick={() => router.push("/login")}>
                                                 Log In
@@ -300,13 +305,6 @@ export default function NoteDetailPage() {
                                             {purchaseStatus?.purchased_at
                                                 ? ` — purchased ${formatDate(purchaseStatus.purchased_at)}`
                                                 : " — full access granted"}
-                                        </div>
-                                    </div>
-                                ) : isFree ? (
-                                    <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3">
-                                        <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
-                                            <CheckCircle className="h-4 w-4" />
-                                            This note is free — full access
                                         </div>
                                     </div>
                                 ) : hasFullAccess ? (
